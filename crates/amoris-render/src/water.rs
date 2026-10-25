@@ -242,6 +242,11 @@ pub struct Water {
     foam_on: bool,
     spray_on: bool,
     spray: Option<crate::water_spray::Pipelines>,
+    /// Tally what the spray's sources sound like from the camera, and read it back (water.md 59).
+    listen: bool,
+    acoustics: Option<crate::water_acoustics::Acoustics>,
+    /// Listening, the last frame advanced no region's spray: nothing sounds.
+    silent: bool,
     format: SceneFormat,
     effects: [f32; 4],
     smooth: wgpu::RenderPipeline,
@@ -382,6 +387,9 @@ impl Water {
             foam_on: true,
             spray_on: true,
             spray: None,
+            listen: false,
+            acoustics: None,
+            silent: false,
             format,
             effects: [1.0, 1.0, 1.0, 0.0],
             smooth: pipeline(device, module, &layout, format, "vs_shallow"),
@@ -570,6 +578,28 @@ impl Water {
                 g.spray = None;
                 g.clear_spray = true;
             }
+        }
+    }
+    /// Whether the spray's sources are heard (water.md 59): off, nothing is tallied or read back.
+    pub fn set_acoustics(&mut self, on: bool) {
+        self.listen = on;
+        if !on {
+            self.acoustics = None;
+        }
+    }
+    /// The newest tally of what the water sounds like from the camera, once it is back; silence
+    /// once no region's spray advances.
+    pub fn acoustics(&mut self) -> Option<crate::water_acoustics::WaterAcoustics> {
+        let heard = self.acoustics.as_mut().and_then(|a| a.take());
+        if heard.is_none() && self.silent {
+            return Some(crate::water_acoustics::WaterAcoustics::default());
+        }
+        heard
+    }
+    /// After the frame's submit: maps the tally the frame copied.
+    pub fn after_submit(&mut self) {
+        if let Some(a) = &mut self.acoustics {
+            a.after_submit();
         }
     }
     pub fn set_foam(&mut self, on: bool) {
@@ -1182,7 +1212,11 @@ impl Water {
                 .spray
                 .get_or_insert_with(|| crate::water_spray::Pipelines::new(device, self.format));
             encoder.clear_buffer(&spray.budget, 0, None);
+            if self.listen {
+                encoder.clear_buffer(&spray.acoustics, 0, None);
+            }
         }
+        let mut heard = None;
         for r in self.regions.values_mut() {
             let Some(g) = &mut r.gpu else { continue };
             if let Some(resident) = &mut r.resident {
@@ -1251,9 +1285,11 @@ impl Water {
                         changed: g.columns_changed,
                         clear: g.clear_spray,
                         rise_s,
+                        listen: self.listen,
                     },
                     profiler,
                 );
+                heard = Some(g.spray_dt);
             }
             g.clear_spray = false;
             g.columns_changed = false;
@@ -1337,6 +1373,15 @@ impl Water {
                 },
                 Some(profiler),
             );
+        }
+        // The frame's tally of what the water sounds like goes back to the audio presenter.
+        self.silent = self.listen && heard.is_none();
+        if self.listen
+            && let (Some(dt), Some(spray)) = (heard, &self.spray)
+        {
+            self.acoustics
+                .get_or_insert_with(|| crate::water_acoustics::Acoustics::new(device))
+                .copy(encoder, &spray.acoustics, dt);
         }
     }
 

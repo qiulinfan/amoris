@@ -34,6 +34,8 @@ pub struct Advance {
     pub clear: bool,
     /// Simulated seconds the occupancy rise gathered over since the last advance; zero for none.
     pub rise_s: f32,
+    /// Tally what the sources sound like from the camera (water_acoustics.rs).
+    pub listen: bool,
 }
 pub struct Pipelines {
     layout: wgpu::BindGroupLayout,
@@ -42,6 +44,8 @@ pub struct Pipelines {
     draw: wgpu::RenderPipeline,
     module: wgpu::ShaderModule,
     pub budget: wgpu::Buffer,
+    /// The frame's tally of sound-making events, shared by every region (water_acoustics.rs).
+    pub acoustics: wgpu::Buffer,
     /// Bound in place of the occupancy head and rise of a field that has none.
     pub no_occupancy: [wgpu::Buffer; 2],
 }
@@ -108,7 +112,7 @@ impl Pipelines {
     pub fn new(device: &wgpu::Device, format: SceneFormat) -> Self {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("water spray compute"),
-            entries: &std::array::from_fn::<_, 9, _>(|i| wgpu::BindGroupLayoutEntry {
+            entries: &std::array::from_fn::<_, 10, _>(|i| wgpu::BindGroupLayoutEntry {
                 binding: i as u32,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
@@ -178,6 +182,14 @@ impl Pipelines {
                 | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
+        let acoustics = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("water spray acoustics"),
+            size: crate::water_acoustics::TALLY_BYTES,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
         let no_occupancy =
             ["water spray without occupancy", "water spray without rise"].map(|label| {
                 device.create_buffer(&wgpu::BufferDescriptor {
@@ -194,6 +206,7 @@ impl Pipelines {
             draw,
             module,
             budget,
+            acoustics,
             no_occupancy,
         }
     }
@@ -256,6 +269,7 @@ impl Pool {
                 impacts,
                 occupancy.map_or(&p.no_occupancy[0], |o| o.0),
                 occupancy.map_or(&p.no_occupancy[1], |o| o.1),
+                &p.acoustics,
             ]
             .into_iter()
             .enumerate()
@@ -327,12 +341,18 @@ impl Pool {
                 // splash (m/s) and the reach of splashes and breaking lips (m).
                 rates: [0.00195, 48.0, 0.9, 160.0],
                 absorb: [f.absorb[0], f.absorb[1], f.absorb[2], 0.0],
-                // Whether bodies' entries are read this advance, and over how many seconds.
-                entry: if a.rise_s > 0.0 && !f.tiled {
-                    [1.0, 1.0 / a.rise_s, 0.0, 0.0]
-                } else {
-                    [0.0; 4]
-                },
+                // Whether bodies' entries are read this advance, and over how many seconds; then
+                // whether the sources are heard (water_acoustics.rs).
+                entry: [
+                    f32::from(u8::from(a.rise_s > 0.0 && !f.tiled)),
+                    if a.rise_s > 0.0 && !f.tiled {
+                        1.0 / a.rise_s
+                    } else {
+                        0.0
+                    },
+                    f32::from(u8::from(a.listen)),
+                    0.0,
+                ],
             }),
         );
         for stage in 0..2 {

@@ -2058,3 +2058,39 @@ fn bed_ledge_film_covers_the_solid_wall_and_keeps_foreground_objects_in_front() 
         }
     }
 }
+
+/// What the water sounds like from the camera (water.md 59): nothing while not listening; still
+/// water's tally, all quiet, once listening; and silence where no region's spray advances, so the
+/// window's water sound stops when the water is gone.
+#[test]
+fn listening_hears_still_water_and_no_water_as_silence() {
+    let Some((_case, gpu)) = gpu() else { return };
+    // The pit's water at one level, standing still.
+    let still = |i: u32, k: u32| {
+        let c = column(i, k);
+        if c[1] > 0.0 { [1.9, 0.9, 0.0, 0.0] } else { c }
+    };
+    let mut r = renderer(&gpu, EYE, AT);
+    r.apply(scene(1, vec![region(false, &ALL, still)], true), 0.0);
+    let _ = r.capture_rgba(0.0);
+    assert_eq!(r.water_acoustics(), None, "heard without listening");
+    r.set_water_acoustics(true);
+    // Ticks pass, so the spray advances: its tally covers simulated time.
+    let mut heard = None;
+    for tick in 2..6 {
+        let t = tick as f64 / 60.0;
+        r.apply(scene(tick, vec![], false), t);
+        let _ = r.capture_rgba(t);
+        heard = heard.or(r.water_acoustics().filter(|a| a.dt > 0.0));
+    }
+    let quiet = heard.expect("a tally over simulated time came back");
+    assert!(
+        quiet.kinds.iter().all(|k| *k == Default::default()),
+        "{quiet:?}"
+    );
+    let mut dry = renderer(&gpu, EYE, AT);
+    dry.set_water_acoustics(true);
+    dry.apply(scene(1, vec![], true), 0.0);
+    let _ = dry.capture_rgba(0.0);
+    assert_eq!(dry.water_acoustics(), Some(Default::default()));
+}

@@ -51,6 +51,7 @@ mod ui;
 mod upload;
 pub mod voxels;
 pub mod water;
+pub mod water_acoustics;
 mod water_caustics;
 mod water_compact;
 pub mod water_compute;

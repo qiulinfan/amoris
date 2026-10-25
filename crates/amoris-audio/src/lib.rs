@@ -2,9 +2,11 @@
 //! as long as they exist, heard from their entities' positions by a listener at the camera; sound
 //! events (`sound` with `{clip, volume?, pitch?}`, or any event named in the project's `[sounds]`
 //! table) play once at their subject. Clips are project files (wav, ogg, mp3, flac) or synthesized
-//! `sfx:` presets. Without an audio device everything is silently skipped.
+//! `sfx:` presets. The water's own sound comes from the bubbles its breaking, falling and
+//! splashing traps (`water`). Without an audio device everything is silently skipped.
 
 pub mod synth;
+pub mod water;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -31,6 +33,7 @@ pub struct Audio {
     clips: HashMap<String, Option<StaticSoundData>>,
     sources: HashMap<u64, Playing>,
     one_shots: Vec<(StaticSoundHandle, Option<SpatialTrackHandle>)>,
+    water: Option<water::WaterHandle>,
 }
 
 fn gain_db(volume: f32) -> Decibels {
@@ -60,6 +63,7 @@ impl Audio {
             clips: HashMap::new(),
             sources: HashMap::new(),
             one_shots: Vec::new(),
+            water: None,
         })
     }
 
@@ -143,6 +147,26 @@ impl Audio {
         // Forget finished one-shots (their tracks go with them).
         self.one_shots
             .retain(|(s, _)| s.state() != kira::sound::PlaybackState::Stopped);
+    }
+
+    /// The water's sound from its latest sources (amoris-render's tally of what the water sounds
+    /// like from the camera): started on the first call, panned by the sources' own ears.
+    pub fn set_water(&mut self, sources: &[water::WaterSource; water::KINDS]) {
+        if self.water.is_none() && sources.iter().all(|s| s.rate <= 0.0) {
+            return;
+        }
+        if self.water.is_none() {
+            match self.manager.play(water::WaterSoundData { seed: 0x5eed }) {
+                Ok(handle) => self.water = Some(handle),
+                Err(e) => {
+                    log::warn!("water sound: {e}");
+                    return;
+                }
+            }
+        }
+        if let Some(w) = &self.water {
+            w.set(sources);
+        }
     }
 
     /// Brings the playing sources in line with the world's.

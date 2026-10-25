@@ -332,3 +332,9 @@ changes. Keep no-water behavior unchanged. Compute pipelines use shaders::comput
 initialize workgroup memory explicitly. Benchmark methods and measured scope are in
 docs/bench/liquids.md; raw logs/traces stay under ignored out/. GPU interval sums/coverage are
 not hardware utilization and can include stalls.
+
+The water's sound (water.md 59) is presentation: a listening renderer's spray emitters tally each
+kind's events and dissipated power, and amoris-audio's `water` rings bubbles from the tally. The
+spray's compute stage holds eight storage buffers, WebGPU's per-stage limit. Changes run renderer
+water_spray (also under AMORIS_GPU_MINIMAL) and amoris-audio's tests, and compare the `water_sound`
+example's levels with liquids.md 10.

@@ -17,6 +17,22 @@ struct SprayState { head:atomic<u32>, born:atomic<u32>, alive:atomic<u32>, sourc
 // The field's occupancy head and the head bodies added since the last advance (resident fields).
 @group(0) @binding(7) var<storage,read> occupancy:array<f32>;
 @group(0) @binding(8) var<storage,read_write> rise:array<f32>;
+// What the water sounds like from the camera (water_acoustics.rs, water.md 59), shared by every
+// region: per kind of source its events this frame, then the mechanical energy they dissipate
+// (`joules` each) over the square of their distance from 1 m, split between the left and the
+// right ear; in 1/256ths, rounded at random so that many faint sources add up.
+@group(0) @binding(9) var<storage,read_write> acoustics:array<atomic<u32>,32>;
+fn hear(kind:u32,at:vec3f,events:f32,joules:f32,seed:u32){
+    if(p.entry.z==0.0||events<=0.0){return;}
+    let to=at-view.camera_pos.xyz;let r=length(to);
+    let right=vec3f(view.view[0].x,view.view[1].x,view.view[2].x);
+    let pan=select(0.0,clamp(dot(to,right)/r,-1.0,1.0),r>1e-3);
+    let energy=events*max(joules,0.0)/max(r*r,1.0);
+    let k=kind*3u;
+    atomicAdd(&acoustics[k],u32(events*256.0+spray_random(seed+101u)));
+    atomicAdd(&acoustics[k+1u],u32(energy*(1.0-pan)*128.0+spray_random(seed+103u)));
+    atomicAdd(&acoustics[k+2u],u32(energy*(1.0+pan)*128.0+spray_random(seed+107u)));
+}
 const MIST:u32=5u;
 const CROWN:u32=6u;
 // Splashes and breaking lips, which a big surf or a gorge's white water throws from thousands of
@@ -58,6 +74,9 @@ fn simulate(@builtin(global_invocation_id) id:vec3u){
         if(valid(c)&&at.y<=c.x){
             if(c.y>0.01){atomicAdd(&impacts[ij.x+p.count.x*ij.y],1u);}
             let vy=v.y-9.81*t;
+            // A drop landing makes the small bubbles of rain, as about 10 g of spray would; a
+            // falling sheet's water is heard where the fall leaves its lip (`face`).
+            if(c.y>0.01&&d.info.x!=0u){let u=vec3f(v.x,vy,v.z);hear(5u,at,1.0,0.005*dot(u,u),d.info.y);}
             if(d.info.x==0u&&vy < -3.0&&c.y>0.01){
                 let seed=d.info.y;let spread=min(3.0,-vy*0.18);
                 if(spray_random(seed+5u)<0.3){
@@ -98,13 +117,18 @@ fn face(ij:vec2u,axis:u32){
     if(p.flags.y!=0u){atomicAdd(&state.sources,1u);}
     if(p.origin_cell_dt.w<=0.0){return;}
     let center=(vec2f(ij)+vec2f(0.5)+vec2f(offset)*0.5)*p.origin_cell_dt.z+p.origin_cell_dt.xy;
-    if(distance(center,view.camera_pos.xz)>p.rates.y){return;}
     let discharge=abs(speed)*donor.y*p.origin_cell_dt.z;
+    let key=ij.x+p.count.x*ij.y+axis*p.count.x*p.count.y;
+    let seed=pcg_hash(key^(p.flags.x*747796405u));
+    // Heard from any distance: a fall's water a drop's volume at a time, each dissipating the
+    // height it falls, and a rapid's ten drops' at a time, each losing its speed against the step.
+    let parcel=1000.0*p.rates.x*select(10.0,1.0,fall);
+    let joules=select(0.5*parcel*speed*speed,parcel*9.81*max(donor.x-receiver.x,0.0),fall);
+    hear(select(1u,0u,fall),vec3f(center.x,donor.x,center.y),discharge/p.rates.x*select(0.1,1.0,fall)*p.origin_cell_dt.w,joules,seed);
+    if(distance(center,view.camera_pos.xz)>p.rates.y){return;}
     var rate=discharge/p.rates.x;
     if(!fall){rate=min(30.0,rate*0.1);}
     let wanted=min(rate*p.origin_cell_dt.w,32.0);
-    let key=ij.x+p.count.x*ij.y+axis*p.count.x*p.count.y;
-    let seed=pcg_hash(key^(p.flags.x*747796405u));
     let count=u32(floor(wanted))+u32(spray_random(seed+3u)<fract(wanted));
     for(var j=0u;j<count;j++){
         if(atomicLoad(&budget[0])>=p.flags.w){break;}
@@ -139,12 +163,23 @@ fn splash(ij:vec2u){
     if(p.origin_cell_dt.w<=0.0){return;}
     let center=(vec2f(ij)+0.5)*cell+p.origin_cell_dt.xy;
     let away=distance(center,view.camera_pos.xz);
-    if(away>p.rates.w){return;}
     let key=ij.x+p.count.x*ij.y+2u*p.count.x*p.count.y;
     let seed=pcg_hash(key^(p.flags.x*2891336453u));
-    var wanted=0.0;
-    if(lip){wanted=min(clamp(rise/(0.45*celerity)-1.0,0.2,2.0)*40.0*cell*p.origin_cell_dt.w,12.0);}
-    else{wanted=min((rise-p.rates.z)*cell*cell*90.0*p.origin_cell_dt.w,16.0);}
+    var events=0.0;var joules=0.0;
+    if(lip){
+        events=clamp(rise/(0.45*celerity)-1.0,0.2,2.0)*40.0*cell*p.origin_cell_dt.w;
+        // A breaking crest loses what a bore of height H = 0.78 h does, rho g c H^3 / (4 (h + H))
+        // a metre of crest, which 40 events a metre a second share.
+        joules=0.0667*1000.0*9.81*celerity*c.y*c.y/40.0;
+    }else{
+        // A ninetieth of a cubic metre rising faster than the threshold, with its kinetic energy.
+        events=(rise-p.rates.z)*cell*cell*90.0*p.origin_cell_dt.w;
+        joules=0.5*1000.0/90.0*rise*rise;
+    }
+    // Heard from any distance and in full: the drops below are thinned for what can be seen.
+    hear(select(2u,3u,lip),vec3f(center.x,c.x,center.y),events,joules,seed);
+    if(away>p.rates.w){return;}
+    var wanted=min(events,select(16.0,12.0,lip));
     // Beyond 40 m a column throws fewer drops, as fewer can be seen: a long breaking front then
     // leaves the frame's splash births (SPLASH_PER_FRAME) to the white water near the camera.
     wanted*=min(40.0/max(away,1.0),1.0);
@@ -188,12 +223,15 @@ fn entry(ij:vec2u){
     let speed=min(4.0*added*p.entry.y,14.0);
     if(speed<1.2){return;}
     let center=(vec2f(ij)+0.5)*cell+p.origin_cell_dt.xy;
+    let seed=pcg_hash((i+3u*p.count.x*p.count.y)^(p.flags.x*1597334677u));
+    let events=added*cell*cell*8000.0*min(speed*0.25,2.0);
+    // The kinetic energy of the water the body pushes aside at its speed, shared by the events.
+    hear(4u,vec3f(center.x,c.x,center.y),events,0.5*1000.0*speed*speed/(8000.0*min(speed*0.25,2.0)),seed);
     if(distance(center,view.camera_pos.xz)>p.rates.w){return;}
     let at=vec2i(ij);
     let g=vec2f(head_at(at+vec2i(1,0))-head_at(at-vec2i(1,0)),head_at(at+vec2i(0,1))-head_at(at-vec2i(0,1)));
     let out=select(vec2f(0.0),-g/max(length(g),1e-6),length(g)>1e-5);
-    let seed=pcg_hash((i+3u*p.count.x*p.count.y)^(p.flags.x*1597334677u));
-    let wanted=min(added*cell*cell*8000.0*min(speed*0.25,2.0),48.0);
+    let wanted=min(events,48.0);
     let count=u32(floor(wanted))+u32(spray_random(seed+3u)<fract(wanted));
     for(var j=0u;j<count;j++){
         if(atomicLoad(&budget[0])>=p.flags.w){break;}

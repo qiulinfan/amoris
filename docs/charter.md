@@ -32,7 +32,7 @@ CPU 保持跨目标确定性；GPU 使用 WebGPU 基线支持的 f32，只在相
 **Pioneer 2026-10-22（`explore/water`、`explore/water-nh`）。** 所有者要求在 Amoris Pioneer 上把水物
 理继续做到前沿水准，并以三个游戏场景验收：河流汇入瀑布、泳池派对、强浪海滩冲浪。为此 Pioneer 越过上
 文 2026-10-21 的交付范围，在 `gpu_resident` 区域上加入以下能力，契约见 [water.md](spec/water.md)
-46–58，测量见 [liquids.md](bench/liquids.md) 7–9：
+46–59，测量见 [liquids.md](bench/liquids.md) 7–10：
 
 - 物体排水的竖直双向耦合：浮体点和游泳者把水面下的体积作为压力水头加到水柱上，水量严格守恒（思路来自
   M. Müller, GDC 2008）。浮力按步末位置线性隐式求值（D. Baraff 与 A. Witkin, SIGGRAPH 1998），阻力隐
@@ -71,6 +71,15 @@ CPU 保持跨目标确定性；GPU 使用 WebGPU 基线支持的 f32，只在相
   光投到水底，阴影在光路出水处查级联阴影，16 个分层由 2×2 像素块交错分担（A. Keller 与 W. Heidrich,
   2001）。光柱即水面下被照亮的光束体（T. Nishita 与 E. Nakamae, SIGGRAPH 1994；K. Iwasaki、Y.
   Dobashi 与 T. Nishita, 2002）。水面以上远离水面的画面不变。
+- 水声（2026-10-22，只做表现）：水花的发射源本来就找出了水在哪里出声（瀑布出唇、急流撞坎、快速涌起的
+  水面、碎浪浪唇、物体入水、水滴落水），听的时候它们还按类统计事件数和耗散的机械功率除以到镜头距离的
+  平方，按左右耳分开，一两帧后读回。音频端按 K. van den Doel（2005）的衰减正弦为每个气泡发声，频率取
+  M. Minnaert（1933）的共振，白水的气泡半径取 G. B. Deane 与 M. D. Stokes（2002）的两段幂律；振幅随
+  半径的 2/3 次方增长（van den Doel 取 3/2），使频谱与 C. Tollefsen 与 B. Byrne（2011）实测的海浪噪
+  声同形。水把耗散功率的 10⁻⁷ 辐射为空气中的声音，由 K. Bolin 与 M. Åbom（2010）及 Tollefsen 与
+  Byrne 的海浪测量定出；满刻度对应 105 dB（单声道 −20 dBFS 为 85 dB，同影院校准 SMPTE RP 200）。气泡
+  超出预算时按能量分层做重要性抽样，保住承载大部分能量的大气泡。用浅水模拟驱动气泡声的思路来自 W.
+  Moss 等（2010）。原生窗口播放，浏览器暂不播放。
 
 验收：`amoris-app` 的 `gpu_frontier_scenes` 用玩家的第一人称动作玩通
 `samples/pool-party`、`samples/river-falls` 和 `samples/surf-beach`；三个样例导出的网页包在 Chrome

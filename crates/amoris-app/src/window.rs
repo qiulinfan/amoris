@@ -73,6 +73,11 @@ impl Host for Play {
             let cam = r.camera();
             audio.set_listener(cam.position, cam.rotation);
             audio.sync(&r.scene.audio);
+            // The water's own sound, from what its spray's sources did a frame or two ago.
+            r.set_water_acoustics(true);
+            if let Some(heard) = r.water_acoustics() {
+                audio.set_water(&water_sources(&heard));
+            }
             let batch = self.game.reader().events(&mut self.events, 256);
             for rec in batch.records {
                 let Ok(ev) = rec.to_json() else { continue };
@@ -141,6 +146,18 @@ impl Host for Play {
         }
         true
     }
+}
+
+/// The renderer's tally of the water's sources, as the audio presenter takes it (same kinds, same
+/// order: water.md 59).
+fn water_sources(
+    heard: &amoris_render::water_acoustics::WaterAcoustics,
+) -> [amoris_audio::water::WaterSource; amoris_audio::water::KINDS] {
+    std::array::from_fn(|k| amoris_audio::water::WaterSource {
+        rate: heard.kinds[k].rate,
+        left: heard.kinds[k].left,
+        right: heard.kinds[k].right,
+    })
 }
 
 fn fail(p: &Problem, code: i32) -> Outcome {

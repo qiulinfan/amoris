@@ -3236,3 +3236,158 @@ Limits:
   pool scatters 0.006 to 0.03 per metre) the shafts are faint beside the forward glow; they stand
   out in water that scatters a few tenths per metre, as they do in real water.
 - No particulates, no wet lens after emerging, and the meniscus does not refract.
+
+## 59. The water's sound (Pioneer, 2026-10-22)
+
+The water made no sound of its own. Nearly all of the sound real water makes is bubbles: air it
+traps when it breaks, falls, splashes or takes a body rings as each bubble closes. The spray's
+emitters (35, 52) already find where that happens; listening, they also tally what reaches the
+camera, and the audio presenter rings bubbles from the tally. Presentation only: nothing reaches
+the world, snapshots, hashes or replays, and a renderer that does not listen draws the same frames
+and the same spray.
+
+### 59.1 The tally
+
+Six kinds of source, each event with the mechanical energy it dissipates:
+
+| Kind | Where (water_spray_compute.wgsl) | An event | Its energy |
+|---|---|---|---|
+| falls | a face whose water falls past the bed below (`face`) | a drop's volume, 1.95 l, leaving the lip | rho g V dh, dh the surface's drop |
+| rapids | fast water against a step in the bed (`face`) | ten drops' volume | 1/2 rho V u^2, the water's speed lost |
+| bursts | a surface rising faster than 0.9 m/s: a bore, a fall's foot (`splash`) | 1/90 m^3 rising | 1/2 rho V w^2 at the rise's speed |
+| breaking | a breaking crest's lip (`splash`) | 1/40 of a metre of crest a second | a saturated bore's loss, rho g c H^3 / (4 (h + H)) with H = 0.78 h |
+| entries | a body entering (`entry`) | volume pushed aside, 8000 a cubic metre at speed | 1/2 rho V v^2 of the water pushed aside |
+| drops | a spray drop landing in water, but a fall's sheet's (`simulate`) | one drop | 1/2 m v^2 for 10 g of spray |
+
+- Every kind but drops is heard from any distance and in full, before the checks that thin the
+  spray drawn far away; drops are the drawn spray's, so they are heard near the camera.
+- An event at distance r adds its energy over max(r^2, 1 m^2), split between the ears by its
+  direction across the camera, pan = dot(direction, right): (1 - pan) / 2 to the left, (1 + pan) / 2
+  to the right. A frame's tally is, per kind, its events and those two sums, in 1/256ths of u32
+  atomics rounded at random so that many faint sources add up: 128 bytes shared by every region,
+  cleared each frame while listening.
+- Two staging buffers take turns carrying the tally back a frame or two later (no lock is held
+  while a buffer maps: a refused map may call back at once). Divided by the frame's simulated time,
+  it gives per kind the events a second and the power a square metre, W/m^2, at each ear
+  (`water_acoustics::WaterAcoustics`).
+- `Renderer::set_water_acoustics(on)` listens; `Renderer::water_acoustics()` returns the newest
+  tally, or silence when no region's spray advanced in the last frame (the water gone). Not
+  listening, the shader returns before tallying and nothing is copied or read. The native
+  window listens and hands each tally to amoris-audio. The browser's viewport does not listen.
+
+### 59.2 Bubbles
+
+amoris-audio's `water` rings each bubble as K. van den Doel's decaying sinusoid ("Physically based
+models for liquid sounds", ACM Transactions on Applied Perception 2(4), 2005):
+
+```text
+a sin(2 pi f(t) t) e^(-d t),   f0 = 3 / r,   d = 0.13 / r + 0.0072 r^(-3/2),   f(t) = f0 (1 + xi d t)
+```
+
+- f0 is M. Minnaert's resonance of a bubble r metres across ("On musical air-bubbles and the sounds
+  of running water", Philosophical Magazine 16(104), 1933); the pitch rises as the bubble rises.
+- Each kind traps its own radii. White water (falls, bursts, breaking and entries) follows G. B.
+  Deane and M. D. Stokes's two slopes ("Scale dependence of bubble creation mechanisms in breaking
+  waves", Nature 418, 2002), r^(-3/2) below the Hinze scale, about 1 mm, and r^(-10/3) above, up to
+  30 to 40 mm. A body's crown falling back and its cavity pinching off break the air up as plunging
+  water does, so entries take white water's radii, rising faster (xi 0.5 against 0.1). Rapids take
+  van den Doel's r^(-2) between 0.5 and 12 mm; landing drops the small bubbles of rain, r^(-5)
+  between 0.2 and 1.2 mm (A. Prosperetti and H. N. Oguz, "The impact of drops on liquid surfaces and
+  the underwater noise of rain", Annual Review of Fluid Mechanics 25, 1993).
+- The amplitude is `a = D r^(2/3)`, with D = u^10 for a uniform u (most bubbles sound faintly, from
+  deeper). van den Doel takes r^(3/2); then Deane and Stokes's radii fall 6 dB an octave from their
+  lowest pitch, a rumble. Above 3 mm a bubble rings the energy a^2 / 4d, growing as r^(2 x 2/3 + 1),
+  while a third octave holds a number of bubbles falling as r^(1 - 10/3): at 2/3 every third octave
+  from a 40 mm bubble's 75 Hz to 1 kHz sounds within 2 dB of the others, 3 dB down at 2.5 kHz and
+  falling about 6.5 dB an octave above. C. Tollefsen and B. Byrne measured that shape over surf
+  ("Dependence of airborne surf noise on wave height", Canadian Acoustics 39(3), 2011): flat within
+  3 dB from 100 Hz to 1.6 kHz, falling 5 to 6 dB an octave above 2 kHz.
+- Each kind's bubbles are scaled so that their mean energy, a^2 / 4d, makes the kind's power the
+  tally's alone, whatever its radii. The water radiates 10^-7 of the power it dissipates as sound in
+  the air, spreading over the half space above it: the two channels' mean squares add to
+  `1e-7 * P / (2 pi)`, P the tally's W/m^2, over the intensity of 105 dB (one channel at -20 dBFS
+  plays 85 dB, as cinema calibrates its channels, SMPTE RP 200).
+- Surf measures the efficiency. K. Bolin and M. Åbom ("Air-borne sound generated by sea waves", JASA
+  127(5), 2010) heard about 60 dB under 0.4 m waves and about 78 dB under 2.0 m ones: the 17.5 dB by
+  which the energy flux such waves bring ashore, (1/8) rho g H^2 sqrt(g h) at h = H / 0.78, grows.
+  Tollefsen and Byrne measured about 65 dB above 100 Hz, 20 m from the high water mark under 1 m
+  waves. A line of breakers whose every metre radiates 10^-7 of that flux sounds as the flux times
+  the efficiency over 2 r, r metres away: 70 dB at 20 m, 65 dB at 60 m.
+- The bubbles are started at random within each 64-sample block, each to one ear, 0.9 there and 0.35
+  at the other (their powers add to 0.93), the left as often as the left's share of the energy.
+  A tanh limits the sum gently; there is no hard clip.
+- Budgets: 24 000 bubbles started a second and 1024 ringing at once, of which thinning plans for
+  768. Each kind's radii are cut into eight bands holding an eighth of its energy each; past the
+  budgets the bands are kept in the share p, proportional to their bubbles' energy over the square
+  root of their cost (their share of both budgets), as importance sampling least spreads the sound's
+  power at a given cost, and kept bubbles ring louder by 1 / sqrt(p). The few big bubbles that carry
+  most of a roar are kept whole and the many small ones thinned: thinned evenly, a rare 40 mm bubble
+  as loud as all those it stood for boomed alone, 22 dB over the surf around it.
+- W. Moss, H. Yeh, J.-M. Hong, M. C. Lin and D. Manocha drove such bubbles from a shallow-water
+  simulation ("Sounding liquids: automatic sound synthesis from fluid simulation", ACM Transactions
+  on Graphics 29(3), 2010); here the spray's emitters find the events and their energy.
+- The synthesizer is plain Rust: kira plays it on its audio thread (`WaterSoundData`), the window
+  sets its sources through atomics, and the same seed makes the same sound.
+
+### 59.3 Checks, cost and limits
+
+`cargo test -p amoris-audio` (`water::tests`):
+
+- `minnaert_and_van_den_doel`, `radii_follow_their_power_law` (the two slopes join continuously at
+  1 mm), `a_bubble_rings_at_its_frequency_and_dies_away` (within 5% of f0 and 8% of d),
+  `the_same_seed_makes_the_same_sound`.
+- `power_follows_the_events_and_the_ears`: twice the drops, twice the power (within 15%); a source
+  at the left sounds mostly left; no events, no sound.
+- `every_kind_sounds_its_power`: the energies of 107 s of started bubbles (up to two million a
+  kind) against the tally's power, each kind within 20% (0.89 to 1.06); white water's are the least
+  even. A watt a square metre
+  plays at -63 dBFS.
+- `thinning_keeps_the_big_bubbles`: 26 000 breaking events a second keep their biggest band whole,
+  their smallest under 5%, within both budgets.
+
+`cargo test -p amoris-render --test water_spray` on Metal, on Vulkan through MoltenVK and as the
+WebGPU baseline (`AMORIS_GPU_MINIMAL`),
+`a_fall_is_heard_by_the_power_it_dissipates_from_where_it_lies`: still water and a renderer not
+listening tally nothing; a 6 m fall of 16 faces is heard at its 1641 events a second and its 188 kW
+over r^2 within 3% from 30 and 60 m, as much at each ear straight ahead, at the right from beyond
+its end; listening leaves the spray as it was.
+
+`cargo test -p amoris-render --test water`, `listening_hears_still_water_and_no_water_as_silence`:
+a renderer not listening hears nothing, still water's tally over simulated time is all quiet, and
+a renderer without water hears silence, so the window's water sound stops with the water.
+
+`cargo run --release -p amoris-app --example water_sound -- --sample <sample> --out out/sound`
+plays the frontier samples through their players' actions (the swimmer jumping in and swimming for
+the ducks, the board paddling out, the tube going over the falls) and writes their sound as WAV and
+the tallies as JSON; `--from <json>` sounds saved tallies again. On the M5, levels through the
+105 dB full scale:
+
+| Sample | Seconds | Leq | 100 ms levels, median / 90% / most | Third octaves |
+|---|---|---|---|---|
+| pool party | 20 | 68.7 dB | 65.4 / 72.3 / 80.0 (the jump) | within 4 dB from 100 Hz to 3.2 kHz |
+| surf beach | 60 | 79.9 dB | 80.1 / 83.3 / 86.6 | within 2 dB from 100 Hz to 2 kHz, -5 at 4 kHz, -14 at 10 kHz |
+| river falls | 20 | 80.1 dB | 72.3 / 82.4 / 93.6 (the tube landing) | within 5 dB from 100 Hz to 2 kHz |
+
+The surf's waves reach the beach after about 15 s of the run, silent until then. The pool's sound is
+the swimmer's entries (69 dB), its spray landing (54 dB) and the water rising (50 dB); the river's
+its falls (80 dB) and the tube's entries (70 dB); the surf's breaking crests (80 dB) and bores
+(67 dB). The cost is in [liquids.md](../bench/liquids.md) 10.
+
+In Chrome 155 (WebGPU on the M5), with the viewport rebuilt, the pool party's and the surf beach's
+exports load and play at 16.7 ms a frame with no WebGPU validation error or script exception
+(`web_play_check`, whose block-placing steps do not apply to them), and `water_pool_check.mjs`
+passes its twelve checks: the spray's compute stage, at WebGPU's eight storage buffers a stage,
+validates in the browser, which does not listen.
+
+Limits:
+
+- The levels are good to several dB, not better: each kind's energy per event is an estimate (a
+  drop stands for 10 g of spray; breaking assumes saturated bores, and a crest a few cells thick
+  counts each of its columns), and one kind of measurement, surf, fixes the efficiency for all.
+- The air between is empty: no absorption of high frequencies over distance, no reflection from the
+  ground, no occlusion by terrain, no Doppler shift. Distance acts as 1/r^2 and direction as two
+  gains, without a head-related transfer.
+- An ear under the water hears what it hears above it.
+- Water that does not trap air is silent: a smooth river, waves lapping without breaking, spray or
+  rain landing on dry ground.
+- The tally arrives a frame or two late, and the browser plays no water sound.

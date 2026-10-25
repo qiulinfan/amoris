@@ -18,6 +18,8 @@ struct Harness {
     /// An occupancy head and the head added since the last advance, for bodies' entries.
     occupancy: Option<[wgpu::Buffer; 2]>,
     rise_s: f32,
+    /// Tally what the sources sound like from the camera (water_acoustics.rs).
+    listen: bool,
 }
 fn read(g: &Gpu, b: &wgpu::Buffer) -> Vec<u32> {
     let stage = g.device.create_buffer(&wgpu::BufferDescriptor {
@@ -108,12 +110,14 @@ impl Harness {
             profiler: GpuProfiler::new(&g.device, &g.queue, false, &g.info),
             occupancy,
             rise_s: 0.0,
+            listen: false,
         }
     }
     fn step(&mut self, g: &Gpu, dt: f32, changed: bool, clear: bool) {
         let mut e = g.device.create_command_encoder(&Default::default());
         e.clear_buffer(&self.pipes.budget, 0, None);
         e.clear_buffer(self.foam.impacts(), 0, None);
+        e.clear_buffer(&self.pipes.acoustics, 0, None);
         self.pool.encode(
             &g.queue,
             &mut e,
@@ -124,6 +128,7 @@ impl Harness {
                 changed,
                 clear,
                 rise_s: std::mem::take(&mut self.rise_s),
+                listen: self.listen,
             },
             &mut self.profiler,
         );
@@ -331,6 +336,7 @@ fn global_birth_budget_is_shared_across_water_regions() {
             changed: true,
             clear: true,
             rise_s: 0.0,
+            listen: false,
         },
         &mut h.profiler,
     );
@@ -344,6 +350,7 @@ fn global_birth_budget_is_shared_across_water_regions() {
             changed: true,
             clear: true,
             rise_s: 0.0,
+            listen: false,
         },
         &mut h.profiler,
     );
@@ -596,5 +603,122 @@ fn a_body_entering_throws_a_crown_once_and_a_slow_one_none() {
         h.rise_s = 1.0;
         h.step(&g, 1.0 / 60.0, true, false);
         assert!(alive(&g, &h, 6).is_empty());
+    }
+}
+
+/// The frame's tally of what the water sounds like from the camera (water_acoustics.rs): per kind
+/// its events a second and the power they dissipate over the square of their distance (W/m^2) at
+/// the left and the right ear.
+fn heard(g: &Gpu, h: &Harness, dt: f32) -> [[f32; 3]; 6] {
+    let words = read(g, &h.pipes.acoustics);
+    std::array::from_fn(|k| std::array::from_fn(|j| words[3 * k + j] as f32 / (256.0 * dt)))
+}
+
+/// Puts the camera at `eye`, `right` its right (the view matrix's first row).
+fn look(g: &Gpu, h: &Harness, eye: [f32; 3], right: [f32; 3]) {
+    for (c, v) in right.iter().enumerate() {
+        g.queue
+            .write_buffer(&h.view, 64 + 16 * c as u64, bytemuck::cast_slice(&[*v]));
+    }
+    g.queue.write_buffer(
+        &h.view,
+        256,
+        bytemuck::cast_slice(&[eye[0], eye[1], eye[2], 0.0]),
+    );
+}
+
+#[test]
+fn a_fall_is_heard_by_the_power_it_dissipates_from_where_it_lies() {
+    let _case = CASE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    for backend in BackendChoice::under_test() {
+        let g = Gpu::headless(backend).expect("spray acoustics need GPU");
+        g.device
+            .on_uncaptured_error(std::sync::Arc::new(|e| panic!("spray acoustics: {e}")));
+        let dt = 1.0 / 60.0;
+        let silent = [[0.0; 3]; 6];
+        let mut still = Harness::new(&g, &flat(1.0));
+        still.listen = true;
+        still.step(&g, dt, true, true);
+        assert_eq!(heard(&g, &still, dt), silent, "still water made a sound");
+        // The fall: 16 faces at x = 8 m, each passing 1 m/s x 0.4 m x 0.5 m = 0.2 m^3/s of water
+        // down 6 m, in drops of 1.95 litres (water_spray.rs `rates`).
+        let mut h = Harness::new(&g, &fall(0, false));
+        h.step(&g, dt, true, true);
+        assert_eq!(heard(&g, &h, dt), silent, "heard without listening");
+        h.listen = true;
+        let watts = 0.2 * 1000.0 * 9.81 * 6.0;
+        let expected = |eye: [f32; 3]| -> f32 {
+            (0..16)
+                .map(|j| {
+                    let z = (j as f32 + 0.5) * 0.5 - eye[2];
+                    watts / ((8.0 - eye[0]).powi(2) + (6.4 - eye[1]).powi(2) + z * z).max(1.0)
+                })
+                .sum()
+        };
+        // Ten frames' tallies, each rounded at random.
+        let listen = |h: &mut Harness, eye: [f32; 3], right: [f32; 3]| {
+            look(&g, h, eye, right);
+            let mut sum = [0.0f32; 3];
+            for _ in 0..10 {
+                h.step(&g, dt, false, false);
+                let falls = heard(&g, h, dt)[0];
+                for j in 0..3 {
+                    sum[j] += falls[j] / 10.0;
+                }
+            }
+            sum
+        };
+        let mut powers = vec![];
+        for eye in [[38.0, 6.4, 4.0], [68.0, 6.4, 4.0]] {
+            let falls = listen(&mut h, eye, [0.0, 0.0, -1.0]);
+            assert!(
+                (falls[0] / (16.0 * 0.2 / 0.00195) - 1.0).abs() < 0.01,
+                "{} events a second",
+                falls[0]
+            );
+            let power = falls[1] + falls[2];
+            assert!(
+                (power / expected(eye) - 1.0).abs() < 0.03,
+                "{power} W/m^2 against {}",
+                expected(eye)
+            );
+            // Straight ahead: as much at the left ear as at the right.
+            assert!((falls[1] / falls[2] - 1.0).abs() < 0.05, "{falls:?}");
+            powers.push(power);
+        }
+        // Twice as far, about a quarter of the power.
+        let ratio = powers[1] / powers[0];
+        let want = expected([68.0, 6.4, 4.0]) / expected([38.0, 6.4, 4.0]);
+        assert!((ratio / want - 1.0).abs() < 0.04, "{ratio} against {want}");
+        // From beyond its end, looking along it, the fall lies at the right.
+        let falls = listen(&mut h, [8.0, 6.4, 40.0], [0.0, 0.0, -1.0]);
+        assert!(falls[1] < 0.01 * falls[2], "{falls:?}");
+        // Listening leaves the spray as it was (the ring's slots are taken in any order).
+        let mut deaf = Harness::new(&g, &fall(0, false));
+        let mut hearing = Harness::new(&g, &fall(0, false));
+        hearing.listen = true;
+        for n in 0..30 {
+            deaf.step(&g, dt, n == 0, n == 0);
+            hearing.step(&g, dt, n == 0, n == 0);
+        }
+        let live = |h: &Harness| {
+            let mut out: Vec<Vec<u32>> = read(&g, &h.pool.particles)
+                .as_chunks::<12>()
+                .0
+                .iter()
+                .filter(|p| f32::from_bits(p[7]) > 0.0)
+                .map(|p| p.to_vec())
+                .collect();
+            out.sort();
+            out
+        };
+        let spray = live(&deaf);
+        assert!(
+            !spray.is_empty() && spray == live(&hearing),
+            "listening changed the spray"
+        );
+        assert_eq!(read(&g, &deaf.pool.state), read(&g, &hearing.pool.state));
     }
 }

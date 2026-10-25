@@ -401,3 +401,41 @@ The shafts take the difference. Sixteen samples a pixel took 2.95 ms; taking the
 sample from the caustics map's texel, and the focus from the nearest one, 2.40 ms; interleaving the
 sixteen over a 2 x 2 block, four a pixel, 1.43 ms. Above the water, away from the surface, the pass
 still dispatches no image work.
+
+## 10. The water's sound (Pioneer, 2026-10-22)
+
+The tally and the synthesizer of [water.md](../spec/water.md) 59 on the M5 (10 GPU cores), macOS,
+Metal, release builds, 2026-10-22. The machine was not checked for other load. Raw recordings,
+tallies and traces stay in ignored `out/`.
+
+**The tally.**
+`cargo run --release -p amoris-app --example water_sound -- --sample surf-beach --ticks 1800` with
+`AMORIS_TRACE=frames=300,skip=1500,out=PATH`, again with `--deaf` (the renderer not listening),
+then `python tools/frame_trace.py diff DEAF LISTEN`: the surf developed (its waves reach the beach
+after about 15 s), the board paddling among the breakers, about 26 000 breaking events a second.
+The same for `--sample river-falls --ticks 600` with `skip=300`, the tube in the gorge above the
+falls. Medians over 300 frames:
+
+| Sample | `water spray emit`, deaf and listening | `water spray simulate`, deaf and listening |
+|---|---|---|
+| surf beach | 0.096, 0.094 ms | 0.017, 0.016 ms |
+| river falls | 0.008, 0.009 ms | 0.013, 0.013 ms |
+
+Listening costs nothing measurable: a few thousand sources a frame add three atomics each to 18
+words. The readback is 128 bytes a frame, through two staging buffers.
+
+**The synthesizer.** `water_sound` sounds each run's tallies offline, 800 samples a tick at 48 kHz,
+on one core:
+
+| Sample | Sound | Synthesis | Share of real time | Most bubbles ringing |
+|---|---|---|---|---|
+| pool party | 20 s | 0.62 s | 3.1% | 526 |
+| surf beach | 60 s | 2.41 s | 4.0% | 712 |
+| river falls | 20 s | 0.78 s | 3.9% | 587 |
+
+Each ringing bubble costs a multiply-add pair a sample, its pitch updated every 64 samples; the
+budget of 1024 at once bounds the synthesizer at about 6% of a core. The recordings' levels and
+spectra are in water.md 59.3.
+
+Not measured: R1 (the RTX 5060 and the 780M) and Direct3D 12; the synthesizer on kira's audio
+thread in a live window (it was timed offline); the browser, which does not play the water's sound.

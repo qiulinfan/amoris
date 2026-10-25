@@ -1811,6 +1811,18 @@ impl Renderer {
         self.water.set_ripples(on);
     }
 
+    /// Whether the water's sound-making sources are tallied for an audio presenter (water.md 59).
+    /// Off by default: nothing is tallied, read back or drawn differently.
+    pub fn set_water_acoustics(&mut self, on: bool) {
+        self.water.set_acoustics(on);
+    }
+
+    /// The newest tally of what the water sounds like from the camera, a frame or two old; `None`
+    /// until one is back, and between them.
+    pub fn water_acoustics(&mut self) -> Option<crate::water_acoustics::WaterAcoustics> {
+        self.water.acoustics()
+    }
+
     /// The ripples' rise over their window, read back at once; `None` until a stirring point has
     /// made them.
     #[cfg(not(target_arch = "wasm32"))]
@@ -3577,6 +3589,7 @@ impl Renderer {
         let ts = trace::mark(&self.trace);
         self.profiler.resolve(&mut enc);
         queue.submit([enc.finish()]);
+        self.water.after_submit();
         self.profiler.after_submit();
         self.picking.after_submit();
         self.occlusion.after_submit();
