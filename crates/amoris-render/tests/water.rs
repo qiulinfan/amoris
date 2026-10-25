@@ -15,8 +15,13 @@ const W: u32 = 320;
 const H: u32 = 180;
 const REGION: u64 = 7;
 
-// MoltenVK crashed with SIGSEGV when these multi-renderer cases opened separate devices in
-// parallel. Serial complete cases pass with the same image assertions and strict GPU errors.
+// Complete cases run one at a time for MoltenVK 1.4.2, whose completed handler for a command
+// buffer's timestamp queries (`MVKCommandEncoder::finishQueries`) reads the query pool without
+// retaining it. The GPU signals the timeline semaphore wgpu waits on before Metal runs that
+// handler, so a renderer dropped after its last frame can free its profiler's query set first, and
+// the handler then crashes the process (SIGSEGV). Run in parallel, 5 of 30 MoltenVK runs crashed
+// so, none without timestamps (`AMORIS_GPU_MINIMAL`) and none on Metal; one at a time, none of 40.
+// MoltenVK retains the pools since KhronosGroup/MoltenVK c0af3a5, after its 1.4.2 release.
 fn gpu() -> Option<(std::sync::MutexGuard<'static, ()>, Gpu)> {
     static CASE: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let case = CASE
@@ -24,19 +29,24 @@ fn gpu() -> Option<(std::sync::MutexGuard<'static, ()>, Gpu)> {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let gpu = Gpu::headless(BackendChoice::from_env()).ok();
     if let Some(gpu) = &gpu {
-        gpu.device.on_uncaptured_error(std::sync::Arc::new(|error| {
-            panic!("water GPU validation failed: {error}");
-        }));
-        gpu.device.set_device_lost_callback(|reason, message| {
-            if reason != wgpu::DeviceLostReason::Destroyed {
-                panic!("water device lost: {reason:?}: {message}");
-            }
-        });
+        strict(gpu);
     }
     if gpu.is_none() {
         eprintln!("no GPU: skipped");
     }
     gpu.map(|gpu| (case, gpu))
+}
+
+/// A validation error or a lost device fails the case with its cause, never as a wrong image.
+fn strict(gpu: &Gpu) {
+    gpu.device.on_uncaptured_error(std::sync::Arc::new(|error| {
+        panic!("water GPU validation failed: {error}");
+    }));
+    gpu.device.set_device_lost_callback(|reason, message| {
+        if reason != wgpu::DeviceLostReason::Destroyed {
+            panic!("water device lost: {reason:?}: {message}");
+        }
+    });
 }
 
 #[test]
@@ -1573,9 +1583,7 @@ fn the_sun_still_scatters_under_water_with_ray_traced_shadows() {
         );
         return;
     }
-    gpu.device.on_uncaptured_error(std::sync::Arc::new(|error| {
-        panic!("water GPU validation failed: {error}");
-    }));
+    strict(&gpu);
     sun_scatters_along_its_refracted_path(&gpu);
 }
 
