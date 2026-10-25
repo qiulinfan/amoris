@@ -59,7 +59,7 @@ mod water_edits;
 pub mod water_foam;
 mod water_medium;
 pub mod water_mesh;
-mod water_nh;
+pub mod water_nh;
 mod water_occupancy;
 mod water_optics;
 pub mod water_reactions;

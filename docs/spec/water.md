@@ -2894,7 +2894,19 @@ crates/amoris-render/src/water_nh.rs with water_nh.wgsl.
   the polynomial, which is never negative, so the pressure always lies between the hydrostatic and
   the exact one and the field stays stable however loosely it is solved. Two cycles of 24 keep waves
   up to kh 2 within a percent of the model's speed there.
-- **One pass.** The system, the bounds, the coefficients, the 48 iterations and the correction are
+- **Four iterations a dispatch** (Pioneer, 2026-10-22). A workgroup of 256 threads holds a span of
+  32 x 32 columns, a tile of 24 x 24 with 4 columns of halo on every side, in its own memory and
+  runs four iterations there. An iteration needs a column's neighbours, so the k-th computes the
+  columns at least k from the span's edge, and after four exactly the tile is right; only it is
+  written back. This is J. Meng and K. Skadron's ghost zone ("Performance modeling and automatic
+  ghost zone optimization for iterative stencil loops on GPUs", ICS 2009,
+  doi:10.1145/1542275.1542313): the halo is computed twice, by its own tile and its neighbour's, and
+  in return the field is read once every four iterations, in 12 dispatches a substep instead of 48.
+  Each column computes what one iteration a dispatch (`nh_iterate`) does, term by term in its order,
+  so the field is the same bit for bit. Deeper blocks lose more to their halo: 16 x 16 tiles of 8
+  iterations took 8.2 ms a step where these take 6.8 (512², below), as Meng and Skadron's model
+  predicts an optimal depth.
+- **One pass.** The system, the bounds, the coefficients, the iterations and the correction are
   dependent dispatches in one compute pass, each its own usage scope (as water_summary.rs's).
 
 ### 55.3 Measured
@@ -2908,10 +2920,12 @@ crates/amoris-render/src/water_nh.rs with water_nh.wgsl.
   `deep_non_hydrostatic_water_stays_stable_and_gains_no_energy`, which fails with one cycle).
 - The surf bay (54) under its swell runs at 3 to 7.3 m/s for 600 s, its kinetic energy following
   the two swell trains' 17-minute beat between 90 and 160 MJ (hydrostatic, 95 to 122 MJ).
-- On the M5, 4 substeps a step, wall time with a 64-byte readback (`time_dispersive_steps`): 1.6,
-  2.9, 6.6 and 12.4 ms at 128², 256², 512 x 256 and 512², against 1.4, 1.3, 1.7 and 2.7 ms
-  hydrostatic and 2.0, 3.4, 5.7 and 11.1 ms with section 49's split. The surf sample runs 2
-  substeps, about 3.5 ms a tick over its 300 s research run.
+- On the M5, 4 substeps a step, wall time with a 64-byte readback (`time_dispersive_steps`): 1.3,
+  2.3, 3.9 and 6.8 ms at 128², 256², 512 x 256 and 512² (one dispatch an iteration: 1.5, 2.9, 6.6
+  and 12.3), against about 1.2, 1.2, 1.6 and 2.6 ms hydrostatic and 2.1, 3.2, 5.4 and 10.6 ms with
+  section 49's split. The pressure's own cost at 512² is 17.5 µs an iteration a substep and 0.21 ms
+  a substep for the system, its bounds, the coefficients and the correction. The surf bay at its 2
+  substeps takes 2.3 ms a tick (3.4 one dispatch an iteration); [liquids.md](../bench/liquids.md) 11.
 
 ## 56. Added mass, water entry and energy (Pioneer, 2026-10-22)
 

@@ -20,7 +20,8 @@
 // it. The substep's source field still holds U^n, and W^n = -B U^n follows from its continuity,
 // so no vertical velocity is stored and a step replays from its checkpoint. The solve is a fixed
 // number of Chebyshev iterations on the Jacobi-preconditioned system from the previous substep's
-// pressure (zero at a tick's first), so a replay computes the same pressure. Dry columns, walls
+// pressure (zero at a tick's first), so a replay computes the same pressure; a dispatch runs four
+// of them on a tile in its workgroup's memory (`nh_block`). Dry columns, walls
 // and the columns outside the window take no flux (Neumann); water too shallow or breaking, and
 // the first column of an open side, stay hydrostatic (q = 0): a bore's front is a hydrostatic
 // shock, as in Yamazaki et al. and SWASH.
@@ -84,8 +85,8 @@ fn coefficients(i: u32, k: u32) -> vec4f {
     let h = 0.5 * state[at(i, k)].y / p.cell;
     return vec4f(-h - 0.5 * slope.x, h - 0.5 * slope.x, -h - 0.5 * slope.y, h - 0.5 * slope.y);
 }
-fn continuity(i: u32, k: u32, updated: bool) -> f32 {
-    let a = coefficients(i, k);
+// B U at a column whose coefficients are `a`.
+fn continuity(a: vec4f, i: u32, k: u32, updated: bool) -> f32 {
     return a.x * u(i, k, updated) + a.y * u(i + 1u, k, updated)
         + a.z * w(i, k, updated) + a.w * w(i, k + 1u, updated);
 }
@@ -122,7 +123,7 @@ fn nh_system(@builtin(global_invocation_id) id: vec3u) {
     // The previous substep's pressure starts the iteration; its direction does not.
     xd_in[n] = vec2f(xd_in[n].x, 0.0);
     let a = coefficients(i, k);
-    let rhs = (continuity(i, k, false) - continuity(i, k, true)) / p.dt;
+    let rhs = (continuity(a, i, k, false) - continuity(a, i, k, true)) / p.dt;
     // Each face to water adds its share; a face to a dry column or a wall carries no correction.
     var diag = 1.0 / state[n].y;
     var couple = vec2f(0.0);
@@ -184,14 +185,14 @@ fn nh_bounds(@builtin(global_invocation_id) id: vec3u, @builtin(local_invocation
 // Sparse Linear Systems", 2nd ed., SIAM 2003, Algorithm 12.1) on the interval [lo, hi]:
 // d_0 = r_0 / centre, d_j = rho_j rho_{j-1} d_{j-1} + 2 rho_j / width r_j, with
 // rho_j = T_j(s) / T_{j+1}(s) and s = cosh(alpha) = centre / width (the interval's half-width),
-// in a form that neither overflows nor cancels. One thread writes a cycle's coefficients.
+// in a form that neither overflows nor cancels. A thread writes each iteration's coefficients.
 fn rho(j: u32, alpha: f32) -> f32 {
     let a = exp(-alpha);
     let e = exp(-2.0 * alpha * f32(j));
     return a * (1.0 + e) / (1.0 + e * a * a);
 }
-@compute @workgroup_size(1)
-fn nh_chebyshev() {
+@compute @workgroup_size(64)
+fn nh_chebyshev(@builtin(local_invocation_index) j: u32) {
     let share = 1.0 - bitcast<f32>(atomicLoad(&bounds[0]));
     let radius = bitcast<f32>(atomicLoad(&bounds[1]));
     let lo = max(share, 1.0 - radius);
@@ -199,13 +200,15 @@ fn nh_chebyshev() {
     let centre = 0.5 * (hi + lo);
     let width = max(0.5 * (hi - lo), 1e-6);
     let alpha = acosh(centre / width);
-    chebyshev[0] = vec2f(0.0, 1.0 / centre);
-    for (var j = 1u; j < 64u; j++) {
+    if (j == 0u) {
+        chebyshev[0] = vec2f(0.0, 1.0 / centre);
+    } else {
         let now = rho(j, alpha);
         chebyshev[j] = vec2f(now * rho(j - 1u, alpha), 2.0 * now / width);
     }
 }
 
+// One iteration a dispatch: the reference `nh_block` matches bit for bit (water_nh.rs `REFERENCE`).
 // A x at a solved column, from the neighbours' current pressure (zero where it is not solved).
 fn apply(n: u32, i: u32, k: u32) -> f32 {
     let s = system[n];
@@ -225,6 +228,88 @@ fn nh_iterate(@builtin(global_invocation_id) id: vec3u) {
     let c = chebyshev[iter.index];
     let d = c.x * xd_in[n].y + c.y * (s.x - apply(n, i, k)) / s.y;
     xd_out[n] = vec2f(xd_in[n].x + d, d);
+}
+
+// BLOCK iterations a dispatch (temporal blocking): a workgroup holds a tile of TILE x TILE columns
+// with BLOCK columns of halo on every side, the span, iterates in its own memory and writes the
+// tile back. An iteration needs a column's neighbours, so each one leaves the outermost ring it
+// computed unknown: iteration j computes the columns at least j + 1 from the span's edge, and after
+// BLOCK of them exactly the tile remains. Every column computes what `nh_iterate` does, term by
+// term in its order, so a dispatch here is BLOCK of those, bit for bit; the halo is computed twice,
+// by its own tile and by its neighbour's, and the field is read once for BLOCK iterations, by 12
+// dispatches a substep instead of 48. Deeper blocks lose more to their halo: 16 x 16 tiles of 8
+// iterations ran slower than these on the M5.
+const TILE: u32 = 24u;
+const BLOCK: u32 = 4u;
+const SPAN: u32 = TILE + 2u * BLOCK;
+const_assert SPAN * SPAN == 1024u;
+var<workgroup> pressures: array<array<f32, 1024>, 2>;
+// A column of the span as a thread holds it: its pressure and direction, its system, and the
+// couplings its +x and +z neighbours keep for their faces to it. Columns outside the region are
+// unsolved: no pressure, no coupling.
+struct Held { x: f32, d: f32, s: vec4f, right: f32, up: f32 }
+fn hold(c: u32, origin: vec2i) -> Held {
+    var h = Held(0.0, 0.0, vec4f(0.0), 0.0, 0.0);
+    let g = origin + vec2i(i32(c % SPAN), i32(c / SPAN));
+    if (all(g >= vec2i(0)) && all(g < vec2i(p.size))) {
+        let i = u32(g.x); let k = u32(g.y); let n = at(i, k);
+        let xd = xd_in[n];
+        h.x = xd.x; h.d = xd.y;
+        h.s = system[n];
+        if (i + 1u < p.size.x) { h.right = system[n + 1u].z; }
+        if (k + 1u < p.size.y) { h.up = system[n + p.size.x].w; }
+    }
+    pressures[0][c] = h.x;
+    return h;
+}
+// Iteration j at column c of the span, if it is at least j + 1 from the span's edge.
+fn iterate(h: ptr<function, Held>, c: u32, j: u32, weights: vec2f) {
+    let e = vec2u(c % SPAN, c / SPAN);
+    if (any(e < vec2u(j + 1u)) || any(e + j + 2u > vec2u(SPAN))) { return; }
+    let before = j % 2u;
+    if ((*h).s.y > 0.0) {
+        var y = (*h).s.y * (*h).x;
+        y += (*h).s.z * pressures[before][c - 1u];
+        y += (*h).right * pressures[before][c + 1u];
+        y += (*h).s.w * pressures[before][c - SPAN];
+        y += (*h).up * pressures[before][c + SPAN];
+        (*h).d = weights.x * (*h).d + weights.y * ((*h).s.x - y) / (*h).s.y;
+        (*h).x = (*h).x + (*h).d;
+    } else {
+        (*h).x = 0.0;
+        (*h).d = 0.0;
+    }
+    pressures[1u - before][c] = (*h).x;
+}
+fn release(h: Held, c: u32, origin: vec2i) {
+    let e = vec2u(c % SPAN, c / SPAN);
+    let g = origin + vec2i(e);
+    if (all(e >= vec2u(BLOCK)) && all(e < vec2u(BLOCK + TILE)) && all(g < vec2i(p.size))) {
+        xd_out[at(u32(g.x), u32(g.y))] = vec2f(h.x, h.d);
+    }
+}
+@compute @workgroup_size(256)
+fn nh_block(@builtin(workgroup_id) tile: vec3u, @builtin(local_invocation_index) lane: u32) {
+    // The span's 1024 columns, four a thread in named variables: indexed arrays of them would live
+    // in the thread's memory, not its registers, and ran slower than one dispatch an iteration.
+    let origin = vec2i(tile.xy * TILE) - vec2i(i32(BLOCK));
+    var a = hold(lane, origin);
+    var b = hold(lane + 256u, origin);
+    var c = hold(lane + 512u, origin);
+    var d = hold(lane + 768u, origin);
+    workgroupBarrier();
+    for (var j = 0u; j < BLOCK; j++) {
+        let weights = chebyshev[iter.index + j];
+        iterate(&a, lane, j, weights);
+        iterate(&b, lane + 256u, j, weights);
+        iterate(&c, lane + 512u, j, weights);
+        iterate(&d, lane + 768u, j, weights);
+        workgroupBarrier();
+    }
+    release(a, lane, origin);
+    release(b, lane + 256u, origin);
+    release(c, lane + 512u, origin);
+    release(d, lane + 768u, origin);
 }
 
 // U = U~ + dt D_f^-1 B^T q on the faces between wet columns inside the region.

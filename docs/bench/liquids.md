@@ -439,3 +439,56 @@ spectra are in water.md 59.3.
 
 Not measured: R1 (the RTX 5060 and the 780M) and Direct3D 12; the synthesizer on kira's audio
 thread in a live window (it was timed offline); the browser, which does not play the water's sound.
+
+## 11. The non-hydrostatic solve in blocks (Pioneer, 2026-10-22)
+
+The temporal blocking of [water.md](../spec/water.md) 55.2 on the M5 (10 GPU cores), macOS, Metal,
+release builds, 2026-10-22. The machine was not checked for other load.
+
+**The step.** `cargo test --release -p amoris-render --test water_frontier time_dispersive_steps --
+--ignored --nocapture`, two runs, wall time a step of 4 substeps with its 64-byte readback; one
+dispatch an iteration is the build before (b3473e6b), run the same day:
+
+| Region | Shallow water | Non-hydrostatic, one dispatch an iteration | Four iterations a dispatch |
+|---|---|---|---|
+| 128² | 1.0 to 1.7 ms | 1.53 ms | 1.28 to 1.31 ms |
+| 256² | 1.20 ms | 2.88 ms | 2.34 to 2.35 ms |
+| 512 x 256 | 1.62 ms | 6.56 ms | 3.91 to 3.94 ms |
+| 512² | 2.56 to 2.59 ms | 12.32 ms | 6.80 ms |
+
+Over shallow water, the pressure costs 1.15 ms a step at 256² (1.65 before), 2.31 at 512 x 256
+(4.85) and 4.22 at 512² (9.62). At 512², with 8, 48 and 96 iterations a substep (`CYCLE` 4, 24 and
+48), a step took 3.96, 6.80 and 10.13 ms: 17.5 µs an iteration a substep, and 0.21 ms a substep for
+the system, its bounds, the coefficients and the correction.
+
+**Shapes tried**, a step at 512² (every one the same field bit for bit):
+
+| Tile, iterations a dispatch | A step |
+|---|---|
+| 24 x 24, 4 (kept) | 6.80 to 6.95 ms |
+| 26 x 26, 3 | 6.94 ms |
+| 28 x 28, 2 | 8.02 to 8.05 ms |
+| 16 x 16, 8 | 8.21 to 8.22 ms |
+| 16 x 16, 8, a thread's four columns in arrays indexed in a loop | 12.67 ms |
+
+Arrays of a thread's columns indexed in a loop lived in its memory, not its registers, and the
+blocks ran no faster than one dispatch an iteration. Sharing the couplings through workgroup memory
+too (all 16 KB of it) gained 3 percent at 512² and nothing at the other sizes; a reciprocal in
+place of the division gained nothing and broke the bit-for-bit match. Both were left out.
+
+**The surf bay** (`SURF_SUBSTEPS=2 SURF_TICKS=600|1800 cargo test --release -p amoris-render --test
+water_frontier surf_bay_research -- --ignored`): the run's time for 1800 ticks less its time for
+600, over the 1200 ticks between, is 2.30 ms a tick, against 3.36 ms one dispatch an iteration
+(`water_nh::REFERENCE` set for the run).
+
+**The same field.** `the_blocked_non_hydrostatic_solve_matches_one_dispatch_an_iteration` finds no
+column differing after 3 s of a deep basin and of a 100 x 36 beach (partial tiles, dry land,
+breaking, an open side), on Metal, on MoltenVK and as the WebGPU baseline. Against the build before,
+both runs' fields after 600 ticks are the same byte for byte, on Metal and on MoltenVK.
+
+**In Chrome.** With the viewport rebuilt, the surf beach's export, whose worker runs the
+non-hydrostatic solve, plays in Chrome 155 on the M5's WebGPU at 16.7 ms a frame with no WebGPU
+validation error or script exception (`web_play_check`, whose block-placing steps do not apply),
+and `water_pool_check.mjs` passes its twelve checks.
+
+Not measured: R1 (the RTX 5060 and the 780M), Direct3D 12, and the pass alone in the browser.

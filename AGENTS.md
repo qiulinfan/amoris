@@ -322,7 +322,9 @@ Changes run renderer water_compute/water_resident/water_summary/water_samples/wa
 water_frontier, physics field_buoyancy/field_hull/resident_swimming/added_mass, runtime
 water_resident_async/water_feedback, and app gpu_water/gpu_floaters/gpu_feedback/gpu_swimming/
 gpu_energy/gpu_frontier_scenes. The non-hydrostatic solve runs two identical Chebyshev cycles,
-never one (water.md 55.2). Rebuild paired web game/viewport and run
+never one (water.md 55.2); its blocked dispatches must match one dispatch an iteration bit for bit
+(water_frontier `the_blocked_non_hydrostatic_solve_matches_one_dispatch_an_iteration`). Rebuild
+paired web game/viewport and run
 actual Chrome worker/resident/probe/floater and water_pool_check.mjs checks. samples/water-pool
 uses real player input and only scores poses/contact; scripts never move the swimmer.
 

@@ -3,7 +3,8 @@
 //! run-up", International Journal for Numerical Methods in Fluids 61(5), 2009. In every substep,
 //! between the MacCormack faces and the donors, a fixed number of Chebyshev iterations solve the
 //! column pressure, whose force is the transpose of the discrete continuity so that it does no
-//! work, and correct the faces the transport then carries. Shader: `water_nh.wgsl`.
+//! work, and correct the faces the transport then carries. A dispatch runs `BLOCK` of the
+//! iterations on a tile in its workgroup's memory (temporal blocking). Shader: `water_nh.wgsl`.
 
 use amoris_assets::water_field::FieldBoundary;
 use bytemuck::{Pod, Zeroable};
@@ -26,7 +27,18 @@ const _: () = assert!(
     ITERATIONS.is_multiple_of(2),
     "the last iteration writes the first pair"
 );
+/// Iterations a dispatch runs on a tile of `TILE` x `TILE` columns in its workgroup's memory
+/// (water_nh.wgsl `nh_block`, whose constants these are).
+const BLOCK: u32 = 4;
+const TILE: u32 = 24;
+const _: () = assert!(
+    CYCLE.is_multiple_of(BLOCK) && (ITERATIONS / BLOCK).is_multiple_of(2),
+    "a dispatch stays in one cycle, and the last writes the first pair"
+);
 const SLOT: u64 = 256;
+/// Run the iterations one dispatch each (`nh_iterate`), the plain definition the blocked solve
+/// matches bit for bit: a test switches it on to check that. It changes no result, only the time.
+pub static REFERENCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -51,6 +63,7 @@ pub(crate) struct WaterNh {
     spectrum: wgpu::ComputePipeline,
     chebyshev: wgpu::ComputePipeline,
     iterate: wgpu::ComputePipeline,
+    block: wgpu::ComputePipeline,
     correct: wgpu::ComputePipeline,
     /// Per state buffer: from the first pressure pair into the second, and back.
     groups: [[wgpu::BindGroup; 2]; 2],
@@ -180,6 +193,7 @@ impl WaterNh {
             spectrum: pipeline("nh_bounds"),
             chebyshev: pipeline("nh_chebyshev"),
             iterate: pipeline("nh_iterate"),
+            block: pipeline("nh_block"),
             correct: pipeline("nh_correct"),
             groups,
         }
@@ -244,9 +258,17 @@ impl WaterNh {
         dispatch(&self.system, 0, 0, columns);
         dispatch(&self.spectrum, 0, 0, columns);
         dispatch(&self.chebyshev, 0, 0, [1, 1]);
-        for k in 0..ITERATIONS {
-            let slot = SLOT * u64::from(k % CYCLE);
-            dispatch(&self.iterate, (k % 2) as usize, slot, columns);
+        if REFERENCE.load(std::sync::atomic::Ordering::Relaxed) {
+            for k in 0..ITERATIONS {
+                let slot = SLOT * u64::from(k % CYCLE);
+                dispatch(&self.iterate, (k % 2) as usize, slot, columns);
+            }
+        } else {
+            let tiles = [size[0].div_ceil(TILE), size[1].div_ceil(TILE)];
+            for b in 0..ITERATIONS / BLOCK {
+                let slot = SLOT * u64::from(b * BLOCK % CYCLE);
+                dispatch(&self.block, (b % 2) as usize, slot, tiles);
+            }
         }
         dispatch(&self.correct, 0, 0, columns);
     }

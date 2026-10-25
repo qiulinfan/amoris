@@ -1092,3 +1092,61 @@ fn surf_bay_research() {
         }
     }
 }
+
+/// The non-hydrostatic solve runs four Chebyshev iterations a dispatch on tiles in workgroup
+/// memory (water_nh.wgsl `nh_block`); one dispatch an iteration (`REFERENCE`) must give the same
+/// field bit for bit: a deep basin, and a beach of 100 x 36 columns (partial tiles) with dry land,
+/// breaking and an open side.
+#[test]
+fn the_blocked_non_hydrostatic_solve_matches_one_dispatch_an_iteration() {
+    use amoris_render::water_nh::REFERENCE;
+    use std::sync::atomic::Ordering;
+    for backend in BackendChoice::under_test() {
+        let gpu = Gpu::headless(backend).expect("non-hydrostatic water requires a GPU");
+        gpu.device
+            .on_uncaptured_error(Arc::new(|e| panic!("blocked solve validation: {e}")));
+        let basin = {
+            let start = field([64, 64], |i, k| {
+                let d = ((i as f32 - 32.0).powi(2) + (k as f32 - 32.0).powi(2)) / 16.0;
+                (-8.8, 8.8 + 0.3 * (-d).exp())
+            });
+            let mut s = step(0.5, 4, 0.0);
+            s.calm_per_s = 0.0;
+            s.physics.nonhydrostatic = true;
+            (start, s)
+        };
+        let beach = {
+            let cell = 0.5;
+            let start = field([100, 36], |i, k| {
+                let x = i as f32 * cell as f32;
+                let bed = -4.0 + 5.0 * (x / 50.0);
+                let d = ((x - 12.0).powi(2) + (k as f32 * 0.5 - 9.0).powi(2)) / 16.0;
+                (bed, (0.6 * (-d).exp() - bed).max(0.0))
+            });
+            let mut s = step(cell, 4, 0.02);
+            s.boundaries[0] = FieldBoundary::Outflow;
+            s.physics.nonhydrostatic = true;
+            s.physics.breaking = true;
+            (start, s)
+        };
+        for (name, (start, s)) in [("basin", basin), ("beach", beach)] {
+            let mut ends = vec![];
+            for reference in [true, false] {
+                REFERENCE.store(reference, Ordering::Relaxed);
+                let mut run = Run::new(&gpu, start.clone());
+                for _ in 0..180 {
+                    run.step(&s, &[]);
+                }
+                ends.push(run.read(&s));
+            }
+            REFERENCE.store(false, Ordering::Relaxed);
+            let differ = ends[0]
+                .columns
+                .iter()
+                .zip(&ends[1].columns)
+                .filter(|(a, b)| a != b)
+                .count();
+            assert_eq!(differ, 0, "{name}: {differ} columns differ after 3 s");
+        }
+    }
+}
