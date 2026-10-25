@@ -60,8 +60,27 @@ def free_port():
         return s.getsockname()[1]
 
 
+CHROME_FOR_TESTING = {
+    "darwin": [("chrome-mac-arm64", "Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"),
+               ("chrome-mac-x64", "Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing")],
+    "win32": [("chrome-win64", "chrome.exe")],
+    "linux": [("chrome-linux64", "chrome")],
+}.get(sys.platform, [])
+
+
+def chrome_for_testing():
+    """Puppeteer's Chrome for Testing, newest version first (tools/chrome_for_testing.mjs says why it
+    comes before the installed Chrome)."""
+    root = os.path.join(os.environ.get("PUPPETEER_CACHE_DIR") or os.path.join(os.path.expanduser("~"), ".cache", "puppeteer"), "chrome")
+    if not os.path.isdir(root):
+        return []
+    version = lambda d: [int(p) if p.isdigit() else 0 for p in d.split("-")[-1].split(".")]
+    paths = [os.path.join(root, d, folder, exe) for d in sorted(os.listdir(root), key=version, reverse=True) for folder, exe in CHROME_FOR_TESTING]
+    return [p for p in paths if os.path.isfile(p)]
+
+
 def find_chrome():
-    for c in CHROMES:
+    for c in chrome_for_testing() + CHROMES:
         if os.path.isfile(c) or shutil.which(c):
             return c if os.path.isfile(c) else shutil.which(c)
     sys.exit("no Chrome or Edge found")

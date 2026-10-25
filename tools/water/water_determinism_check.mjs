@@ -14,6 +14,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { chromeForTesting } from "../chrome_for_testing.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const args = process.argv.slice(2);
@@ -53,7 +54,7 @@ const server = createServer((req, res) => {
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const url = `http://127.0.0.1:${server.address().port}/determinism.html`;
 
-const candidates = {
+const candidates = [...chromeForTesting(), ...({
   darwin: ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"],
   win32: [
     join(process.env.PROGRAMFILES || "C:\\Program Files", "Google\\Chrome\\Application\\chrome.exe"),
@@ -61,7 +62,7 @@ const candidates = {
     join(process.env.LOCALAPPDATA || "", "Google\\Chrome\\Application\\chrome.exe"),
   ],
   linux: ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium"],
-}[process.platform] || [];
+}[process.platform] || [])];
 const chrome = process.env.CHROME || candidates.find((p) => existsSync(p));
 if (!chrome) throw new Error(`no Chrome found (tried ${candidates.join(", ")}); set CHROME=<path>`);
 const profile = mkdtempSync(join(tmpdir(), "amoris-determinism-"));

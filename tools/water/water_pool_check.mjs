@@ -6,6 +6,7 @@ import {createReadStream, createWriteStream, existsSync, mkdirSync, mkdtempSync,
 import {createServer} from "node:http";
 import {tmpdir} from "node:os";
 import {extname, join, resolve, sep} from "node:path";
+import {chromeForTesting} from "../chrome_for_testing.mjs";
 
 const ensure = (ok, message, detail) => { if (!ok) throw Error(message + (detail === undefined ? "" : ": " + JSON.stringify(detail))); };
 const sleep = ms => new Promise(ready => setTimeout(ready, ms));
@@ -118,7 +119,7 @@ else {
     }
     if (process.env.QUERY) { const u = new URL(url); for (const [k, v] of new URLSearchParams(process.env.QUERY)) u.searchParams.set(k, v); url = u.href; }
     report.url = url;
-    const candidates = process.platform === "darwin" ? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"] : process.platform === "win32" ? [join(process.env.PROGRAMFILES || "C:\\Program Files", "Google/Chrome/Application/chrome.exe"), join(process.env["PROGRAMFILES(X86)"] || "C:\\Program Files (x86)", "Google/Chrome/Application/chrome.exe"), join(process.env.LOCALAPPDATA || "", "Google/Chrome/Application/chrome.exe")] : ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium"];
+    const candidates = [...chromeForTesting(), ...(process.platform === "darwin" ? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"] : process.platform === "win32" ? [join(process.env.PROGRAMFILES || "C:\\Program Files", "Google/Chrome/Application/chrome.exe"), join(process.env["PROGRAMFILES(X86)"] || "C:\\Program Files (x86)", "Google/Chrome/Application/chrome.exe"), join(process.env.LOCALAPPDATA || "", "Google/Chrome/Application/chrome.exe")] : ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium"])];
     const executable = process.env.CHROME || candidates.find(existsSync); ensure(executable, "Chrome not found; set CHROME");
     profile = mkdtempSync(join(tmpdir(), "amoris-pool-")); const [vw, vh] = (process.env.VIEWPORT || "1280x720").split("x").map(Number); ensure(vw > 0 && vh > 0, "invalid VIEWPORT");
     chromeLog = createWriteStream(join(out, "chrome.log"));

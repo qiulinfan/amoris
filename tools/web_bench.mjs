@@ -1,8 +1,9 @@
 // Measures a page's frame times in Google Chrome (headless, WebGPU on), driven over the Chrome
 // DevTools Protocol with Node's built-in WebSocket: node tools/web_bench.mjs <url> [seconds]
 // [width] [height]. The page publishes `window.amorisSamples` ({frame_ms, gpu_ms, backend}).
-// A temporary profile is used; the user's Chrome profile is never touched. Chrome is found at its
-// default install path on macOS, Windows and Linux, or at `CHROME=<path>`. `CHROME_FLAGS="..."`
+// A temporary profile is used; the user's Chrome profile is never touched. Chrome is `CHROME=<path>`,
+// else Puppeteer's Chrome for Testing (tools/chrome_for_testing.mjs), else Google Chrome at its
+// default install path on macOS, Windows and Linux. `CHROME_FLAGS="..."`
 // adds switches (e.g. `--force_high_performance_gpu`); `VSYNC=1` keeps Chrome's vsync and frame-rate
 // limit, which the page otherwise runs without; `UNSAFE_WEBGPU=0` leaves out
 // `--enable-unsafe-webgpu` (Chrome's defaults: quantized timestamps, docs/bench/prepass.md 6).
@@ -18,9 +19,10 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { chromeForTesting } from "./chrome_for_testing.mjs";
 
 const [url, seconds = "10", width = "1280", height = "720"] = process.argv.slice(2);
-const candidates = {
+const candidates = [...chromeForTesting(), ...({
   darwin: ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"],
   win32: [
     join(process.env.PROGRAMFILES || "C:\\Program Files", "Google\\Chrome\\Application\\chrome.exe"),
@@ -28,7 +30,7 @@ const candidates = {
     join(process.env.LOCALAPPDATA || "", "Google\\Chrome\\Application\\chrome.exe"),
   ],
   linux: ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium"],
-}[process.platform] || [];
+}[process.platform] || [])];
 const chrome = process.env.CHROME || candidates.find((p) => existsSync(p));
 if (!chrome) throw new Error(`no Chrome found (tried ${candidates.join(", ")}); set CHROME=<path>`);
 const profile = mkdtempSync(join(tmpdir(), "amoris-bench-"));

@@ -23,4 +23,5 @@ At the top stay what `cargo xtask`, CI or several groups use: the check's inputs
 (`crate-graph.toml`, `clippy-determinism.toml`, `lint-fixture/`), `wrap_docs.py`, `webcheck.py`,
 `gpu_matrix.py` with `amd_vkcache.py`, which it loads, `build_viewport.sh`, `build_web.sh`,
 `wasm_toolchain.sh`, `package_game.py`, `amoris_rename.py`, and the shared helpers
-`machine_conditions.py`, `quiet_tables.py`, `web_bench.mjs` and `web_readback.mjs`.
+`machine_conditions.py`, `quiet_tables.py`, `chrome_for_testing.mjs`, `web_bench.mjs` and
+`web_readback.mjs`.
