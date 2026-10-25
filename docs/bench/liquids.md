@@ -761,3 +761,61 @@ the frame are the measure.
 
 Not measured: R1 (ray queries on Vulkan and Direct3D 12, the RTX 5060 and the 780M), the browser's
 rain and wind sea, and a lake kilometres long.
+
+## 20. Shimmer, and rain through the air (Pioneer, 2026-10-23)
+
+The shimmer of [water.md](../spec/water.md) 68 and the rain streaks of 67.3 on the M5, macOS,
+Metal, release builds, 2026-10-23. The machine was not otherwise checked for load.
+
+**Shimmer.**
+`python tools/water_flicker.py samples/pool-party --eye -2,1.8,-1.5 --at 8,-0.5,4 --from 600 --to 660 --box 380,280,1040,560`,
+the party's scene before the rain (063b51c1): 61 frames of the deck view at 1280 x 720 with MSAA,
+the pixels of the water whose luminance flips, changing by more than 0.02 one way and back the next
+frame, in over 30 and over 50 percent of the frames. One switch at a time (`--env`) found what flips
+them:
+
+| | Over 30% | Over 50% | Mean flip rate | Mean second difference |
+|---|---|---|---|---|
+| before | 9148 | 344 | 0.067 | 0.028 |
+| before, no caustics | 759 | 0 | 0.043 | 0.022 |
+| before, no ripples | 2324 | 29 | 0.036 | 0.017 |
+| before, traced reflections (MSAA off) | 8809 | 278 | 0.065 | 0.032 |
+| before, MSAA + TAA | 7 | 0 | 0.007 | 0.011 |
+| caustics smoothed | 4024 | 174 | 0.053 | 0.024 |
+| and the rays through the ripples averaged (now) | 947 | 2 | 0.043 | 0.021 |
+| now, no caustics | 422 | 0 | 0.036 | 0.019 |
+| now, MSAA + TAA | 7 | 0 | 0.007 | 0.010 |
+| now, the party in the rain (its scene now) | 3897 | 16 | 0.047 | 0.018 |
+
+Doubling the glints' roughness or leaving out the wavelets left the count unchanged (4020, 3994),
+and so did averaging the caustic photons' ripples over four texels instead of two (889), which
+would lose the caustics' detail: neither was kept. In the rain the streaks pass across the pixels,
+which flip as they go: that is the rain's own motion.
+
+**Cost.** `AMORIS_TRACE=frames=300,skip=600,out=PATH cargo run --release -p amoris-app --example
+scene_shots -- samples/pool-party --eye -2,1.8,-1.5 --at 8,-0.5,4 --ticks 900`, then `python
+tools/frame_trace.py stats`, medians over 300 frames, two runs of each, alternated. The party in the
+sun, the build before (063b51c1) against this one:
+
+| | Before | Now |
+|---|---|---|
+| frame interval | 10.30, 9.81 ms | 10.04, 10.16 ms |
+| GPU interval coverage | 4.95, 4.68 ms | 4.83, 4.95 ms |
+| `water+foreground` | 3.80, 4.02 ms | 3.99, 3.79 ms |
+| `water caustics` (the resolve) | 0.009, 0.009 ms | 0.013, 0.013 ms |
+
+The smoothing costs the caustics' resolve 0.004 ms; the second ripple lookup is within the runs'
+spread. The party in the rain against the same scene with the rain at 0 mm an hour:
+
+| | No rain | Rain |
+|---|---|---|
+| frame interval | 9.98, 10.32 ms | 10.42, 10.54 ms |
+| GPU interval coverage | 5.06, 5.11 ms | 5.35, 5.28 ms |
+| `water+foreground` (the streaks, the rings) | 3.63, 3.83 ms | 3.84, 3.98 ms |
+| `water ripples` (the drops) | 0.845, 0.845 ms | 0.867, 0.869 ms |
+| `water caustics photons` | 0.630, 0.629 ms | 0.703, 0.702 ms |
+
+12 mm an hour draws 30,672 streaks: the rain costs a frame about 0.3 ms, the streaks most of it.
+The photons pass takes 0.07 ms more as the drops' ripples refract them.
+
+Not measured: R1, and the browser.

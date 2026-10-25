@@ -55,6 +55,7 @@ use crate::picking::{PickRequest, Picking, coverage};
 use crate::post::{Antialiasing, DEPTH, Gtao, Post, SceneFormat, Targets, scene_size};
 use crate::prepass::{Prepass, PrepassMode};
 use crate::profiler::GpuProfiler;
+use crate::rain::Rain;
 use crate::scene::{NEURAL_VARIANT, Part, Resolve, Scene, VARIANTS};
 use crate::shaders;
 use crate::shadows::{self, CASCADES, SHADOW_SIZE, SLICE_PLANES, ShadowCull};
@@ -461,6 +462,8 @@ pub struct Renderer {
     skinning: Skinning,
     ui: Ui,
     particles: Particles,
+    /// Rain falling through the air where the weather says it rains (rain.rs, water.md 67).
+    rain: Rain,
     /// Blended and transmissive instances, sorted and drawn after the sky (transparent.rs).
     transparent: Transparent,
     /// The wall clock of the last frame (particle steps).
@@ -572,6 +575,7 @@ struct Built {
     ocean: Ocean,
     water: Water,
     particles: Particles,
+    rain: Rain,
     post: Post,
     cull: wgpu::ComputePipeline,
     shadow: [wgpu::RenderPipeline; 2],
@@ -1229,6 +1233,7 @@ impl Renderer {
             let water =
                 s.spawn(|| Water::new(device, lit_module, [&frame, &lighting, &textures], format));
             let particles = s.spawn(|| Particles::new(device, format));
+            let rain = s.spawn(|| Rain::new(device, format));
             let post = s.spawn(|| Post::new(device, output));
             let cull = s.spawn(|| compute("cull", "main"));
             let shadow = s.spawn(|| [shadow_pipe(false), shadow_pipe(true)]);
@@ -1283,6 +1288,7 @@ impl Renderer {
                 ocean: ocean.join(),
                 water: water.join(),
                 particles: particles.join(),
+                rain: rain.join(),
                 post: post.join(),
                 cull: cull.join(),
                 shadow: shadow.join(),
@@ -1407,6 +1413,7 @@ impl Renderer {
             skinning: built.skinning,
             ui: built.ui,
             particles: built.particles,
+            rain: built.rain,
             transparent: Transparent::new(device, built.transparent),
             last_frame_s: None,
             overlays: built.overlays,
@@ -1979,6 +1986,7 @@ impl Renderer {
             let ocean = s.spawn(|| self.ocean.set_format(device, &self.lit_module, format));
             let water = s.spawn(|| self.water.set_format(device, &self.lit_module, format));
             let particles = s.spawn(|| self.particles.set_format(device, format));
+            let rain = s.spawn(|| self.rain.set_format(device, format));
             let overlays = s.spawn(|| self.overlays.set_format(device, format));
             // The passes that read the opaque pass's depth, and the prepass that draws it, follow
             // its samples.
@@ -2002,6 +2010,7 @@ impl Renderer {
             ocean.join();
             water.join();
             particles.join();
+            rain.join();
             overlays.join();
             ((forward.join(), transparent.join()), sky.join(), rebuilt)
         });
@@ -3151,6 +3160,7 @@ impl Renderer {
             } else {
                 Vec::new()
             },
+            drawn_t,
             &mut self.profiler,
         );
         self.batches.reset(&mut enc);
@@ -3163,6 +3173,13 @@ impl Renderer {
         }
         self.particles
             .update(&device, &queue, &mut enc, &self.scene.emitters, frame_dt);
+        self.rain.update(
+            &queue,
+            self.scene.weather.rain,
+            self.scene.weather.wind,
+            cam.position.to_array(),
+            drawn_t,
+        );
         self.splash_frame(cam.position.to_array(), frame_dt);
         for f in [self.fluid.as_mut(), self.splash_fluid.as_mut()]
             .into_iter()
@@ -3739,6 +3756,13 @@ impl Renderer {
             f.draw_surface(device, pass, &self.view_buf.buf);
         }
         self.particles.draw(device, pass, &self.view_buf.buf);
+        let [x, _, z] = self.rain.eye();
+        self.rain.draw(
+            device,
+            pass,
+            &self.view_buf.buf,
+            self.water.field_over(x, z),
+        );
         // Editor overlays are never jittered.
         self.overlays.draw_grid(device, pass, &self.view_stable.buf);
     }

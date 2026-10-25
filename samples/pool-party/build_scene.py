@@ -2,7 +2,9 @@
 
 The pool is 16 x 8 m: a 1.1 m shallow end, a ramp, and a 2.6 m deep end under a diving board.
 Its water is a resident field with dispersive surface waves; bodies push it aside
-(WaterDisplacement), so guests' cannonballs and the player's own jumps make real waves.
+(WaterDisplacement), so guests' cannonballs and the player's own jumps make real waves. The party
+goes on in the rain: a gusting breeze from the shallow end drifts what floats toward the deep end,
+and the rain rings the water under an overcast sky (water.md 67).
 """
 from pathlib import Path
 import json
@@ -151,11 +153,12 @@ def main():
         entity(name, {"Transform": {"position": centre, "rotation": rotation or [0, 0, 0, 1]},
                       "Model": {"mesh": mesh, "scale": scale, "color": color, **extra}})
 
+    # An overcast afternoon: the sun through the clouds, a grey sky lighting everything, haze.
     entity("Sun", {"Transform": {"rotation": [-0.38, -0.36, -0.16, 0.83]},
-        "Light": {"kind": "directional", "intensity": 10, "color": [1, 0.95, 0.86],
+        "Light": {"kind": "directional", "intensity": 3.5, "color": [0.86, 0.9, 1.0],
                   "shadows": True}})
-    entity("Sky", {"Environment": {"ambient": 0.9, "bloom": 0.03, "fog_density": 0.0006,
-        "fog_color": [0.66, 0.8, 0.94]}})
+    entity("Sky", {"Environment": {"sky": "color", "sky_color": [0.42, 0.46, 0.52],
+        "ambient": 1.1, "bloom": 0.05, "fog_density": 0.006, "fog_color": [0.52, 0.56, 0.61]}})
 
     # ---- the pool shell: tiles, ramp, deep end, steps, walls, coping and deck ----------------
     tile = [0.55, 0.82, 0.86, 1]
@@ -232,7 +235,8 @@ def main():
             # A tiled pool keeps its ripples for tens of seconds: a quarter of the calm damping
             # the open sea takes (water.md 51).
             "friction": 0.01, "calm_per_s": 0.05, "substeps": 2, "dry_below": 0,
-            "physics": {"dispersion": True, "breaking": False, "falls_m": 0},
+            "physics": {"dispersion": True, "breaking": False, "falls_m": 0, "wind": True,
+                        "rain": True},
             "look": {"style": "Smooth", "surround_m": 0,
                 "fog": [0.03, 0.2, 0.24, 0.012], "absorb": [0.16, 0.03, 0.016],
                 "scatter": [0.006, 0.022, 0.03]},
@@ -341,6 +345,11 @@ def main():
         "size": 18, "offset": [24, 88], "color": [1, 0.9, 0.5, 1]}})
     entity("Shout", {"PartyShout": {}, "UiText": {"text": "", "size": 22, "anchor": "bottom_left",
         "offset": [24, 40], "color": [1, 1, 1, 1]}})
+    # The weather, last so every other entity keeps its id: a breeze of 5 m/s from the shallow
+    # end gusting by a third, and heavy rain of large drops.
+    entity("Breeze", {"Wind": {"from_deg": 270.0, "speed": 5.0, "gust": 0.3, "gust_period": 6.0,
+                               "gust_length": 30.0}})
+    entity("Shower", {"Rain": {"intensity_mm_h": 12.0, "drop_mm": 2.5}})
     write_json("scene.json", {"format": "amoris-scene", "version": 1, "entities": entities})
 
     instruments = []

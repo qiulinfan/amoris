@@ -3,6 +3,7 @@
 A 16 × 8 m backyard pool on a resident GPU water field: a shallow end with entry steps, a ramp,
 and a 2.6 m deep end under a diving board. Beach balls, swim rings, a raft, two dinghies and eight
 rubber ducks float in it; three guests take turns cannonballing off the board every four seconds.
+The party goes on in the rain, under an overcast sky.
 
 From the repository root:
 
@@ -24,6 +25,9 @@ water and its eye's position, and the events `party.duck`, `party.splash` and `p
 
 ## What the water does
 
+- A breeze of 5 m/s blows from the shallow end, gusting by a third, and drifts everything that floats
+  slowly toward the deep end. Heavy rain, 12 mm an hour, rings the water around you and adds its
+  depth a millimetre at a time.
 - Every floating body and the swimmer push the water aside with their volume under the surface,
   spread over their waterplane and wider the deeper they are, so they make their own waves and
   bob on everyone else's.

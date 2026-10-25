@@ -8,7 +8,7 @@
 // "Caustics Mapping: An Image-Space Technique for Real-Time Caustics", IEEE TVCG 13(2), 2007; here
 // in the height field's own plane rather than the light's image space.
 struct Region { origin:vec2f, cell:f32, time:f32, count:vec4u, absorb:vec4f, scatter:vec4f, surround:vec4f, fog:vec4f, optics:vec4f, ripple:vec4f }
-struct Map { origin:vec2f, texel:f32, on:f32, size:vec2u, unused:vec2u, sigma:vec4f }
+struct Map { origin:vec2f, texel:f32, on:f32, size:vec2u, blend:f32, unused:u32, sigma:vec4f }
 @group(0) @binding(0) var<uniform> view:View;
 @group(0) @binding(1) var<uniform> region:Region;
 @group(0) @binding(2) var<storage,read> water:array<vec4f>;
@@ -22,6 +22,9 @@ struct Map { origin:vec2f, texel:f32, on:f32, size:vec2u, unused:vec2u, sigma:ve
 // regions, water.md 64.3, gathers each region's own texels in passes of their own).
 struct Part { first:vec2u, count:vec2u, dry:vec4u }
 @group(0) @binding(8) var<uniform> part:Part;
+// Each texel's light as the map last showed it, which this frame's photons move toward by
+// `map.blend` (water_caustics.rs `SMOOTH_S`).
+@group(0) @binding(9) var<storage,read_write> shown:array<f32>;
 // Air over water.
 const ETA:f32=0.75;
 // A texel's light through flat water, in fixed-point units, and photons along a texel's side.
@@ -144,8 +147,9 @@ fn photons(@builtin(global_invocation_id) id:vec3u){
         if(units!=0u){atomicAdd(&accum[u32(cell.x)+map.size.x*u32(cell.y)],units);}
     }
 }
-// Each texel: x the light it gathered over flat water's, y the depth to the bed, w the surface
-// (a dry texel: 1, 0, and w far below anything). Resolving clears the sums for the next frame.
+// Each texel: x the light it gathered over flat water's, moved toward this frame's from what the
+// map last showed, y the depth to the bed, w the surface (a dry texel: 1, 0, and w far below
+// anything). Resolving clears the sums for the next frame.
 @compute @workgroup_size(8,8)
 fn resolve(@builtin(global_invocation_id) id:vec3u){
     if(any(id.xy>=part.count)){return;}
@@ -155,7 +159,8 @@ fn resolve(@builtin(global_invocation_id) id:vec3u){
     let here=level_at(map.origin+(vec2f(texel)+0.5)*map.texel);
     var out=vec4f(1.0,0.0,0.0,-1e4);
     if(part.dry.x==0u&&here.wet&&here.surface>here.bed){
-        out=vec4f(min(f32(units)/UNIT,16.0),here.surface-here.bed,0.0,here.surface);
+        out=vec4f(mix(shown[i],min(f32(units)/UNIT,16.0),map.blend),here.surface-here.bed,0.0,here.surface);
     }
+    shown[i]=out.x;
     textureStore(out_map,vec2i(texel),out);
 }

@@ -10,6 +10,12 @@ pub(crate) const MAP: u32 = 512;
 const SUB: u32 = 2;
 /// The finest texel, m: wavelets shorter than four of them fade out of the map.
 const FINEST_M: f32 = 0.03;
+/// The map's light follows the photons with this time constant, in drawn simulated time, s. Four
+/// photons a texel land in it or in its neighbour as the surface moves under them, and a texel
+/// whose light jumps from frame to frame flickers on the bed; a camera's shutter or the eye would
+/// blend about this much. While drawn time stands still (paused, or a frame drawn again) the map
+/// stands still too, as the foam does.
+const SMOOTH_S: f32 = 0.04;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -18,7 +24,9 @@ struct Params {
     texel: f32,
     on: f32,
     size: [u32; 2],
-    unused: [u32; 2],
+    /// How far this frame's photons move each texel's light from what the map showed, 0 to 1.
+    blend: f32,
+    unused: u32,
     /// Extinction of the sun's direct light per metre of water (rgb).
     sigma: [f32; 4],
 }
@@ -34,6 +42,9 @@ pub(crate) struct Source<'a> {
     pub ripples: (&'a wgpu::TextureView, &'a wgpu::Sampler),
 }
 
+/// Where the map lies: its corner (world x, z), its texel (m) and its size in texels.
+type Placement = ([f32; 2], f32, [u32; 2]);
+
 pub(crate) struct Caustics {
     layout: wgpu::BindGroupLayout,
     pipelines: [wgpu::ComputePipeline; 2],
@@ -42,6 +53,11 @@ pub(crate) struct Caustics {
     /// Each pass's texels (water_caustics.wgsl `Part`), kept between frames.
     parts: Vec<wgpu::Buffer>,
     accum: wgpu::Buffer,
+    /// Each texel's light as the map last showed it (water_caustics.wgsl `shown`).
+    shown: wgpu::Buffer,
+    /// Where the map last lay and the drawn time it showed: another place, or time gone back,
+    /// starts it afresh.
+    placed: Option<(Placement, f64)>,
     on: bool,
     /// `AMORIS_CAUSTICS=off` turns them off (natively; on in the browser).
     enabled: bool,
@@ -73,6 +89,12 @@ impl Caustics {
         });
         let accum = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("water caustics light"),
+            size: u64::from(MAP * MAP) * 4,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let shown = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("water caustics shown"),
             size: u64::from(MAP * MAP) * 4,
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
@@ -122,6 +144,7 @@ impl Caustics {
                     count: None,
                 },
                 buffer(8, wgpu::BufferBindingType::Uniform),
+                buffer(9, wgpu::BufferBindingType::Storage { read_only: false }),
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -157,6 +180,8 @@ impl Caustics {
             params,
             parts: Vec::new(),
             accum,
+            shown,
+            placed: None,
             on: true,
             enabled: !matches!(
                 std::env::var("AMORIS_CAUSTICS").as_deref(),
@@ -179,7 +204,8 @@ impl Caustics {
     }
 
     /// Gathers this frame's map under `sources`, the first the region nearest the camera and the
-    /// rest the regions joined to it (none, or no sun: caustics off).
+    /// rest the regions joined to it (none, or no sun: caustics off), at drawn simulated time `t`.
+    #[allow(clippy::too_many_arguments)]
     pub fn encode(
         &mut self,
         device: &wgpu::Device,
@@ -187,6 +213,7 @@ impl Caustics {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::Buffer,
         sources: Vec<Source<'_>>,
+        t: f64,
         profiler: &mut crate::profiler::GpuProfiler,
     ) {
         let Some(s) = sources.first().filter(|_| self.enabled) else {
@@ -194,6 +221,7 @@ impl Caustics {
                 queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&Params::zeroed()));
                 self.on = false;
             }
+            self.placed = None;
             return;
         };
         // One map over them all.
@@ -208,6 +236,15 @@ impl Caustics {
         let extent = [high[0] - low[0], high[1] - low[1]];
         let texel = (extent[0].max(extent[1]) / MAP as f32).max(FINEST_M);
         let size = extent.map(|e| ((e / texel).ceil() as u32).clamp(1, MAP));
+        let placed = (low, texel, size);
+        let blend = match self.placed {
+            Some((at, last)) if at == placed && t > last => {
+                1.0 - (-((t - last) as f32) / SMOOTH_S).exp()
+            }
+            Some((at, last)) if at == placed && t == last => 0.0,
+            _ => 1.0,
+        };
+        self.placed = Some((placed, t));
         queue.write_buffer(
             &self.params,
             0,
@@ -216,7 +253,8 @@ impl Caustics {
                 texel,
                 on: 1.0,
                 size,
-                unused: [0; 2],
+                blend,
+                unused: 0,
                 sigma: [s.sigma[0], s.sigma[1], s.sigma[2], 0.0],
             }),
         );
@@ -275,6 +313,7 @@ impl Caustics {
                         (6, wgpu::BindingResource::TextureView(s.ripples.0)),
                         (7, wgpu::BindingResource::Sampler(s.ripples.1)),
                         (8, self.parts[p].as_entire_binding()),
+                        (9, self.shown.as_entire_binding()),
                     ]
                     .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource }),
                 })
@@ -415,6 +454,7 @@ mod tests {
                 sigma: [0.0; 3],
                 ripples: (&blank, &sampler),
             }],
+            0.0,
             &mut profiler,
         );
         let stage = gpu.device.create_buffer(&wgpu::BufferDescriptor {

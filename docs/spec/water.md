@@ -2801,8 +2801,9 @@ B-spline, with the subgrid wavelets the surface shading draws, shorter than four
 cm faded out) refracts them, and they splat where they land. Flat water therefore gathers exactly
 its own light, and waves only move it. The forward pass (water_caustics_light.wgsl, `caustic_light`)
 multiplies the sun on anything under the surface by that light, its contrast growing with the
-point's depth up to the bed's, and by the absorption along the refracted path down. The map sits at
-group 1, bindings 15 and 16. `AMORIS_CAUSTICS=off` turns it off. It costs about 1 ms of GPU time on
+point's depth up to the bed's, and by the absorption along the refracted path down. Each texel's
+light follows its photons over 40 ms of drawn time (68). The map sits at group 1, bindings 15 and
+16. `AMORIS_CAUSTICS=off` turns it off. It costs about 1 ms of GPU time on
 the M5 for the pool sample.
 
 Photon splatting for caustics follows C. Wyman and S. Davis, "Interactive Image-Space Techniques for
@@ -3098,9 +3099,10 @@ A texture holds the rise, its slopes (fourth-order differences) and their mean s
 mip levels. The surface shading (forward.wgsl `ripple_at`) samples it at the level of the pixel's
 footprint, adds the slopes to the normal and turns the slope variance the footprint filters out into
 roughness (GGX alpha^2 grows by twice it), so distant ripples widen the sun's glints instead of
-aliasing. The ripples fade over the window's sponge. The caustics' photons (53) refract through them
-too, averaged over two of the map's texels as the wavelets fade there, so a duck's rings draw rings
-of light on the pool's floor.
+aliasing. The refracted and reflected rays take the ripples averaged over four pixels (68). The
+ripples fade over the window's sponge. The caustics' photons (53) refract through them too, averaged
+over two of the map's texels as the wavelets fade there, so a duck's rings draw rings of light on
+the pool's floor.
 
 The ripples draw as normals and caustics, not as geometry: the surface's vertices are the columns,
 0.25 to 0.5 m apart, and the camera-side medium and the depth mask must keep agreeing with the drawn
@@ -4329,6 +4331,19 @@ under a gusting gale and rain, crates drifting downwind in it and a lighthouse o
   the least phase speed of capillary-gravity waves (at 1.7 cm), and fades over 0.45 s. Where a pixel
   is wider than a third of their wavelength, their slopes give way to the roughness they leave; a
   pixel wider than two thirds of it finds no ring at all.
+- Rain falls through the air as streaks (rain.rs, rain.wgsl): in a box of world-anchored cells 24 m
+  across and 12 m high around the camera, each cell's drops at places hashed from the cell and the
+  drop, falling at their terminal speed, 9.65 - 10.3 exp(-0.6 D) m/s for drops of D mm (D. Atlas,
+  R. C. Srivastava and R. S. Sekhon, "Doppler radar characteristics of precipitation at vertical
+  incidence", Rev. Geophys. 11(1), 1973), carried by 60% of the wind and wrapping from the box's
+  bottom to its top. Each is a quad along its path over 1/30 s, as wide as the drop or a pixel and
+  a half, as opaque as it covers of that (0.7 where it covers a pixel), lit like the haze at the
+  horizon twice over, blended over the scene and tested against its depth, so the water's surface
+  hides what falls under it seen from above. A drop under the surface of the region under the eye
+  (by its cell's column, read from the region's field on the GPU) has landed and is not drawn, so
+  the view from under that water has no rain in it. 8% of the drops a real rain holds are drawn,
+  at most 49,152. Their fall follows the drawn time, worked out in f64: the rain stands still while
+  time does. Not under a liquid.
 
 ### 67.4 Traced reflections
 
@@ -4385,6 +4400,16 @@ traces the water's reflected rays:
   SwiftShader; the other samples' digests are unchanged, in Chrome too.
 - `samples/water-storm` served headless (`amoris serve`, `amoris call capture`): the crates drift
   downwind, one 6.7 m in 25 s.
+- `cargo test -p amoris-render --test rain`, on Metal, Vulkan and the WebGPU baseline device: rain
+  of 20 mm an hour brightens 43% of the sky's pixels and 28% of a dark wall's with its streaks;
+  drawn a frame later it has fallen, drawn again at that moment it has not moved; without rain
+  nothing changes. `--lib rain`: the drops' speeds are the fit's. `--test water
+  rain_ends_at_a_regions_surface`: from under a region's surface, heavy rain changes none of the
+  linear color below the horizon (1.9% of it with the drops under the surface drawn).
+- `samples/pool-party` goes on in the rain under an overcast sky: a breeze of 5 m/s from the shallow
+  end gusting by a third, 12 mm an hour of 2.5 mm drops. `gpu_frontier_scenes`' pool party still
+  collects every duck by swimming, and its digests were recorded again; Metal, Vulkan, the WebGPU
+  baseline, Chrome and SwiftShader (its first 120 ticks) agree on them.
 
 The cost is in [liquids.md](../bench/liquids.md) 19.
 
@@ -4396,8 +4421,52 @@ Limits:
 - The stress acts on the depth-averaged flow and the drift layer is the floaters' alone: the field,
   its foam and the ripples do not run faster at the surface.
 - Rain arrives a millimetre at a time (a column's depth steps by 1 mm every 6 minutes of heavy
-  rain); nothing soaks into the bed or runs off ground outside the regions. No streaks fall through
-  the air, and nothing beyond the regions' wet bed (61.2) gets wet.
+  rain); nothing soaks into the bed or runs off ground outside the regions. Nothing beyond the
+  regions' wet bed (61.2) gets wet, no drop splashes on the ground or on bodies, and the streaks
+  are lit by the haze alone, not by the sun or the lights near them. Only a region's surface ends
+  the drops: rain falls under roofs, and through the water of a region beside the one under the
+  eye when seen from under it.
 - Traced reflections take one ray a pixel along the water's normal, so they are as sharp as the
   water's slopes make them; the hit's own specular and the punctual lights are left out; the water,
   the sea, splats and particles are not in the top level, and reflect only through the sky.
+
+## 68. Water that does not shimmer (Pioneer, 2026-10-23)
+
+The owner saw the pool flicker. Drawn every tick from a fixed camera on the deck (`scene_shots`,
+1280 x 720 with MSAA, the M5's default; ticks 600 to 660 while the guests cannonball), 9148 pixels
+of the water changed their luminance by more than 0.02 one way and then back in over 30 percent of
+the frames, and 344 in over half of them. Drawing the same ticks with one thing changed at a time
+found the causes: the caustics (off: 759 such pixels left) and the ripples (off: 2324), and of the
+ripples their bending of the refracted rays (straight through them: 979) and of the reflected ones
+(2316); not the reflections' method (traced: 8809), the sun's glints (twice the roughness, or no
+wavelets: unchanged) nor the floaters, which bob smoothly tick to tick. TAA hides it (7 pixels), but
+the M5 and the browser draw without TAA by default, and the cause is in the water.
+
+- The caustics: four photons a texel land in it or in its neighbour as the surface moves under
+  them, and every frame gathered its map afresh, so a texel's light jumped from frame to frame. Each
+  texel's light now follows its photons with a time constant of 40 ms of drawn simulated time
+  (water_caustics.rs `SMOOTH_S`): a camera's shutter or the eye blends about that much. While drawn
+  time stands still the map stands still, as the foam does; another place for the map, or time gone
+  back, starts it afresh.
+- The rays: one ray a pixel through ripples the pixel spans lands on another bit of the bed's
+  stripes and caustics, or of the bank, every frame, where the pixel's rays really fan out and blur
+  them. The refracted and reflected rays now take the ripples averaged over four pixels (the
+  ripple map's level two up); the full slopes still light the glints and set the Fresnel term, and
+  the slope variance the pixel spans still roughens them (57.5). The rain's rings bend the rays
+  only where the pixel resolves them, a few pixels to a ring's wavelength (67.3).
+
+Drawn again the same way, 947 pixels flip in over 30 percent of the frames and 2 in over half; the
+mean share of flipping frames fell from 0.067 to 0.043 and the mean second difference of luminance
+from 0.028 to 0.021. Ripples and caustics still move as the water does. `water`'s
+`tiles_fed_one_by_one_draw_as_a_fresh_renderer_draws_them` compares the two renderers once the
+caustics have settled, as it already left out the foam's and spray's histories.
+
+The cost is in [liquids.md](../bench/liquids.md) 20.
+
+Limits:
+
+- Some shimmer stays where ripples focus the caustics (422 flipping pixels without caustics, 947
+  with), and a caustic pattern that moves fast trails by about 40 ms.
+- Averaged over four pixels, ripples finer than that no longer shift what the water shows; they
+  blur it only as roughness, in the glints and the sky's reflection, not in the refracted bed or the
+  reflected bank.

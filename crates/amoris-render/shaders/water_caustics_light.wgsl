@@ -1,7 +1,7 @@
 // Caustics under water (water_caustics.rs): the sun reaching a point under a water region's
 // surface is focused by the waves above it (the map's gathered light, its contrast growing with
 // the point's depth up to the bed's) and absorbed along its refracted path down.
-struct CausticsMap { origin:vec2f, texel:f32, on:f32, size:vec2u, unused:vec2u, sigma:vec4f }
+struct CausticsMap { origin:vec2f, texel:f32, on:f32, size:vec2u, blend:f32, unused:u32, sigma:vec4f }
 @group(1) @binding(15) var caustics_map: texture_2d<f32>;
 @group(1) @binding(16) var<uniform> caustics: CausticsMap;
 fn caustic_texel(q: vec2i) -> vec4f {

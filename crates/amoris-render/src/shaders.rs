@@ -34,6 +34,13 @@ pub fn source(name: &str) -> String {
         "skin" => include_str!("../shaders/skin.wgsl"),
         "ui" => include_str!("../shaders/ui.wgsl"),
         "particles" => include_str!("../shaders/particles.wgsl"),
+        "rain" => {
+            return format!(
+                "{COMMON}\n{}\n{}",
+                include_str!("../shaders/water_field.wgsl"),
+                include_str!("../shaders/rain.wgsl")
+            );
+        }
         "fluid_mpm" => include_str!("../shaders/fluid_mpm.wgsl"),
         "fluid_surface" => include_str!("../shaders/fluid_surface.wgsl"),
         "water_compact" => include_str!("../shaders/water_compact.wgsl"),

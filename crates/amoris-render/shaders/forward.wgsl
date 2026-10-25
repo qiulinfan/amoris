@@ -1858,6 +1858,15 @@ fn fs_shallow(in: ShallowOut) -> ShallowFragment {
     let n = normalize(vec3f(n0.x - g.x * n0.y, n0.y, n0.z - g.y * n0.y));
     let above = dot(n0,v) >= 0.0;
     let normal = select(-n,n,above);
+    // The rays the surface bends, refracted to the bed and reflected to what stands over it, take
+    // the ripples averaged over four pixels: a pixel's rays fan out over finer ones, and one ray
+    // through them lands on another bit of the bed's stripes and caustics or of the bank every
+    // frame, which shimmers. The finer ones still widen the glints. The rain's rings bend them
+    // only where the pixel resolves them, a few pixels to a ring's wavelength (rain_rings).
+    let wide = ripple_at(in.world.xz, footprint * 4.0);
+    let ray_g = g - stirred.xy + wide.xy;
+    let ray_n = normalize(vec3f(n0.x - ray_g.x * n0.y, n0.y, n0.z - ray_g.y * n0.y));
+    let ray_normal = select(-ray_n,ray_n,above);
     let nv = max(dot(normal,v),1e-4);
     let foam = foam_cover(q0, q1, blend, footprint, max(shallow_foam_at(in.world.xz), wind_foam));
     var smooth_rough = clamp(0.05 + footprint * 0.04, 0.05, 0.3);
@@ -1869,10 +1878,10 @@ fn fs_shallow(in: ShallowOut) -> ShallowFragment {
         rough = sqrt(sqrt(rough * rough * rough * rough + 2.0 * (stirred.z + rained.z)));
     }
     let a = rough * rough;
-    let transmitted_ray = refract(-v,normal,select(1.3333333,0.75,above));
+    let transmitted_ray = refract(-v,ray_normal,select(1.3333333,0.75,above));
     let total_reflection = dot(transmitted_ray,transmitted_ray)<1e-6;
     let f = shallow_fresnel(nv,select(1.3333333,0.75,above));
-    let r = reflect(-v,normal);
+    let r = reflect(-v,ray_normal);
     let ry = vec3f(r.x, max(r.y, 0.02), r.z);
     let levels = f32(textureNumLevels(env_cube) - 1);
     var sky = textureSampleLevel(env_cube, env_sampler, ry, rough * levels).rgb * view.sun_color.w;

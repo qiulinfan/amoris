@@ -387,3 +387,9 @@ record), runtime water `the_weather_reaches_the_feed_and_the_rain_persists`, and
 rain, the storm in Chrome. Traced reflections replace the forward shader's `water_reflect` by
 rt_reflections.wgsl's; a change to either runs render `rt_reflections` and the library's
 `rt_shadows` tests, and liquids.md 19's frame comparison.
+
+The water must not shimmer (water.md 68): its refracted and reflected rays take the ripples and the
+rain's rings averaged over four pixels, and the caustics' map follows its photons over 40 ms of
+drawn time and stands still while drawn time does. A change to the water's shading, the ripples or
+the caustics runs `tools/water_flicker.py` on the pool party's deck view against liquids.md 20
+(its rainy scene: the table's last row).

@@ -1,11 +1,12 @@
 //! Water regions in the renderer (docs/spec/water.md 9): a region's columns draw Smooth and Blocky,
 //! a renderer fed only the tiles that changed draws what a fresh renderer given every tile draws,
-//! and a camera under a region's surface sees the region's fog. Skips when there is no GPU.
+//! a camera under a region's surface sees the region's fog, and rain ends at the surface. Skips
+//! when there is no GPU.
 
 use amoris_assets::frame::{
     BlockLook, ChunkUpdate, EnvironmentView, InstanceUpdate, LightKindView, LightView, Look, Pose,
-    RenderFrame, SeaLookView, SeaView, VoxelUpdate, WaterLookView, WaterTileView, WaterUpdate,
-    WindSeaView,
+    RainView, RenderFrame, SeaLookView, SeaView, VoxelUpdate, WaterLookView, WaterTileView,
+    WaterUpdate, WeatherView, WindSeaView,
 };
 use amoris_render::{Antialiasing, BackendChoice, CameraState, Gpu, Gtao, Renderer};
 use glam::Vec3;
@@ -930,12 +931,20 @@ fn tiles_fed_one_by_one_draw_as_a_fresh_renderer_draws_them() {
             kept.apply(scene(2 + n as u64, vec![u], false), 0.0);
             let _ = kept.capture_rgba(0.0);
         }
+        // The caustics follow their photons over drawn time (water_caustics.rs `SMOOTH_S`): the
+        // kept renderer draws on half a second with no change, its map settling on the final
+        // water, and the fresh one starts at that time.
+        let settle = 30;
+        for n in 0..settle {
+            kept.apply(scene(2 + (ALL.len() + n) as u64, vec![], false), 0.0);
+            let _ = kept.capture_rgba(0.0);
+        }
         let after = shoot(&mut kept);
         let mut fresh = renderer(&gpu, EYE, AT);
         fresh.set_water_foam(false);
         fresh.set_splashes(false);
         let mut full = scene(1, vec![region(blocky, &ALL, column)], true);
-        full.tick = 1 + ALL.len() as u64;
+        full.tick = 1 + (ALL.len() + settle) as u64;
         full.t_s = full.tick as f64 / 60.0;
         fresh.apply(full, 0.0);
         let want = shoot(&mut fresh);
@@ -967,6 +976,42 @@ fn under_a_regions_surface_the_view_is_its_fog() {
         "blue under the water: {mu:?}"
     );
     assert!(differing(&u, &a) > 0.5, "the fog changes the view");
+}
+
+#[test]
+fn rain_ends_at_a_regions_surface() {
+    let Some((_case, gpu)) = gpu() else { return };
+    // Under the surface, looking level: the lower half of the view sees the pit's floor and walls
+    // through the water, never the surface its drops ring. Rain over the region draws nothing
+    // there, its drops landing on the surface above.
+    let shot = |rain: bool| {
+        let mut r = renderer(&gpu, Vec3::new(6.0, 1.3, 6.0), Vec3::new(10.0, 1.3, 9.0));
+        r.set_water_ripples(false);
+        let mut f = scene(1, vec![region(false, &ALL, column)], true);
+        f.weather = Some(WeatherView {
+            wind: None,
+            rain: rain.then_some(RainView {
+                intensity_mm_h: 50.0,
+                drop_mm: 3.0,
+            }),
+        });
+        r.apply(f, 0.0);
+        let _ = shoot(&mut r);
+        let img = r.capture_hdr(0.0).2;
+        img[img.len() / 2..].to_vec()
+    };
+    let (dry, wet) = (shot(false), shot(true));
+    // A streak is faint at this size: any change of the linear color counts.
+    let d = dry
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(wet.as_chunks::<4>().0)
+        .filter(|(p, q)| (0..3).any(|i| (p[i] - q[i]).abs() > 1e-3))
+        .count() as f64
+        / (dry.len() / 4) as f64;
+    eprintln!("under the water, rain changes {d:.5} of the lower half");
+    assert!(d < 0.0005, "rain drawn under the water: {d}");
 }
 
 #[test]

@@ -29,6 +29,7 @@ pub mod picking;
 mod post;
 pub mod prepass;
 pub mod profiler;
+mod rain;
 mod readback;
 #[cfg(not(target_arch = "wasm32"))]
 mod renderdoc;

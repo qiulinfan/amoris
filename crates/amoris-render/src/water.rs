@@ -87,6 +87,9 @@ struct Uniform {
     rain: [f32; 4],
 }
 
+/// The region uniform's size in bytes: a zeroed one binds no water (rain.rs).
+pub(crate) const UNIFORM_BYTES: u64 = std::mem::size_of::<Uniform>() as u64;
+
 /// The region uniform's size in 32-bit words, for the checks that write one by hand.
 #[cfg(test)]
 pub(crate) const UNIFORM_WORDS: usize = std::mem::size_of::<Uniform>() / 4;
@@ -1173,6 +1176,17 @@ impl Water {
         (r.origin, r.cell_m, r.size) = (w.origin, w.cell_m, [w.nx, w.nz]);
         r.columns.clone_from(&w.columns);
         r.all_dirty = true;
+    }
+
+    /// The field of the region drawn over world `(x, z)`: its uniform and columns, bound as
+    /// water_field.wgsl's group 3 bindings 1 and 2 (the rain hides its drops under the surface).
+    pub(crate) fn field_over(&self, x: f32, z: f32) -> Option<(&wgpu::Buffer, &wgpu::Buffer)> {
+        self.regions.values().find_map(|r| {
+            let g = r.gpu.as_ref()?;
+            let (fx, fz) = ((x - r.origin[0]) / r.cell_m, (z - r.origin[1]) / r.cell_m);
+            (fx >= 0.0 && fz >= 0.0 && fx < r.size[0] as f32 && fz < r.size[1] as f32)
+                .then_some((&g.uniform, &g.columns))
+        })
     }
 
     /// The fog of the region whose surface is over `eye`, if any (water.md 9).
