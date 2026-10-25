@@ -10,7 +10,7 @@
 //!     --every 15 --from 1800 --to 2400
 #[path = "../src/water_compute.rs"]
 mod water_compute;
-use amoris_render::{Antialiasing, BackendChoice, CameraState, Gpu, Gtao, Renderer};
+use amoris_render::{Antialiasing, CameraState, Gpu, Gtao, Renderer};
 use amoris_runtime::{Extractor, Project};
 use glam::Vec3;
 use std::sync::Arc;
@@ -103,7 +103,7 @@ fn main() {
             let feed = amoris_assets::Feed::new();
             let mailbox = feed.subscribe();
             let mut extractor = Extractor::default();
-            let gpu = Gpu::headless(BackendChoice::from_env()).unwrap();
+            let gpu = Gpu::headless(amoris_render::host_backend()).unwrap();
             let mut renderer = Renderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, W, H);
             renderer.set_asset_source(Box::new(amoris_render::loader::FileAssets::new(
                 root.clone(),

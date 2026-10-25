@@ -4318,10 +4318,14 @@ Limits:
 - A device that rounds f32 arithmetic otherwise than to nearest even computes other water; the
   probe and the record find it, no run refuses it.
 - FXC does not run these kernels (`boundary_predict` fails to compile, X3500; the owner's decision
-  of 2026-10-23: GPU water on Direct3D 12 needs DXC 1.8.2502 or newer). Nor does it draw any water
-  region, solved on the CPU or the GPU: it cannot compile `fs_shallow` (X3511), the fragment stage
-  of every region surface pipeline, and a Windows machine without the SDK's DXC uses it by default
-  (gpu-matrix.md 14).
+  of 2026-10-23: GPU water on Direct3D 12 needs DXC 1.8.2502 or newer). Nor does it draw any frame
+  of a scene with a water region, solved on the CPU or the GPU: it cannot compile `fs_shallow`
+  (X3511), the fragment stage of every region surface pipeline, which is bound for every region
+  every frame, in view or not, and that invalid pipeline voids the frame's submit, so the whole
+  frame stays black; scenes without water draw as with DXC (R1, 2026-10-24, gpu-matrix.md 14). A
+  Windows host with no backend named and no supported DXC therefore runs Vulkan (the owner's
+  decision of 2026-10-24, `amoris_render::host_backend`); FXC is used only where the machine has no
+  Vulkan adapter either (gpu-matrix.md 14).
 - In the browser a new device compiles the kernels' pipelines as its first ticks need them, seconds
   each in Windows Chrome: on the 780M the pool party's first and fifth jobs took 12.2 and 14.4 s on
   the play page with its viewport drawing, and its first job 13.6 s in a stepped run of the

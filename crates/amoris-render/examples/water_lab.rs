@@ -2,7 +2,7 @@
 //! cargo run --release -p amoris-render --example water_lab -- --out out/water-lab --frames 180
 use amoris_assets::frame::RenderFrame;
 use amoris_render::demo::water::scene;
-use amoris_render::{Antialiasing, BackendChoice, CameraState, Gpu, Gtao, Renderer};
+use amoris_render::{Antialiasing, CameraState, Gpu, Gtao, Renderer};
 use glam::Vec3;
 use std::path::PathBuf;
 
@@ -93,7 +93,7 @@ fn main() {
         .map(|p| p[1].parse().unwrap())
         .unwrap_or(180);
     std::fs::create_dir_all(&out).unwrap();
-    let gpu = Gpu::headless(BackendChoice::from_env()).unwrap();
+    let gpu = Gpu::headless(amoris_render::host_backend()).unwrap();
     if args.iter().any(|a| a == "--bench") {
         println!("side,foam_gpu_ms");
         for side in [128, 256, 512] {

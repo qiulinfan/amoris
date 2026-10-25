@@ -15,7 +15,7 @@ use amoris_assets::{Feed, Mailbox};
 use amoris_contract::{Problem, detail};
 use amoris_render::app::{Host, RunOptions, WalkInput, run};
 use amoris_render::loader::FileAssets;
-use amoris_render::{BackendChoice, CameraState, FrameStats, Renderer};
+use amoris_render::{CameraState, FrameStats, Renderer};
 use amoris_runtime::Project;
 use amoris_runtime::thread::{GameHandle, GameThread, Pacing, ThreadOptions};
 use amoris_runtime::walk::{StaticWalkWorld, WalkController};
@@ -256,7 +256,7 @@ fn play_inner(raw: &[String]) -> Result<Outcome, Problem> {
             title: format!("Amoris — {}", project.manifest.name),
             width: args.number::<u32>("width")?.unwrap_or(1280),
             height: args.number::<u32>("height")?.unwrap_or(720),
-            backend: BackendChoice::from_env(),
+            backend: amoris_render::host_backend(),
             // Playing waits for the display, so frames pace evenly and never tear; a benchmark
             // (`--bench`) or `--no-vsync` draws as fast as it can.
             vsync: args.has("vsync") || (!args.has("no-vsync") && !args.has("bench")),

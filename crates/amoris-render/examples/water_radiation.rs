@@ -2,7 +2,7 @@
 #[path = "../tests/common/water_radiation.rs"]
 mod experiment;
 use amoris_assets::water_field::FieldBoundary;
-use amoris_render::{BackendChoice, Gpu};
+use amoris_render::Gpu;
 fn cost(gpu: &Gpu) -> serde_json::Value {
     use amoris_assets::water_field::FieldCheckpoint;
     use amoris_render::{profiler::GpuProfiler, water_compute::GpuWater};
@@ -101,7 +101,7 @@ fn main() {
         .find(|a| a[0] == "--out")
         .map_or("out/water-radiation/quality", |a| a[1].as_str());
     std::fs::create_dir_all(out).unwrap();
-    let gpu = Gpu::headless(BackendChoice::from_env()).expect("radiation needs GPU");
+    let gpu = Gpu::headless(amoris_render::host_backend()).expect("radiation needs GPU");
     gpu.device
         .on_uncaptured_error(std::sync::Arc::new(|e| panic!("radiation validation: {e}")));
     if args.iter().any(|a| a == "--bench") {

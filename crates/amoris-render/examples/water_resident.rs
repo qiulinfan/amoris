@@ -2,7 +2,7 @@
 //! queries per frame, 60 Hz submission. Prints submission cost, observed sample age and backpressure.
 //! cargo run --release -p amoris-render --example water_resident -- --frames 180
 use amoris_render::{
-    BackendChoice, Gpu,
+    Gpu,
     water_compute::GpuWater,
     water_samples::{SampleStamp, WaterSamples},
 };
@@ -20,7 +20,7 @@ fn main() {
         .map(|a| a[1].parse::<u64>().unwrap())
         .unwrap_or(180);
     assert!(frames > 10);
-    let gpu = Gpu::headless(BackendChoice::from_env()).unwrap();
+    let gpu = Gpu::headless(amoris_render::host_backend()).unwrap();
     gpu.device.on_uncaptured_error(std::sync::Arc::new(|e| {
         panic!("resident water validation: {e}")
     }));

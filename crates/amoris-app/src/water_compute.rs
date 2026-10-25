@@ -3,8 +3,8 @@
 use std::sync::{Arc, Mutex};
 
 use amoris_contract::{Problem, detail};
+use amoris_render::Gpu;
 use amoris_render::water_compute::GpuWater;
-use amoris_render::{BackendChoice, Gpu};
 use amoris_runtime::water_compute::{GridView, WaterCompute, install};
 use amoris_runtime::{GameBuilder, GameSetup};
 
@@ -84,7 +84,7 @@ impl WaterDevice {
     fn gpu(&mut self) -> Result<Gpu, Problem> {
         if self.gpu.is_none() {
             let gpu =
-                Gpu::headless(BackendChoice::from_env()).map_err(|e| failed(e.to_string()))?;
+                Gpu::headless(amoris_render::host_backend()).map_err(|e| failed(e.to_string()))?;
             let error = self.error.clone();
             gpu.device.on_uncaptured_error(Arc::new(move |e| {
                 *error

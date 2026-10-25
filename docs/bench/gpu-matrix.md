@@ -1168,15 +1168,37 @@ not fixed, and GPU water on Direct3D 12 requires DXC 1.8.2502 or newer (charter,
 
 `fs_shallow` is not GPU water's alone. `Water::new`, which `Renderer::new` runs, builds every region
 surface pipeline at once (`water.rs` `pipeline()`: smooth, ledge, blocky, surround and stitch), all
-with this fragment stage, so under FXC every `Renderer::new` logs the X3511 and no water region
-draws, solved on the CPU or on the GPU.
+with this fragment stage, so under FXC every `Renderer::new` logs the X3511. Measured on R1 at
+`4e7815c6` (2026-10-24, `scene_shots`, the 5060): no frame of a scene with a water region draws at
+all, the invalid pipeline voiding the frame's submit (`Water::draw` binds the surface pipelines for
+every region every frame, in view or not)
+(`Queue::submit ... RenderPipeline with 'vs_shallow' label is invalid`), so the pool party at tick
+800 is black under `AMORIS_DXC=fxc`, solved on the CPU or on the GPU; town-walk and anim, which have
+no water, draw at tick 300 as with DXC (at most one 8-bit step), after the 10 `wgpu:` errors and 20
+X3511 lines the start logs. Once, the pool party under FXC aborted after its error flood with
+"memory allocation of 3686400 bytes failed"; a rerun of the same command finished, so this is
+recorded as seen once and not reproduced.
 
 `crates/amoris-render/src/gpu/dxc.rs` chooses FXC with `AMORIS_DXC=fxc`; when `AMORIS_DXC` names a
 path with no `dxcompiler.dll`, or a DXC older than 1.8.2502 or without a readable version; when no
 Windows SDK `bin\<version>\x64\dxcompiler.dll` is found, as on a player's machine without the SDK;
 when every SDK DXC found is older than 1.8.2502; and on Windows other than x86-64, where `sdk_dxcs`
-searches no SDK. Direct3D 12 is the Windows default backend, so a machine without the SDK uses FXC
-with no warning (the choice is logged at the info level) and today draws no water region.
+searches no SDK. Direct3D 12 is the Windows default backend, so a machine without the SDK used FXC
+with no warning (the choice is logged at the info level) and drew nothing in a scene with a water
+region.
+Since the owner's decision of 2026-10-24 a host with no backend named and no supported DXC runs
+Vulkan instead (`amoris_render::host_backend`, logged as a warning when a DXC was named or found
+but could not be used); only a machine with no Vulkan adapter either still draws nothing in a scene
+with a water region, and says so in a warning. On R1 at `27e70987` (the shot examples on
+`host_backend`), with AMORIS_BACKEND unset but where named: the default ran
+Direct3D 12; `AMORIS_DXC` at a path with no DXC ran Vulkan for both the water service and the
+renderer, the pool party within 0.06% of the Direct3D 12 frame's pixels; `AMORIS_DXC=fxc`, and
+`AMORIS_BACKEND=dx12` with no DXC, kept Direct3D 12 with FXC; no DXC with the Vulkan loader finding
+no driver (`VK_DRIVER_FILES` and `VK_ICD_FILENAMES` at a missing file) ran Direct3D 12 with FXC and
+printed the warning. `gpu_frontier_scenes`, `gpu_water` and `gpu_determinism` pass with no DXC, the
+water service on Vulkan, on the 5060 and the 780M. The shot and water examples open their renderer
+and their water device on `host_backend()` too (`27e70987`, `70d7f2b3`); the benchmarks and probes
+keep `BackendChoice::from_env`.
 
 Two failures were the range's own. On the 780M, `water_spray`'s
 `a_body_going_in_throws_one_lattice_crown_and_none_otherwise` drew a NaN crown: one entry point

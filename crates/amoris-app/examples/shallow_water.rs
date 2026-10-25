@@ -21,7 +21,7 @@ use amoris_assets::Feed;
 use amoris_assets::frame::{InstanceUpdate, Look, Pose};
 use amoris_render::loader::FileAssets;
 use amoris_render::shallow_water::ShallowWaterView;
-use amoris_render::{Antialiasing, BackendChoice, CameraState, Gpu, Renderer};
+use amoris_render::{Antialiasing, CameraState, Gpu, Renderer};
 use amoris_runtime::shallow::{Floaters, Shallow};
 use amoris_runtime::{Extractor, Game, Project};
 use amoris_sim::voxels::{Block, Voxels};
@@ -197,7 +197,7 @@ fn main() {
         crates.add_box([-9.0 + 0.7 * (i % 2) as f64, 7.1, z], 0.35, 450.0);
     }
 
-    let gpu = Gpu::headless(BackendChoice::from_env()).expect("a GPU");
+    let gpu = Gpu::headless(amoris_render::host_backend()).expect("a GPU");
     let mut r = Renderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, 1280, 720);
     r.set_antialiasing(Antialiasing::Msaa);
     r.set_asset_source(Box::new(FileAssets::new(root.clone())));

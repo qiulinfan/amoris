@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use amoris_assets::Feed;
 use amoris_render::loader::FileAssets;
-use amoris_render::{Antialiasing, BackendChoice, CameraState, Gpu, Renderer};
+use amoris_render::{Antialiasing, CameraState, Gpu, Renderer};
 use amoris_runtime::{Extractor, Game, Project};
 use glam::Vec3;
 use serde_json::json;
@@ -142,7 +142,7 @@ fn main() {
     let mut extractor = Extractor::new();
     game.present(&mut extractor, &feed);
 
-    let gpu = Gpu::headless(BackendChoice::from_env()).expect("a GPU");
+    let gpu = Gpu::headless(amoris_render::host_backend()).expect("a GPU");
     let mut r = Renderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, 1280, 720);
     r.set_antialiasing(Antialiasing::Msaa);
     r.set_asset_source(Box::new(FileAssets::new(root.clone())));

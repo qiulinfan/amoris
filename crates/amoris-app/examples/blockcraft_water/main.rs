@@ -32,7 +32,7 @@ use std::sync::Arc;
 use amoris_assets::Feed;
 use amoris_assets::frame::RenderFrame;
 use amoris_render::loader::FileAssets;
-use amoris_render::{Antialiasing, BackendChoice, CameraState, Gpu, Renderer};
+use amoris_render::{Antialiasing, CameraState, Gpu, Renderer};
 use amoris_runtime::{Extractor, Game, Project};
 use glam::Vec3;
 
@@ -176,7 +176,7 @@ fn main() {
     let mailbox = feed.subscribe();
     let mut extractor = Extractor::new();
 
-    let gpu = Gpu::headless(BackendChoice::from_env()).expect("a GPU");
+    let gpu = Gpu::headless(amoris_render::host_backend()).expect("a GPU");
     let make = || {
         let mut r = Renderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, W, H);
         r.set_antialiasing(Antialiasing::Msaa);

@@ -45,8 +45,8 @@ panels and WebGPU viewport as the browser editor.
 ./target/release/amoris play samples/anim
 ```
 
-The native renderer defaults to Metal on macOS, Direct3D 12 on Windows, and Vulkan on other
-supported native platforms. Select a backend with `AMORIS_BACKEND=metal|vulkan|dx12`.
+The native renderer defaults to Metal on macOS, Direct3D 12 on Windows (Vulkan when no DXC
+1.8.2502 or newer is found), and Vulkan on other supported native platforms. Select a backend with `AMORIS_BACKEND=metal|vulkan|dx12`.
 The browser renderer uses WebGPU; this version has no WebGL fallback.
 
 ## The small technology map

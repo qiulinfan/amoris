@@ -5,7 +5,7 @@ mod depth_oracle;
 #[path = "common/depth_transport.rs"]
 mod depth_transport;
 use amoris_assets::water_field::FieldCheckpoint;
-use amoris_render::{BackendChoice, Gpu, water_compute::GpuWater};
+use amoris_render::{Gpu, water_compute::GpuWater};
 use serde_json::json;
 const GRAVITY: f64 = 9.81;
 const DEPTH: f64 = 0.5;
@@ -326,7 +326,8 @@ fn main() {
         .find(|a| a[0] == "--out")
         .map_or("out/water-shoreline/quality", |a| a[1].as_str());
     std::fs::create_dir_all(out).unwrap();
-    let gpu = Gpu::headless(BackendChoice::from_env()).expect("shoreline study needs hardware GPU");
+    let gpu =
+        Gpu::headless(amoris_render::host_backend()).expect("shoreline study needs hardware GPU");
     gpu.device.on_uncaptured_error(std::sync::Arc::new(|e| {
         panic!("shoreline GPU validation: {e}")
     }));

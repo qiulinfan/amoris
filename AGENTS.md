@@ -93,22 +93,31 @@ credential cleanup. File-verification records remain local, including in that ar
   loader is found. Metal is the default on macOS. `MVK_CONFIG_LOG_LEVEL=3` prints MoltenVK's shader
   compile errors; `cargo run --release -p amoris-render --example gpu_probe` checks a backend.
 - Direct3D 12 is the Windows default (owner, 2026-10-09; `AMORIS_BACKEND=vulkan` picks Vulkan,
-  `AMORIS_BACKEND=dx12` names D3D12 explicitly on any Windows run). DXC comes from the newest
-  Windows SDK whose `bin\<version>\x64\dxcompiler.dll` is DXC 1.8.2502 or newer, wgpu's minimum (or
-  `AMORIS_DXC`; `AMORIS_DXC=fxc` for FXC; an older DXC loses the device, so it is passed over for
-  FXC); never enable wgpu's `static-dxc` (it downloads binaries). With no SDK DXC found (a player's
-  machine without the SDK) and on Windows other than x86-64, FXC is used without a warning. FXC does
-  not run GPU water (owner, 2026-10-23; docs/bench/gpu-matrix.md 14): it cannot compile the
-  generated kernels' `boundary_predict` (X3500) or `fs_shallow` (X3511), the fragment stage of every
-  water region's surface, so under FXC no water region draws, CPU-solved or GPU. Water checks on
-  D3D12 need DXC 1.8.2502 or newer. `AMORIS_ADAPTER=780m` (or an
-  index) picks an adapter on a two-GPU machine, for any backend. D3D12 needs wgpu's indirect
-  validation for `first_instance` (gpu.rs sets it); `cargo test -p amoris-render` checks it on
-  Vulkan and D3D12 (`indirect_draws_keep_their_first_instance`), `tools/backend_compare.py` compares
-  frames across backends and `tools/backend_bench.py` times them
-  ([docs/bench/dx12.md](docs/bench/dx12.md)). Debug builds compile the same optimized DXIL as
-  release builds (`gpu::instance_flags`; the 780M mistraced the path tracer's unoptimized DXIL);
-  `WGPU_DEBUG=1` brings unoptimized shaders with debug information back for PIX.
+  `AMORIS_BACKEND=dx12` names D3D12 explicitly on any Windows run). A host (`amoris play`,
+  `amoris serve`'s frames and GPU water, the renderer's window, the examples that draw or step
+  water) with no backend named and no supported DXC runs Vulkan instead, D3D12 with FXC only when
+  the machine has no Vulkan adapter either (owner, 2026-10-24; `amoris_render::host_backend`,
+  outside the water's kernel key); amoris-render's tests keep `BackendChoice::from_env`, whose
+  `Auto` is D3D12, while amoris-app's GPU water tests reach the water service through
+  `src/water_compute.rs` and so follow `host_backend` (`AMORIS_BACKEND=dx12` or `AMORIS_DXC=fxc`
+  tests D3D12 with FXC). DXC
+  comes from the newest Windows SDK whose `bin\<version>\x64\dxcompiler.dll` is DXC 1.8.2502 or
+  newer, wgpu's minimum (or `AMORIS_DXC`; `AMORIS_DXC=fxc` for FXC; an older DXC loses the device,
+  so it is passed over for FXC); never enable wgpu's `static-dxc` (it downloads binaries). With no
+  SDK DXC found (a player's machine without the SDK) and on Windows other than x86-64, D3D12 would
+  compile with FXC. FXC does not run GPU water (owner, 2026-10-23; docs/bench/gpu-matrix.md 14): it
+  cannot compile the generated kernels' `boundary_predict` (X3500) or `fs_shallow` (X3511), the
+  fragment stage of every water region's surface, bound for every region every frame, whose invalid
+  pipeline voids the submit: under FXC no frame of a scene with a water region draws, in view or
+  not, CPU-solved or GPU, while scenes without water draw (R1, 2026-10-24). Water checks on D3D12 need DXC 1.8.2502 or newer.
+  `AMORIS_ADAPTER=780m` (or an index) picks an adapter on a two-GPU machine, for any backend. D3D12
+  needs wgpu's indirect validation for `first_instance` (gpu.rs sets it);
+  `cargo test -p amoris-render` checks it on Vulkan and D3D12
+  (`indirect_draws_keep_their_first_instance`), `tools/backend_compare.py` compares frames across
+  backends and `tools/backend_bench.py` times them ([docs/bench/dx12.md](docs/bench/dx12.md)). Debug
+  builds compile the same optimized DXIL as release builds (`gpu::instance_flags`; the 780M
+  mistraced the path tracer's unoptimized DXIL); `WGPU_DEBUG=1` brings unoptimized shaders with
+  debug information back for PIX.
 - `cargo xtask check` runs the GPU tests on the default adapter and backend only.
   `tools/gpu_matrix.py --configs 5060-dx12,780m-vulkan,780m-auto,5060-dx12-minimal` (any
   `ADAPTER-BACKEND`; `auto` leaves `AMORIS_BACKEND` unset as xtask does) runs `amoris-render`'s

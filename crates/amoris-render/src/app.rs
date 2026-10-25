@@ -87,7 +87,7 @@ impl Default for RunOptions {
             title: "Amoris".into(),
             width: 1280,
             height: 720,
-            backend: BackendChoice::from_env(),
+            backend: crate::host_backend(),
             vsync: true,
             fly_camera: None,
             walk: false,

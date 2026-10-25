@@ -1,7 +1,7 @@
 //! Isolated summary encoding and whole GPU timestamp span; not a Game/frame benchmark.
 //! Every returned digest is checked against fixed Rust BLAKE3 input outside timed GPU work.
 use amoris_render::{
-    BackendChoice, Gpu, profiler::GpuProfiler, water_compute::GpuWater, water_summary::WaterSummary,
+    Gpu, profiler::GpuProfiler, water_compute::GpuWater, water_summary::WaterSummary,
 };
 use serde_json::{Value, json};
 use std::time::Instant;
@@ -25,7 +25,7 @@ fn main() {
     let warmup = value("--warmup", 64);
     let ticks = value("--ticks", 128);
     assert!((2..=512).contains(&side) && ticks > 0);
-    let gpu = Gpu::headless(BackendChoice::from_env()).expect("summary cost requires a GPU");
+    let gpu = Gpu::headless(amoris_render::host_backend()).expect("summary cost requires a GPU");
     assert!(gpu.caps.timestamps, "summary cost requires GPU timestamps");
     gpu.device.on_uncaptured_error(std::sync::Arc::new(|e| {
         panic!("summary cost validation: {e}")

@@ -43,6 +43,8 @@ mod shadows;
 pub mod shallow_water {
     pub use crate::water::ShallowWaterView;
 }
+#[cfg(not(target_arch = "wasm32"))]
+mod host_backend;
 mod skinning;
 mod sky;
 pub mod splash;
@@ -81,6 +83,8 @@ mod water_waves;
 
 pub use camera::CameraState;
 pub use gpu::{BackendChoice, Gpu, GpuError};
+#[cfg(not(target_arch = "wasm32"))]
+pub use host_backend::host_backend;
 pub use loader::AssetSource;
 pub use lod::{DrawCounts, LodMode, LodSettings};
 pub use occlusion::{OcclusionMode, OcclusionStats};

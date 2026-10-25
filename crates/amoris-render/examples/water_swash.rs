@@ -21,7 +21,7 @@
 //! cargo run --release -p amoris-render --example water_swash -- --out out/water-swash
 use amoris_assets::water_field::{FieldBoundary, FieldCheckpoint, FieldPhysics, FieldStep};
 use amoris_render::{
-    BackendChoice, Gpu,
+    Gpu,
     water_compute::{Advection, GpuWater},
 };
 use serde_json::{Value, json};
@@ -587,7 +587,7 @@ fn main() {
         Some(other) => panic!("no advection {other}: maccormack, conservative or hybrid"),
     };
     std::fs::create_dir_all(out).unwrap();
-    let gpu = Gpu::headless(BackendChoice::from_env()).expect("the swash study needs a GPU");
+    let gpu = Gpu::headless(amoris_render::host_backend()).expect("the swash study needs a GPU");
     let mut all = Vec::new();
     for case in cases() {
         let row = run(&gpu, &case, advection);

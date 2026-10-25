@@ -14,7 +14,7 @@ mod water_compute;
 use amoris_audio::water::{KINDS, WaterSource, WaterSynth};
 use amoris_link::Source;
 use amoris_render::water_acoustics::{AcousticSource, NAMES, WaterAcoustics};
-use amoris_render::{Antialiasing, BackendChoice, Gpu, Gtao, Renderer};
+use amoris_render::{Antialiasing, Gpu, Gtao, Renderer};
 use amoris_runtime::{Command, Extractor, Game, Project};
 use glam::Vec3;
 use serde_json::{Value, json};
@@ -175,7 +175,7 @@ fn play(
     let feed = amoris_assets::Feed::new();
     let mailbox = feed.subscribe();
     let mut extractor = Extractor::default();
-    let gpu = Gpu::headless(BackendChoice::from_env()).unwrap();
+    let gpu = Gpu::headless(amoris_render::host_backend()).unwrap();
     let target = gpu
         .device
         .create_texture(&wgpu::TextureDescriptor {

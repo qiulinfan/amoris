@@ -287,7 +287,7 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
 | 脚本 VM | **QuickJS-ng**，经 `rquickjs`，vendored 并打补丁 | 0.16.2 / rquickjs 0.14.0 | 小型解释器，所有平台同一份，确定；补丁见 4.2 |
 | 脚本类型 | Rust 组件注册表 → `.d.ts` 与 JSON Schema | ts-rs 12、schemars 1.2 | 改了引擎类型，agent 与脚本看到的接口自动同步 |
 | 渲染 | **wgpu + WGSL** | 30.0.1 | 一套渲染器覆盖 Metal、Vulkan、Direct3D 12 与浏览器 WebGPU |
-| 原生图形后端 | **Metal**（macOS）、**Vulkan**（Linux/Windows；macOS 上经 MoltenVK 验证）、**Direct3D 12**（Windows，Pioneer 2026-10-09） | — | 所有者 2026-10-04 指定只做 Metal 与 Vulkan；Pioneer 2026-10-09 应所有者的探索要求加入 Direct3D 12；所有者 2026-10-09 指定 Windows 默认后端为 Direct3D 12（见 4.4） |
+| 原生图形后端 | **Metal**（macOS）、**Vulkan**（Linux/Windows；macOS 上经 MoltenVK 验证）、**Direct3D 12**（Windows，Pioneer 2026-10-09） | — | 所有者 2026-10-04 指定只做 Metal 与 Vulkan；Pioneer 2026-10-09 应所有者的探索要求加入 Direct3D 12；所有者 2026-10-09 指定 Windows 默认后端为 Direct3D 12（见 4.4），2026-10-24 起找不到 DXC 1.8.2502 或更新的版本时改用 Vulkan |
 | Web 图形 | WebGPU（wgpu 的浏览器后端，同一份代码） | — | 证明 web 渲染；不做 WebGL 回退 |
 | 窗口与输入 | winit；gilrs（手柄） | 0.30 | 事实标准 |
 | 资源 | glTF 2.0（`gltf`）、PNG/JPEG（`image`）、网格处理（`meshopt`：LOD、顶点缓存）；导入在工作线程异步进行；内容哈希作为 ID | gltf 1.4、meshopt 0.6 | Amoris Pioneer 的 OBJ 导入冻结 14–27 秒，本线只走 glTF 且异步 |
@@ -466,12 +466,24 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
   `shaders/water_boundaries.wgsl`，它的 `boundary_predict` 已有同样的 X3500。二是
   `fs_shallow`（X3511，6c1c8e42 时已如此）：它不只属于 GPU 水，而是每条水域表面管线（`water.rs` 的
   smooth、ledge、blocky、surround、stitch）的片元阶段，`Renderer::new` 一开始就构建这些管线，所以在
-  FXC 下每次 `Renderer::new` 都记录这个错误，任何水域都不绘制，无论由 CPU 还是 GPU 求解。以下情形使
-  用 FXC（`crates/amoris-render/src/gpu/dxc.rs`）：`AMORIS_DXC=fxc`；`AMORIS_DXC` 指向的路径没有
+  FXC 下每次 `Renderer::new` 都记录这个错误；有水域的场景每一帧都整帧画不出来（水面管线每帧对每个水
+  域都会绑定，无论水在不在视野里，失效的管线使这一帧的提交作废，画面全黑），无论水由 CPU 还是 GPU 求
+  解，没有水域的场景照常绘制（2026-10-24 在 R1 上实测）。以下情形使用
+  FXC（`crates/amoris-render/src/gpu/dxc.rs`）：`AMORIS_DXC=fxc`；`AMORIS_DXC` 指向的路径没有
   `dxcompiler.dll`，或其 DXC 早于 1.8.2502；找不到任何 Windows SDK 的 `dxcompiler.dll`（没有装 SDK
   的普通玩家机器）；SDK 的 DXC 都早于 1.8.2502；非 x86-64 的 Windows（不搜索 SDK）。Direct3D 12 是
-  Windows 的默认后端，所以没有 SDK 的机器不加警告地使用 FXC，目前不绘制任何水域。记录与复现命令见
-  [bench/gpu-matrix.md](bench/gpu-matrix.md) 第 14 节。
+  Windows 的默认后端，所以没有 SDK 的机器不加警告地使用 FXC，有水域的场景什么都画不出来（2026-10-24
+  起改用 Vulkan，见下条）。记录与复现命令见 [bench/gpu-matrix.md](bench/gpu-matrix.md) 第 14 节。
+- 2026-10-24（所有者决定）：审查 R1 的记录时发现上一条的影响比当时所知更大：FXC 下任何水域都不绘制，
+  而没有装 Windows SDK 的机器（多数玩家）会不加提示地使用 FXC（其后在 R1 上实测：有水域的场景每一帧
+  都整帧不绘制，见上条）。所有者决定：Windows 上没有用 `AMORIS_BACKEND` 指定后端时，找得到 DXC
+  1.8.2502 或更新的版本就用 Direct3D 12，找不到就改用 Vulkan；机器连 Vulkan 适配器也没有时仍用
+  Direct3D 12 加 FXC，此时有水域的场景什么都画不出来，并给出警告。`AMORIS_DXC=fxc` 仍明确选择 FXC。
+  宿主（`amoris play` 的窗口、`amoris serve` 的画面与 GPU 水的计算、渲染器自带的窗口）经
+  `amoris_render::host_backend` 选择后端（实现时绘制或计算水的示例也走它）；`gpu.rs` 属于水的执行
+  键，不改。amoris-render 的测试仍按 `AMORIS_BACKEND` 与 `Auto`；amoris-app 的 GPU 水测试经应用的水
+  服务（`src/water_compute.rs`）走 `host_backend`。理由：Vulkan 在 R1 的两块 GPU 上全部测试通过；随
+  游戏附带 DXC 要分发二进制，让 FXC 能画水要改执行键内的确定性水核。
 - 2026-10-09（Pioneer）：光追研究从 Metal 扩展到所有暴露 ray query 的后端。2026-10-05 的 GI
   决定以 Metal ray query 表述，表面 PT、SHaRC/ReSTIR 原型与在线 NRC 也只在 Metal 上运行；
   现在它们在 Vulkan（`VK_KHR_ray_query`）与 Direct3D 12（DXR 1.1、Shader Model 6.5）上同样运行，

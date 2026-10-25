@@ -100,7 +100,7 @@ struct DrawBench {
 }
 impl DrawBench {
     fn new(root: &std::path::Path, lod: amoris_render::LodMode) -> Self {
-        let gpu = amoris_render::Gpu::headless(amoris_render::BackendChoice::from_env()).unwrap();
+        let gpu = amoris_render::Gpu::headless(amoris_render::host_backend()).unwrap();
         gpu.device.on_uncaptured_error(std::sync::Arc::new(|e| {
             panic!("resident draw benchmark GPU validation: {e}")
         }));
@@ -354,7 +354,7 @@ fn capture(out: &std::path::Path, project: Option<&std::path::Path>, options: Ca
         camera,
         decode_frame,
     } = options;
-    use amoris_render::{BackendChoice, Gpu, Gtao, Renderer};
+    use amoris_render::{Gpu, Gtao, Renderer};
     std::fs::create_dir_all(out).unwrap();
     if motion {
         std::fs::create_dir_all(out.join("motion")).unwrap();
@@ -369,7 +369,7 @@ fn capture(out: &std::path::Path, project: Option<&std::path::Path>, options: Ca
     let feed = amoris_assets::Feed::new();
     let mailbox = feed.subscribe();
     let mut extractor = Extractor::default();
-    let gpu = Gpu::headless(BackendChoice::from_env()).unwrap();
+    let gpu = Gpu::headless(amoris_render::host_backend()).unwrap();
     let mut renderer = Renderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, 1280, 720);
     renderer.set_asset_source(Box::new(amoris_render::loader::FileAssets::new(
         root.clone(),

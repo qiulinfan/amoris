@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use amoris_assets::{Feed, Mailbox};
 use amoris_contract::{Problem, detail};
 use amoris_render::loader::FileAssets;
-use amoris_render::{BackendChoice, CameraState, Gpu, Renderer};
+use amoris_render::{CameraState, Gpu, Renderer};
 use amoris_server::{BoxFuture, CaptureHub, RenderFeed};
 use axum::extract::ws::{Message, WebSocket};
 use glam::{Quat, Vec3};
@@ -163,7 +163,7 @@ fn capture_thread(rx: mpsc::Receiver<CaptureJob>, mailbox: Arc<Mailbox>, root: P
             .unwrap_or(720)
             .clamp(16, 4096) as u32;
         if renderer.is_none() {
-            match Gpu::headless(BackendChoice::from_env()) {
+            match Gpu::headless(amoris_render::host_backend()) {
                 Ok(gpu) => {
                     let mut r = Renderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, w, h);
                     r.set_asset_source(Box::new(FileAssets::new(root.clone())));

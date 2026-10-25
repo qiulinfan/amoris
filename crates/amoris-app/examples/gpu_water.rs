@@ -99,7 +99,7 @@ fn run() {
     assert!(ticks > 0);
     let source = args.iter().any(|a| a == "--source");
     let scenario = if source { "continuous-source" } else { "dam" };
-    let device = amoris_render::Gpu::headless(amoris_render::BackendChoice::from_env()).unwrap();
+    let device = amoris_render::Gpu::headless(amoris_render::host_backend()).unwrap();
     eprintln!(
         "resident device: {} ({:?})",
         device.info.name, device.info.backend

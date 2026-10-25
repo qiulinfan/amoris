@@ -1,6 +1,6 @@
 //! Controlled geometry cost, not fluid-solving cost. Render complete matching inputs with
 //! culling off/on; explicit counter/capture readbacks occur after the timed frames.
-use amoris_render::{Antialiasing, BackendChoice, Gpu, Gtao, Renderer, demo::water};
+use amoris_render::{Antialiasing, Gpu, Gtao, Renderer, demo::water};
 use serde_json::json;
 use std::{path::PathBuf, time::Instant};
 
@@ -27,7 +27,7 @@ fn main() {
     assert!(settle.is_finite() && (0.0..=60.0).contains(&settle));
     std::fs::create_dir_all(&out).unwrap();
     let setup_start = Instant::now();
-    let gpu = Gpu::headless(BackendChoice::from_env()).expect("hardware GPU");
+    let gpu = Gpu::headless(amoris_render::host_backend()).expect("hardware GPU");
     gpu.device.on_uncaptured_error(std::sync::Arc::new(|e| {
         panic!("water mesh GPU validation: {e}")
     }));

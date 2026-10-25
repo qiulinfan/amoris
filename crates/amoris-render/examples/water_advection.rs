@@ -1,7 +1,7 @@
 //! Native numerical quality evidence; raw JSON/profiles belong under ignored out/.
 #[path = "../tests/common/water_advection.rs"]
 mod experiment;
-use amoris_render::{BackendChoice, Gpu};
+use amoris_render::Gpu;
 fn gpu_cost(gpu: &Gpu, side: u32, modern: bool) -> serde_json::Value {
     use amoris_render::{profiler::GpuProfiler, water_compute::GpuWater};
     let mut profiler = GpuProfiler::new(&gpu.device, &gpu.queue, true, &gpu.info);
@@ -81,7 +81,8 @@ fn main() {
         .windows(2)
         .find(|a| a[0] == "--out")
         .map(|a| std::path::PathBuf::from(&a[1]));
-    let gpu = Gpu::headless(BackendChoice::from_env()).expect("advection requires a hardware GPU");
+    let gpu =
+        Gpu::headless(amoris_render::host_backend()).expect("advection requires a hardware GPU");
     gpu.device
         .on_uncaptured_error(std::sync::Arc::new(|e| panic!("advection validation: {e}")));
     if args.iter().any(|a| a == "--cost") {

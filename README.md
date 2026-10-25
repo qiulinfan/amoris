@@ -129,7 +129,8 @@ See the [player workflow](site/content/api.md#play-through-a-restricted-seat).
 
 The interactive renderer includes GPU culling, an adaptive depth prepass, clustered PBR,
 shadows, animation, and 3D Gaussian splats. Metal is the macOS default, Direct3D 12 the
-Windows default; Vulkan remains selectable with `AMORIS_BACKEND=vulkan`.
+Windows default when DXC 1.8.2502 or newer is found (the Windows SDK, or `AMORIS_DXC`), and Vulkan
+there otherwise; Vulkan remains selectable with `AMORIS_BACKEND=vulkan`.
 Separate path-tracing and neural-lighting research tools require supported native hardware.
 
 The **10 October 2026** Windows study measured a dense 1.6-million-cube workload at

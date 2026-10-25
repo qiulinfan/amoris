@@ -16,7 +16,7 @@ use amoris_assets::frame::{
     EnvironmentView, InstanceUpdate, LightKindView, LightView, Look, Pose, RenderFrame,
 };
 use amoris_render::shallow_water::ShallowWaterView;
-use amoris_render::{Antialiasing, BackendChoice, CameraState, Gpu, Gtao, Renderer};
+use amoris_render::{Antialiasing, CameraState, Gpu, Gtao, Renderer};
 use glam::Vec3;
 
 fn arg(name: &str) -> Option<String> {
@@ -111,7 +111,7 @@ fn main() {
     let n: u32 = arg("--n").and_then(|s| s.parse().ok()).unwrap_or(256);
     let off = std::env::args().any(|a| a == "--off");
     let frames: u64 = arg("--frames").and_then(|s| s.parse().ok()).unwrap_or(300);
-    let gpu = Gpu::headless(BackendChoice::from_env()).expect("a GPU");
+    let gpu = Gpu::headless(amoris_render::host_backend()).expect("a GPU");
     let mut r = Renderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, 1280, 720);
     r.set_antialiasing(Antialiasing::Msaa);
     r.set_gtao(Gtao::Off);
