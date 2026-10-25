@@ -15,18 +15,11 @@ const W: u32 = 320;
 const H: u32 = 180;
 const REGION: u64 = 7;
 
-// Complete cases run one at a time for MoltenVK 1.4.2, whose completed handler for a command
-// buffer's timestamp queries (`MVKCommandEncoder::finishQueries`) reads the query pool without
-// retaining it. The GPU signals the timeline semaphore wgpu waits on before Metal runs that
-// handler, so a renderer dropped after its last frame can free its profiler's query set first, and
-// the handler then crashes the process (SIGSEGV). Run in parallel, 5 of 30 MoltenVK runs crashed
-// so, none without timestamps (`AMORIS_GPU_MINIMAL`) and none on Metal; one at a time, none of 40.
-// MoltenVK retains the pools since KhronosGroup/MoltenVK c0af3a5, after its 1.4.2 release.
-fn gpu() -> Option<(std::sync::MutexGuard<'static, ()>, Gpu)> {
-    static CASE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let case = CASE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+// The cases run in parallel. A case keeps at most three renderers alive and ten cases at once up
+// to 22, each with one of the 32 timestamp query sets Metal gives a process (profiler.rs); on
+// MoltenVK a dropped renderer's query set waits for its queue to go idle (profiler.rs
+// `TimestampSet`).
+fn gpu() -> Option<Gpu> {
     let gpu = Gpu::headless(BackendChoice::from_env()).ok();
     if let Some(gpu) = &gpu {
         strict(gpu);
@@ -34,7 +27,7 @@ fn gpu() -> Option<(std::sync::MutexGuard<'static, ()>, Gpu)> {
     if gpu.is_none() {
         eprintln!("no GPU: skipped");
     }
-    gpu.map(|gpu| (case, gpu))
+    gpu
 }
 
 /// A validation error or a lost device fails the case with its cause, never as a wrong image.
@@ -51,7 +44,7 @@ fn strict(gpu: &Gpu) {
 
 #[test]
 fn gpu_patch_culling_keeps_exact_surface_pixels_and_counts_current_dry_and_visible_tiles() {
-    let (_case, gpu) = gpu().expect("water mesh verification requires a GPU");
+    let gpu = gpu().expect("water mesh verification requires a GPU");
     let mut r = renderer(&gpu, EYE, AT);
     r.set_prepass(amoris_render::PrepassMode::Off);
     r.set_occlusion(amoris_render::OcclusionMode::Off);
@@ -261,7 +254,7 @@ fn optical_scene(depth: f32, pane_y: Option<f32>) -> RenderFrame {
 
 #[test]
 fn transmission_obeys_rgb_optical_path_and_foreground_translucency_composes_after_water() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     let mut r = renderer(&gpu, EYE, AT);
     let mut camera =
         CameraState::look_at_up(Vec3::new(8.0, 10.0, 8.0), Vec3::new(8.0, 0.0, 8.0), Vec3::Z);
@@ -326,7 +319,7 @@ fn transmission_obeys_rgb_optical_path_and_foreground_translucency_composes_afte
 
 #[test]
 fn refraction_of_a_surface_piercing_box_stays_on_its_snell_ray() {
-    let (_case, gpu) = gpu().expect("surface-piercing optics require a GPU");
+    let gpu = gpu().expect("surface-piercing optics require a GPU");
     let eye = Vec3::new(12.0, 6.0, 16.0);
     let target = Vec3::new(9.0, 1.5, 8.5);
     let camera = CameraState::look_at(eye, target);
@@ -405,7 +398,7 @@ fn refraction_of_a_surface_piercing_box_stays_on_its_snell_ray() {
 /// the water it falls there. A level floor is as bright either way.
 #[test]
 fn a_shadow_under_water_falls_along_the_refracted_sun() {
-    let (_case, gpu) = gpu().expect("the refracted sun requires a GPU");
+    let gpu = gpu().expect("the refracted sun requires a GPU");
     let elevation = 35f32.to_radians();
     let eye = Vec3::new(7.5, 9.0, 8.2);
     let target = Vec3::new(7.5, 0.0, 8.0);
@@ -477,7 +470,7 @@ fn a_shadow_under_water_falls_along_the_refracted_sun() {
 
 #[test]
 fn air_side_reflection_does_not_sample_the_submerged_bed() {
-    let (_case, gpu) = gpu().expect("reflection medium-side case requires a GPU");
+    let gpu = gpu().expect("reflection medium-side case requires a GPU");
     let mut r = renderer(&gpu, Vec3::new(12.0, 6.0, 16.0), Vec3::new(9.0, 1.5, 8.5));
     r.set_water_foam(false);
     r.set_antialiasing(Antialiasing::Msaa);
@@ -503,7 +496,7 @@ fn air_side_reflection_does_not_sample_the_submerged_bed() {
 
 #[test]
 fn scene_refraction_moves_the_floor_and_local_reflection_sees_an_emissive_object() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     let mut r = renderer(&gpu, Vec3::new(8.0, 8.0, 16.0), Vec3::new(8.0, 0.0, 8.0));
     r.set_water_foam(false);
     let mut frame = optical_scene(2.0, None);
@@ -561,7 +554,7 @@ fn scene_refraction_moves_the_floor_and_local_reflection_sees_an_emissive_object
 
 #[test]
 fn refraction_does_not_pull_a_detached_copy_of_a_submerged_sphere() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     let camera = CameraState::look_at(Vec3::new(8.0, 8.0, 16.0), Vec3::new(8.0, 0.0, 8.0));
     let mut r = renderer(&gpu, camera.position, Vec3::new(8.0, 0.0, 8.0));
     r.set_water_foam(false);
@@ -628,7 +621,7 @@ fn refraction_does_not_pull_a_detached_copy_of_a_submerged_sphere() {
 
 #[test]
 fn foreground_refraction_disocclusion_does_not_cast_an_absorption_silhouette() {
-    let (_case, gpu) = gpu().expect("disoccluded optics require hardware GPU");
+    let gpu = gpu().expect("disoccluded optics require hardware GPU");
     let eye = Vec3::new(12.0, 5.0, 13.0);
     let target = Vec3::new(8.0, 0.8, 8.0);
     let camera = CameraState::look_at(eye, target);
@@ -891,7 +884,7 @@ const AT: Vec3 = Vec3::new(8.0, 1.5, 8.0);
 
 #[test]
 fn a_region_draws_smooth_and_blocky() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     let mut dry = renderer(&gpu, EYE, AT);
     dry.apply(scene(1, vec![], true), 0.0);
     let ground = shoot(&mut dry);
@@ -920,7 +913,7 @@ fn a_region_draws_smooth_and_blocky() {
 
 #[test]
 fn tiles_fed_one_by_one_draw_as_a_fresh_renderer_draws_them() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     // Every tile dry at first, then the tiles filled one frame at a time.
     fn empty(i: u32, k: u32) -> [f32; 4] {
         let c = column(i, k);
@@ -965,7 +958,7 @@ fn tiles_fed_one_by_one_draw_as_a_fresh_renderer_draws_them() {
 
 #[test]
 fn under_a_regions_surface_the_view_is_its_fog() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     let mut under = renderer(&gpu, Vec3::new(6.0, 1.3, 6.0), Vec3::new(10.0, 1.3, 9.0));
     under.apply(scene(1, vec![region(false, &ALL, column)], true), 0.0);
     let u = shoot(&mut under);
@@ -989,7 +982,7 @@ fn under_a_regions_surface_the_view_is_its_fog() {
 
 #[test]
 fn rain_ends_at_a_regions_surface() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     // Under the surface, looking level: the lower half of the view sees the pit's floor and walls
     // through the water, never the surface its drops ring. Rain over the region draws nothing
     // there, its drops landing on the surface above.
@@ -1074,7 +1067,7 @@ fn changed(a: &[f32], b: &[f32]) -> f64 {
 
 #[test]
 fn a_body_going_in_throws_a_crown_drawn_near_as_a_sheet_and_far_as_streaks() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     // A crown (water.md 52) rises about the point 10 ticks after it goes in. From 2.5 m its
     // parcels are many pixels across: the liquid surface draws them. From 60 m they are under a
     // pixel and a half: the spray's streaks do. Either way the frame shows it; a point passing
@@ -1101,7 +1094,7 @@ fn a_body_going_in_throws_a_crown_drawn_near_as_a_sheet_and_far_as_streaks() {
 
 #[test]
 fn surrounding_water_meets_the_regions_edge() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     // A region full to the brim at 1.9 m but for its -x edge columns, 3 cm lower: the surround
     // stands at the edges' mean level, and the stitch joins it to each edge column's surface.
     fn full(i: u32, _k: u32) -> [f32; 4] {
@@ -1153,7 +1146,7 @@ fn surrounding_water_meets_the_regions_edge() {
 
 #[test]
 fn temporal_foam_pauses_with_simulated_time_and_reset_discards_its_history() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     let mut bare = renderer(&gpu, EYE, AT);
     let mut foamy = renderer(&gpu, EYE, AT);
     bare.set_water_foam(false);
@@ -1216,7 +1209,7 @@ fn resident_programs_draw_the_current_field_after_skipped_frames_compaction_and_
     };
     use amoris_render::{water_compute::GpuWater, water_resident::ResidentWater};
     use std::sync::Arc;
-    let (_case, gpu) = gpu().expect("resident rendering requires a GPU");
+    let gpu = gpu().expect("resident rendering requires a GPU");
     let mut a = renderer(&gpu, EYE, AT);
     let mut b = renderer(&gpu, EYE, AT);
     for renderer in [&mut a, &mut b] {
@@ -1484,7 +1477,7 @@ fn close_hdr(got: [f32; 3], want: [f32; 3]) {
 }
 #[test]
 fn perspective_water_inside_the_near_plane_still_occludes_the_floor() {
-    let (_case, gpu) = gpu().expect("near water interface requires a GPU");
+    let gpu = gpu().expect("near water interface requires a GPU");
     let mut r = renderer(&gpu, EYE, AT);
     r.set_water_foam(false);
     r.set_water_optics(false, false, false);
@@ -1516,7 +1509,7 @@ fn perspective_water_inside_the_near_plane_still_occludes_the_floor() {
 /// eye's height over the surface; before the port, every row split at the horizon.
 #[test]
 fn a_camera_at_the_surface_splits_along_the_waterline_on_its_port() {
-    let (_case, gpu) = gpu().expect("the waterline requires a GPU");
+    let gpu = gpu().expect("the waterline requires a GPU");
     // The near plane's half height for the test camera: 0.1 m away, 60 degrees.
     let half = 0.1 * 30f32.to_radians().tan();
     for rise in [0.012f32, 0.0, -0.012] {
@@ -1557,7 +1550,7 @@ fn a_camera_at_the_surface_splits_along_the_waterline_on_its_port() {
 /// the water takes it away along its shadow.
 #[test]
 fn the_sun_scatters_toward_an_eye_under_water_along_its_refracted_path() {
-    let (_case, gpu) = gpu().expect("light under water requires a GPU");
+    let gpu = gpu().expect("light under water requires a GPU");
     sun_scatters_along_its_refracted_path(&gpu);
 }
 
@@ -1565,7 +1558,6 @@ fn the_sun_scatters_toward_an_eye_under_water_along_its_refracted_path() {
 /// finds the plank's shadow in the cascades, which are drawn for it.
 #[test]
 fn the_sun_still_scatters_under_water_with_ray_traced_shadows() {
-    let (_case, plain) = gpu().expect("light under water requires a GPU");
     let backend = BackendChoice::from_env();
     let gpu = amoris_render::Gpu::headless_ray_traced(
         backend,
@@ -1574,8 +1566,7 @@ fn the_sun_still_scatters_under_water_with_ray_traced_shadows() {
             reflections: false,
         },
     )
-    .expect("the same adapter with ray queries asked for");
-    drop(plain);
+    .expect("light under water requires a GPU");
     if !gpu.caps.rt.shadows {
         eprintln!(
             "{} ({backend:?}): no ray queries; ray-traced shadows skipped",
@@ -1682,7 +1673,7 @@ fn sun_scatters_along_its_refracted_path(gpu: &Gpu) {
 
 #[test]
 fn underwater_rgb_paths_stop_at_the_field_bed_and_preserve_near_clipped_interfaces() {
-    let (_case, gpu) = gpu().expect("underwater cases require a GPU");
+    let gpu = gpu().expect("underwater cases require a GPU");
     let mut r = renderer(&gpu, EYE, AT);
     r.set_water_foam(false);
     r.set_water_optics(false, false, false);
@@ -1749,7 +1740,7 @@ fn underwater_rgb_paths_stop_at_the_field_bed_and_preserve_near_clipped_interfac
 
 #[test]
 fn underwater_paths_end_at_region_edges_and_snell_window_uses_dielectric_fresnel() {
-    let (_case, gpu) = gpu().expect("underwater cases require a GPU");
+    let gpu = gpu().expect("underwater cases require a GPU");
     let mut r = renderer(&gpu, EYE, AT);
     r.set_water_foam(false);
     r.set_water_optics(false, false, false);
@@ -1826,7 +1817,7 @@ fn underwater_paths_end_at_region_edges_and_snell_window_uses_dielectric_fresnel
 
 #[test]
 fn medium_uses_piecewise_field_beds_and_the_same_authored_haze_on_both_sides() {
-    let (_case, gpu) = gpu().expect("underwater cases require a GPU");
+    let gpu = gpu().expect("underwater cases require a GPU");
     let mut r = renderer(&gpu, EYE, AT);
     r.set_water_foam(false);
     r.set_water_optics(false, false, false);
@@ -1885,7 +1876,7 @@ fn medium_uses_piecewise_field_beds_and_the_same_authored_haze_on_both_sides() {
 
 #[test]
 fn block_medium_matches_block_geometry_and_overlapping_regions_claim_pixels_once() {
-    let (_case, gpu) = gpu().expect("underwater cases require a GPU");
+    let gpu = gpu().expect("underwater cases require a GPU");
     let mut r = renderer(&gpu, EYE, AT);
     r.set_water_foam(false);
     r.set_water_optics(false, false, false);
@@ -1933,7 +1924,7 @@ fn complete_outside_faces_reach_the_rendered_velocity_field() {
         frame::ResidentWaterUpdate,
         water_field::{FieldCheckpoint, FieldRecipe},
     };
-    let (_case, gpu) = gpu().expect("complete face rendering requires a GPU");
+    let gpu = gpu().expect("complete face rendering requires a GPU");
     let eye = Vec3::new(34.0, 4.0, 34.0);
     let target = Vec3::new(30.5, 1.0, 30.5);
     let mut actual = renderer(&gpu, eye, target);
@@ -1999,7 +1990,7 @@ fn complete_outside_faces_reach_the_rendered_velocity_field() {
 
 #[test]
 fn analytic_sea_excludes_all_owned_regions_including_dry_and_ninth_and_releases_removed_bounds() {
-    let (_case, gpu) = gpu().expect("ocean ownership requires GPU");
+    let gpu = gpu().expect("ocean ownership requires GPU");
     let mut fields = Vec::new();
     for z in 0..3 {
         for x in 0..3 {
@@ -2094,7 +2085,7 @@ fn analytic_sea_excludes_all_owned_regions_including_dry_and_ninth_and_releases_
 /// the band both draw the region's own water.
 #[test]
 fn a_region_open_on_a_sea_with_its_look_meets_it_without_a_seam() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     let fog = [0.04, 0.22, 0.26, 0.015];
     let absorb = [0.35, 0.07, 0.05];
     let scatter = [0.03, 0.05, 0.05];
@@ -2220,7 +2211,7 @@ fn a_region_open_on_a_sea_with_its_look_meets_it_without_a_seam() {
 /// back to the same frame.
 #[test]
 fn the_bed_the_water_leaves_is_damp_then_dries() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     let drained = |i: u32, k: u32| {
         let c = column(i, k);
         [c[0] - c[1], 0.0, 0.0, 0.0]
@@ -2293,7 +2284,7 @@ fn the_bed_the_water_leaves_is_damp_then_dries() {
 
 #[test]
 fn bed_ledge_film_covers_the_solid_wall_and_keeps_foreground_objects_in_front() {
-    let (_case, gpu) = gpu().expect("solid ledge image needs GPU");
+    let gpu = gpu().expect("solid ledge image needs GPU");
     let eye = Vec3::new(12.0, 3.5, 8.0);
     let at = Vec3::new(8.0, 3.5, 8.0);
     let camera = CameraState::look_at(eye, at);
@@ -2437,7 +2428,7 @@ fn bed_ledge_film_covers_the_solid_wall_and_keeps_foreground_objects_in_front() 
 /// window's water sound stops when the water is gone.
 #[test]
 fn listening_hears_still_water_and_no_water_as_silence() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     // The pit's water at one level, standing still.
     let still = |i: u32, k: u32| {
         let c = column(i, k);
