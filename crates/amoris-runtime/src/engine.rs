@@ -20,7 +20,7 @@ use amoris_physics::water::feedback::WaterFeedback;
 use amoris_physics::water::resident::{WaterOutletStage, WaterProbe, WaterResident};
 use amoris_physics::{
     Board, Boat, Collider, ExternalForce, Floater, Hull, RigidBody, Sail, Sea, Transform, Trim,
-    Velocity, Walker, WaterDrain, WaterRegion, WaterSource, Wind,
+    Velocity, Vessel, Walker, WaterDrain, WaterRegion, WaterSource, Wind,
 };
 use amoris_script::{EngineFns, register_engine};
 use amoris_sim::registry::{
@@ -91,7 +91,7 @@ where
 /// Every engine component a scene or `world_edit` can name (`Name` is the entity's own `name`);
 /// the first three are the player layer's (perception.md: who observes, what can be perceived,
 /// what blocks sight).
-pub fn engine_components() -> [EngineComponent; 36] {
+pub fn engine_components() -> [EngineComponent; 37] {
     [
         entry::<amoris_interface::perception::Observer>(),
         entry::<amoris_interface::perception::Perceivable>(),
@@ -117,6 +117,7 @@ pub fn engine_components() -> [EngineComponent; 36] {
         entry::<Sea>(),
         entry::<Transform>(),
         entry::<Velocity>(),
+        entry::<Vessel>(),
         entry::<Walker>(),
         entry::<Wind>(),
         voxels_entry(),
@@ -1019,6 +1020,7 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     ComponentRegistry::register::<Collider>(world, None)?;
     ComponentRegistry::register::<ExternalForce>(world, None)?;
     ComponentRegistry::register::<Floater>(world, None)?;
+    ComponentRegistry::register::<Vessel>(world, None)?;
     ComponentRegistry::register::<Sail>(world, None)?;
     ComponentRegistry::register::<Hull>(world, None)?;
     ComponentRegistry::register::<Sea>(world, None)?;

@@ -574,3 +574,24 @@ scene's depth before it. Drawn first as two blends, a darkening and then the fil
 0.50 ms more. The foam pass keeps the wetness at no measurable cost.
 
 Not measured: R1 (the RTX 5060 and the 780M), Direct3D 12, Vulkan, and the browser's pass alone.
+
+## 14. Vessels (Pioneer, 2026-10-23)
+
+The vessels of [water.md](../spec/water.md) 62 on the M5, macOS, release builds, 2026-10-23. The
+machine was not checked for other load.
+
+`cargo test --release -p amoris-physics --test vessel time_vessels -- --ignored --nocapture`, two
+runs: a tick of a world with a CPU region of still water, 64 x 64 m, and eight of the pool party's
+60 kg dinghies afloat in it, four with a hole of 20 cm^2 filling, against the same world without
+them, 600 ticks each:
+
+| | Without | With eight dinghies | A dinghy |
+|---|---|---|---|
+| a tick | 0.019, 0.008 ms | 0.759, 0.755 ms | 0.093 ms |
+
+A dinghy's hull is 2.2 m long: its triangles are split to 0.275 m, and its lattice is 9 x 9 nodes.
+The cost covers its rigid body as well. Built first with triangles a twelfth of the hull's extent,
+the water inside levelled by 40 bisections over every triangle and the hull's volume under the
+water computed again for coupling the region did not ask for, a dinghy took 0.515 ms a tick.
+
+Not measured: a resident region, whose nodes add to its samples (water.md 47), and R1.

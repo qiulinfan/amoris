@@ -7,6 +7,7 @@ Its water is a resident field with dispersive surface waves; bodies push it asid
 from pathlib import Path
 import json
 import math
+import struct
 
 ROOT = Path(__file__).resolve().parent
 CELL = 0.25
@@ -33,6 +34,101 @@ def floor(x, z):
 
 def quat_z(angle):
     return [0.0, 0.0, math.sin(angle / 2), math.cos(angle / 2)]
+
+
+# A dinghy's hull, its length along x and its bow at +x: a flat bottom 0.42 m under its gunwale,
+# its bow raked forward. The collider is the convex hull of these points, and a Vessel open over
+# its rim floats it by that hull with no buoyancy points (water.md 62).
+DINGHY_BOTTOM = [(-0.9, -0.4), (0.2, -0.42), (0.9, -0.3), (0.9, 0.3), (0.2, 0.42), (-0.9, 0.4)]
+DINGHY_TOP = [(-1.0, -0.5), (0.2, -0.55), (1.2, -0.32), (1.2, 0.32), (0.2, 0.55), (-1.0, 0.5)]
+DINGHY_LOW, DINGHY_HIGH = -0.21, 0.21
+DINGHY_WALL = 0.03
+
+
+def dinghy_points():
+    return ([[x, DINGHY_LOW, z] for x, z in DINGHY_BOTTOM]
+            + [[x, DINGHY_HIGH, z] for x, z in DINGHY_TOP])
+
+
+def write_dinghy_glb():
+    """dinghy.glb: the hull's outside, its inside a wall's thickness in, and the gunwale between,
+    each face flat-shaded."""
+    def inset(x, z, y):
+        return [0.1 + (x - 0.1) * 0.95, y, z * 0.93]
+
+    outer_bottom = [[x, DINGHY_LOW, z] for x, z in DINGHY_BOTTOM]
+    outer_top = [[x, DINGHY_HIGH, z] for x, z in DINGHY_TOP]
+    inner_bottom = [inset(x, z, DINGHY_LOW + DINGHY_WALL) for x, z in DINGHY_BOTTOM]
+    inner_top = [inset(x, z, DINGHY_HIGH) for x, z in DINGHY_TOP]
+    faces = []
+    n = len(DINGHY_BOTTOM)
+    # Outside: the bottom, seen from below, and the sides, seen from outside.
+    faces.append(list(reversed(outer_bottom)))
+    for i in range(n):
+        j = (i + 1) % n
+        faces.append([outer_bottom[i], outer_bottom[j], outer_top[j], outer_top[i]])
+    # Inside: the floor seen from above and the sides seen from inside.
+    faces.append(inner_bottom)
+    for i in range(n):
+        j = (i + 1) % n
+        faces.append([inner_bottom[j], inner_bottom[i], inner_top[i], inner_top[j]])
+    # The gunwale, from outside to inside.
+    for i in range(n):
+        j = (i + 1) % n
+        faces.append([outer_top[i], outer_top[j], inner_top[j], inner_top[i]])
+    positions, normals, triangles = [], [], []
+    for face in faces:
+        a, b, c = face[0], face[1], face[2]
+        u = [b[k] - a[k] for k in range(3)]
+        v = [c[k] - a[k] for k in range(3)]
+        nrm = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]
+        size = math.sqrt(sum(x * x for x in nrm)) or 1.0
+        nrm = [x / size for x in nrm]
+        base = len(positions)
+        positions.extend(face)
+        normals.extend([nrm] * len(face))
+        for k in range(1, len(face) - 1):
+            triangles.append([base, base + k + 1, base + k])
+    blob = bytearray()
+    views, accessors = [], []
+
+    def add(data, target, count, kind, component, lo=None, hi=None):
+        while len(blob) % 4:
+            blob.append(0)
+        views.append({"buffer": 0, "byteOffset": len(blob), "byteLength": len(data),
+                      "target": target})
+        blob.extend(data)
+        acc = {"bufferView": len(views) - 1, "componentType": component, "count": count,
+               "type": kind}
+        if lo is not None:
+            acc["min"], acc["max"] = lo, hi
+        accessors.append(acc)
+        return len(accessors) - 1
+
+    flat = [c for p in positions for c in p]
+    pos = add(struct.pack(f"<{len(flat)}f", *flat), 34962, len(positions), "VEC3", 5126,
+              [min(p[j] for p in positions) for j in range(3)],
+              [max(p[j] for p in positions) for j in range(3)])
+    flat = [c for q in normals for c in q]
+    nor = add(struct.pack(f"<{len(flat)}f", *flat), 34962, len(normals), "VEC3", 5126)
+    flat = [i for t in triangles for i in t]
+    ind = add(struct.pack(f"<{len(flat)}H", *flat), 34963, len(flat), "SCALAR", 5123)
+    while len(blob) % 4:
+        blob.append(0)
+    gltf = {"asset": {"version": "2.0", "generator": "Amoris pool party sample"},
+            "buffers": [{"byteLength": len(blob)}],
+            "bufferViews": views, "accessors": accessors,
+            "materials": [{"name": "Hull", "pbrMetallicRoughness": {
+                "baseColorFactor": [1, 1, 1, 1], "metallicFactor": 0, "roughnessFactor": 0.5}}],
+            "meshes": [{"name": "Dinghy", "primitives": [{
+                "attributes": {"POSITION": pos, "NORMAL": nor}, "indices": ind, "material": 0}]}],
+            "nodes": [{"name": "Dinghy", "mesh": 0}], "scenes": [{"nodes": [0]}], "scene": 0}
+    text = json.dumps(gltf, separators=(",", ":")).encode("utf-8")
+    text += b" " * (-len(text) % 4)
+    chunks = (struct.pack("<II", len(text), 0x4E4F534A) + text
+              + struct.pack("<II", len(blob), 0x004E4942) + bytes(blob))
+    (ROOT / "dinghy.glb").write_bytes(struct.pack("<III", 0x46546C67, 2, 12 + len(chunks))
+                                      + chunks)
 
 
 def main():
@@ -189,6 +285,28 @@ def main():
              {"mesh": "sphere", "scale": [0.26, 0.22, 0.3], "color": [1, 0.86, 0.1, 1],
               "emissive": [0.25, 0.18, 0.0], "roughness": 0.3},
              drag=1.5, heave=4.0, extra={"Duck": {}})
+
+    # Two dinghies of 60 kg float by their hull: a Vessel and no buoyancy points. The second has a
+    # hole of 100 cm^2 in its bottom: it fills over a minute or two, heels as the water in it
+    # loses it its stability, and sinks.
+    write_dinghy_glb()
+    for name, at, yaw, holes, color in [
+            ("Dinghy", [2.6, 0.2, 6.9], 0.15, [], [0.95, 0.95, 0.92, 1]),
+            ("LeakyDinghy", [12.6, 0.2, 1.1], -0.1,
+             [{"at": [0.0, DINGHY_LOW, 0.0], "area": 0.01}], [0.95, 0.55, 0.3, 1])]:
+        entity(name, {
+            "Transform": {"position": at,
+                          "rotation": [0, math.sin(yaw / 2), 0, math.cos(yaw / 2)]},
+            "Velocity": {"linear": [0, 0, 0], "angular": [0, 0, 0]},
+            "RigidBody": {"kind": "Dynamic", "linear_damping": 0.05, "angular_damping": 0.4,
+                          "mass": {"mass": 60, "center": [0, -0.1, 0],
+                                   "inertia": [6.0, 30.0, 25.0]}},
+            "Collider": {"shape": {"ConvexHull": {"points": dinghy_points()}},
+                         "restitution": 0.2},
+            "ExternalForce": {},
+            "Vessel": {"rim": DINGHY_HIGH - 0.01, "holes": holes},
+            "Model": {"mesh": "dinghy.glb", "scale": [1, 1, 1], "color": color,
+                      "roughness": 0.5}})
 
     # Guests: 1.7 m tall, 79 kg, nearly as dense as water. They wait lying on the loungers and
     # take turns cannonballing off the board.

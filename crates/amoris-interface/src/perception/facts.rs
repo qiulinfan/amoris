@@ -13,7 +13,8 @@ use std::collections::BTreeMap;
 
 use amoris_physics::geom::V3;
 use amoris_physics::{
-    Boat, Collider, ExternalForce, Floater, Hull, RigidBody, Sail, Sea, Transform, Velocity, Wind,
+    Boat, Collider, ExternalForce, Floater, Hull, RigidBody, Sail, Sea, Transform, Velocity,
+    Vessel, Wind,
 };
 use amoris_sim::registry::{ComponentOrigin, FieldType, ProjectValues};
 use amoris_sim::{ComponentRegistry, EntityId, EntityIndex, Name};
@@ -117,6 +118,7 @@ pub fn engine_json(world: &World, e: Entity, component: &str) -> Option<Value> {
         "Collider" => json_of::<Collider>(world, e),
         "ExternalForce" => json_of::<ExternalForce>(world, e),
         "Floater" => json_of::<Floater>(world, e),
+        "Vessel" => json_of::<Vessel>(world, e),
         "Boat" => json_of::<Boat>(world, e),
         "Sail" => json_of::<Sail>(world, e),
         "Hull" => json_of::<Hull>(world, e),

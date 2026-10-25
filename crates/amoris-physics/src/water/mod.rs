@@ -982,6 +982,16 @@ type BuoyInput<'w, 's> = (
             &'static crate::boat::Boat,
         ),
     >,
+    Query<
+        'w,
+        's,
+        (
+            &'static EntityId,
+            &'static Transform,
+            &'static crate::body::Collider,
+        ),
+        bevy_ecs::query::With<crate::vessel::Vessel>,
+    >,
     ResMut<'w, buoyancy::Samples>,
     FeedbackQuery<'w, 's>,
     DisplacementQuery<'w, 's>,
@@ -1041,7 +1051,7 @@ pub(crate) fn water(
     for event in std::mem::take(&mut scratch.3.events) {
         emit.emit(event);
     }
-    let (floaters, hulls, mut buoy_samples, mut feedbacks, mut displacements) = buoy_input;
+    let (floaters, hulls, vessels, mut buoy_samples, mut feedbacks, mut displacements) = buoy_input;
     let (walkers, mut swim_samples) = swimmers_input;
     let (sources, drains, seas) = forcing;
     let dt = clock.dt();
@@ -1238,7 +1248,11 @@ pub(crate) fn water(
         let feedback_ids: std::collections::BTreeSet<_> =
             by_id(&feedbacks).map(|(_, id, _)| *id).collect();
         let mut live = std::collections::BTreeSet::new();
-        let covers: Vec<_> = if floaters.is_empty() && walkers.is_empty() && hulls.is_empty() {
+        let covers: Vec<_> = if floaters.is_empty()
+            && walkers.is_empty()
+            && hulls.is_empty()
+            && vessels.is_empty()
+        {
             Vec::new()
         } else {
             order
@@ -1307,6 +1321,34 @@ pub(crate) fn water(
                                     feedback_ids.contains(&cover.id),
                                     cover,
                                 )?,
+                            ));
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        // A vessel's lattice (vessel.rs, water.md 62.1): the force system reads the same nodes.
+        for (body, tf, collider) in by_id(&vessels).filter(|_| resident_cover) {
+            let lattice = crate::vessel::Lattice::new(&collider.shape, tf.position, tf.rotation);
+            for node in 0..lattice.len() {
+                let at = lattice.node(node);
+                if at.iter().any(|v| !v.is_finite()) {
+                    return Err(crate::vessel::failed("a vessel's pose must be finite"));
+                }
+                live.insert((*body, buoyancy::Role::Vessel(node)));
+                for cover in &covers {
+                    if let Some(grid) = cover.grid_at(at) {
+                        if cover.resident {
+                            buoys.push((
+                                cover.id,
+                                buoyancy::Point::vessel(
+                                    *body,
+                                    node,
+                                    at,
+                                    grid,
+                                    feedback_ids.contains(&cover.id),
+                                ),
                             ));
                         }
                         break;

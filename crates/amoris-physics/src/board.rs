@@ -170,7 +170,7 @@ pub(crate) fn board(
             let at = geom::to_world(tf.position, tf.rotation, p.at);
             waters.push(crate::forces::point_water(
                 *id,
-                point,
+                crate::water::buoyancy::Role::Floater(point),
                 at,
                 &regions,
                 &samples,

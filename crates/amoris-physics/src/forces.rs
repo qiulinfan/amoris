@@ -19,6 +19,8 @@ use crate::body::{ExternalForce, RigidBody, Transform, Velocity, body_mass, loca
 use crate::geom::{self, V3};
 use crate::sea::{GRAVITY, Sea, WaveField, Wind};
 use crate::solver::velocity_at;
+use crate::vessel::{Flow, Lattice, Motion, NodeWater, Spread, Vessel};
+use crate::water::buoyancy::Role;
 use crate::water::displacement::head_per_m3;
 
 /// The simulated time at the start of the running tick.
@@ -71,7 +73,7 @@ pub(crate) struct PointWater {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn point_water(
     id: EntityId,
-    point: usize,
+    role: crate::water::buoyancy::Role,
     at: V3,
     regions: &[(crate::water::buoyancy::Cover, &crate::water::WaterRegion)],
     samples: &crate::water::buoyancy::Samples,
@@ -84,11 +86,9 @@ pub(crate) fn point_water(
         .find_map(|(cover, r)| cover.grid_at(at).map(|grid| (cover, grid, *r)));
     if let Some((cover, grid, region)) = region {
         let column = if region.solver == crate::water::Solver::GpuResident {
-            samples
-                .get((id, point), at, cover.id, tick)
-                .ok_or_else(|| {
-                    crate::water::resident::failed("resident buoyancy has no current-pose sample")
-                })?
+            samples.get((id, role), at, cover.id, tick).ok_or_else(|| {
+                crate::water::resident::failed("resident buoyancy has no current-pose sample")
+            })?
         } else {
             crate::water::buoyancy::sample(region, grid)
         };
@@ -183,6 +183,16 @@ pub(crate) fn wind(
     }
 }
 
+type VesselItem<'a> = (
+    &'a EntityId,
+    &'a Transform,
+    Option<&'a Velocity>,
+    Option<&'a RigidBody>,
+    &'a crate::body::Collider,
+    &'a mut Vessel,
+    Option<&'a mut ExternalForce>,
+);
+
 type FloaterItem<'a> = (
     &'a EntityId,
     &'a Transform,
@@ -216,10 +226,24 @@ pub(crate) fn buoyancy(
         &EntityId,
         &mut crate::water::displacement::WaterDisplacement,
     )>,
-    mut floaters: Query<FloaterItem<'static>>,
+    mut floaters: Query<FloaterItem<'static>, bevy_ecs::query::Without<Vessel>>,
+    mut vessels: Query<VesselItem<'static>>,
+    both: Query<
+        &EntityId,
+        (
+            bevy_ecs::query::With<Floater>,
+            bevy_ecs::query::With<Vessel>,
+        ),
+    >,
+    mut hulls: bevy_ecs::system::ResMut<crate::vessel::Hulls>,
 ) -> Result<(), amoris_contract::Problem> {
-    if floaters.is_empty() {
+    if floaters.is_empty() && vessels.is_empty() {
         return Ok(());
+    }
+    if let Some(id) = by_id(&both).next() {
+        return Err(crate::vessel::failed(format!(
+            "entity {id} floats by its Floater's points or by its Vessel's hull, not both"
+        )));
     }
     let t = start_time(&clock);
     let field = sea_field(&seas);
@@ -245,8 +269,16 @@ pub(crate) fn buoyancy(
         for (point, p) in f.points.iter().enumerate() {
             total += p.volume;
             let at = geom::to_world(tf.position, tf.rotation, p.at);
-            let Some(here) =
-                point_water(*id, point, at, &regions, &samples, &field, t, clock.tick.0)?
+            let Some(here) = point_water(
+                *id,
+                Role::Floater(point),
+                at,
+                &regions,
+                &samples,
+                &field,
+                t,
+                clock.tick.0,
+            )?
             else {
                 points.push(None);
                 continue;
@@ -421,6 +453,186 @@ pub(crate) fn buoyancy(
             e.torque = geom::add(e.torque, gathered.torque);
         }
     }
+    let mut live = std::collections::BTreeSet::new();
+    for (id, tf, vel, body, collider, mut vessel, ext) in by_id_mut(&mut vessels) {
+        live.insert(*id);
+        vessel
+            .validate()
+            .map_err(|e| crate::vessel::failed(format!("entity {id}: {e}")))?;
+        let hull = hulls.get(*id, &collider.shape, vessel.rim)?;
+        let mass = body_mass(body, Some(collider))
+            .filter(|m| *m > 0.0)
+            .ok_or_else(|| {
+                crate::vessel::failed(format!(
+                    "entity {id}: a vessel needs its mass, stated on its RigidBody or from a \
+                     density on a ball, cuboid or capsule"
+                ))
+            })?;
+        let v = vel.copied().unwrap_or_default();
+        let com = geom::to_world(tf.position, tf.rotation, local_com(body));
+        let lattice = Lattice::new(&collider.shape, tf.position, tf.rotation);
+        let mut waters = Vec::with_capacity(lattice.len());
+        for n in 0..lattice.len() {
+            let at = lattice.node(n);
+            waters.push(point_water(
+                *id,
+                Role::Vessel(n),
+                at,
+                &regions,
+                &samples,
+                &field,
+                t,
+                clock.tick.0,
+            )?);
+        }
+        let velocity = |p: V3| velocity_at(&v, com, p);
+        let motion = Motion {
+            position: tf.position,
+            rotation: tf.rotation,
+            com,
+            velocity: &velocity,
+        };
+        let nodes = |extra: &dyn Fn(usize, &PointWater) -> f64| -> Vec<Option<NodeWater>> {
+            waters
+                .iter()
+                .enumerate()
+                .map(|(n, w)| {
+                    w.as_ref().map(|w| NodeWater {
+                        surface: w.water.height + extra(n, w),
+                        velocity: w.water.velocity,
+                        density: w.density,
+                    })
+                })
+                .collect()
+        };
+        let now = nodes(&|_, _| 0.0);
+        let density = waters
+            .iter()
+            .flatten()
+            .map(|w| w.density)
+            .next()
+            .unwrap_or(1000.0);
+        let flooded = math::min(vessel.flooded, hull.volume);
+        let carried = density * flooded;
+        let world = crate::vessel::in_world(&hull, tf.position, tf.rotation);
+        let inside = crate::vessel::inside(&world, flooded, hull.volume);
+        // In a region with WaterDisplacement each node's column takes the volume the hull holds
+        // under it, spread wider the deeper the hull reaches there (as a Floater point's is).
+        let area = lattice.area();
+        let spread: Vec<Option<Spread>> = waters
+            .iter()
+            .map(|w| {
+                let (region, grid) = w.as_ref()?.cover?;
+                displacement_index.get(&region)?;
+                let (cover, _) = regions.iter().find(|(c, _)| c.id == region)?;
+                Some(Spread {
+                    region,
+                    grid,
+                    size: cover.size(),
+                    cell: w.as_ref()?.cell,
+                })
+            })
+            .collect();
+        let coupled = spread.iter().any(Option::is_some);
+        let held = if coupled {
+            crate::vessel::load(&world, &lattice, &now, &motion, 0.0, None).nodes
+        } else {
+            Vec::new()
+        };
+        let radius = |n: usize, cell: f64| {
+            let deep = math::max(held.get(n).copied().unwrap_or(0.0) / area, 0.0);
+            math::min((2.0 * math::sqrt(area) + deep) / cell, MAX_POINT_RADIUS)
+        };
+        // The head the hull's own change of displaced volume adds over the step, felt in the same
+        // step (water.md 56): ahead without it, then the heads its change in each node makes.
+        let mut heads = vec![0.0; lattice.len()];
+        if coupled {
+            let ahead = crate::vessel::load(
+                &world,
+                &lattice,
+                &nodes(&|_, w| dt * w.rise),
+                &motion,
+                dt,
+                None,
+            );
+            for (i, here) in spread.iter().enumerate() {
+                let Some(here) = here else {
+                    continue;
+                };
+                heads[i] = spread
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(j, other)| {
+                        let other = other.as_ref()?;
+                        (other.region == here.region).then(|| {
+                            (ahead.nodes[j] - held[j])
+                                * head_per_m3(
+                                    other.grid,
+                                    radius(j, other.cell),
+                                    here.grid,
+                                    here.size,
+                                    here.cell,
+                                )
+                        })
+                    })
+                    .sum();
+            }
+        }
+        let flow = Flow {
+            pressure: vessel.pressure,
+            friction: vessel.friction,
+            length: hull.length,
+            mass: mass + carried,
+            dt,
+        };
+        let load = crate::vessel::load(
+            &world,
+            &lattice,
+            &nodes(&|n, w| dt * w.rise + heads[n]),
+            &motion,
+            dt,
+            Some(&flow),
+        );
+        for (n, here) in spread.iter().enumerate() {
+            if let Some(here) = here
+                && let Some(e) = displacement_index.get(&here.region)
+                && let Ok((_, _, mut target)) = displacements.get_mut(*e)
+            {
+                target.queue(clock.tick.0, here.grid, load.nodes[n], radius(n, here.cell))?;
+            }
+            if ext.is_some()
+                && let Some(w) = &waters[n]
+                && let Some((region, grid)) = w.cover
+                && let Some(e) = feedback_index.get(&region)
+                && let Ok((_, _, mut target)) = feedbacks.get_mut(*e)
+            {
+                target.queue(clock.tick.0, grid, load.push[n])?;
+            }
+        }
+        // The water inside moves with the hull: its weight acts at its centre, and the hull and
+        // it accelerate together under the water's load, the engine applying the hull's own weight
+        // alone: F m / (m + m_w) (water.md 62.3).
+        let mut torque = load.torque;
+        if let Some(w) = &inside {
+            let weight = [0.0, -carried * GRAVITY, 0.0];
+            torque = geom::add(torque, geom::cross(geom::sub(w.centre, com), weight));
+        }
+        let share = mass / (mass + carried);
+        let q = crate::vessel::inflow(
+            &vessel,
+            &hull,
+            &motion,
+            &|p| crate::vessel::surface_at(&lattice, &now, p),
+            inside.as_ref().map(|w| w.level),
+        );
+        vessel.flooded = math::clamp(flooded + q * dt, 0.0, hull.volume);
+        vessel.submerged = math::clamp(load.volume / hull.volume, 0.0, 1.0);
+        if let Some(mut e) = ext {
+            e.force = geom::add(e.force, geom::scale(load.force, share));
+            e.torque = geom::add(e.torque, geom::scale(torque, share));
+        }
+    }
+    hulls.retain(&live);
     Ok(())
 }
 

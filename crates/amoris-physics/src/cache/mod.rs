@@ -65,6 +65,7 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
         .component::<Collider>()
         .component::<ExternalForce>()
         .component::<Floater>()
+        .component::<crate::vessel::Vessel>()
         .component::<Boat>()
         .component::<Sail>()
         .component::<Hull>()
@@ -94,6 +95,9 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
         .ignore::<WaterSteps>("the tick each water tile was last stepped, for the feed only")
         .ignore::<crate::water::buoyancy::Samples>(
             "current-pose GPU buoyancy samples; rebuilt each tick and reset on restore",
+        )
+        .ignore::<crate::vessel::Hulls>(
+            "vessels' hulls, built from their colliders whenever those change",
         )
         .ignore::<crate::water::swimming::Samples>(
             "current-pose GPU Walker samples; rebuilt each tick and reset on restore",
@@ -394,6 +398,11 @@ impl Persisted for Floater {
     const VERSION: u32 = 2;
 }
 
+impl Persisted for crate::vessel::Vessel {
+    const NAME: &'static str = "Vessel";
+    const VERSION: u32 = 1;
+}
+
 impl Persisted for Sea {
     const NAME: &'static str = "Sea";
     const VERSION: u32 = 2;
@@ -466,6 +475,7 @@ mod tests {
         Collider::trace(&mut t, &s).unwrap();
         ExternalForce::trace(&mut t, &s).unwrap();
         Floater::trace(&mut t, &s).unwrap();
+        crate::vessel::Vessel::trace(&mut t, &s).unwrap();
         Boat::trace(&mut t, &s).unwrap();
         Sail::trace(&mut t, &s).unwrap();
         Hull::trace(&mut t, &s).unwrap();
@@ -485,6 +495,8 @@ mod tests {
             "ExternalForce",
             "Floater",
             "BuoyPoint",
+            "Vessel",
+            "Hole",
             "Boat",
             "Trim",
             "Sail",

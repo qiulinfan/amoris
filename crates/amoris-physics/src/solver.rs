@@ -398,6 +398,7 @@ type BodyItem<'a> = (
     Option<&'a mut ExternalForce>,
     Option<&'a mut Boat>,
     Option<&'a Floater>,
+    Option<&'a crate::vessel::Vessel>,
 );
 
 fn not_finite(entity: EntityId, what: &str) -> Problem {
@@ -483,7 +484,7 @@ pub(crate) fn step(
     //    written from outside, and apply each body's gathered force.
     let mut entries = Vec::with_capacity(items.len());
     for (slot, item) in kept.iter().zip(items.iter_mut()) {
-        let (id, tf, vel, body, collider, ext, _, _) = item;
+        let (id, tf, vel, body, collider, ext, _, _, _) = item;
         let id = **id;
         // The tick's gathered force goes to the solver once, whatever becomes of the body.
         let force = ext.as_deref_mut().map(std::mem::take).unwrap_or_default();
@@ -561,7 +562,7 @@ pub(crate) fn step(
     let time = clock.time();
     let mut e = 0;
     for item in &mut items {
-        let (id, tf, vel, _, _, _, boat, floater) = item;
+        let (id, tf, vel, _, _, _, boat, floater, vessel) = item;
         let id = **id;
         let Some(tf) = tf.as_deref_mut() else {
             continue;
@@ -604,8 +605,11 @@ pub(crate) fn step(
         }
         if let Some(boat) = boat.as_deref_mut() {
             let v = vel.as_deref().copied().unwrap_or_default();
-            let f = floater.as_deref();
-            readings::after_step(boat, tf, &v, f, sea.as_ref(), time, aground);
+            let submerged = floater
+                .as_deref()
+                .map(|f| f.submerged)
+                .or(vessel.as_deref().map(|v| v.submerged));
+            readings::after_step(boat, tf, &v, submerged, sea.as_ref(), time, aground);
         }
     }
 }

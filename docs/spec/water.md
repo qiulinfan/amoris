@@ -3758,3 +3758,136 @@ Limits:
 - The wet bed is presentation: a damp bed is no more slippery and the water does not see it. Every
   bed darkens by one factor, with no change of colour; an object standing in the swash darkens only
   within 0.4 m of the bed. Smooth regions only.
+
+## 62. Vessels: buoyancy from the hull under the water (Pioneer, 2026-10-23)
+
+A Floater floats by points placed by hand, each standing for a volume and a layer: a hull needed
+dozens of them, each of the right volume, to float at its draft and heel as it should, and nothing
+let water into it. A `Vessel` floats a body by its collider's hull. Each tick the hull is cut at the
+water's surface; the water's weight presses on the part under it, and its flow on every face
+meeting it; water comes in through the hull's holes and over an open hull's rim, and the water
+inside weighs it down. Per-triangle forces on a hull cut at a height field are J. Kerner's
+("Water interaction model for boats in video games", Gamasutra, 2015, parts 1 and 2), here with
+the exact centre of pressure, the ITTC friction line, implicit drag and flooding.
+
+### 62.1 Authoring and sampling
+
+- `Vessel`: `rim`, the height in the body's frame of an open hull's rim (none: decked, closed all
+  round); `holes`, each a point in the body's frame and an area, m^2; `pressure` (1) and `friction`
+  (1), the flow's coefficients (62.2); `flooded`, the water inside, m^3, written by the engine (a
+  scene may start a vessel with some); `submerged`, written by the engine, the share of the hull's
+  volume under the water. Version 1. A body floats by its Floater or its Vessel, not both, and a
+  vessel needs its mass, stated on its `RigidBody` or from a density on a ball, cuboid or capsule
+  (`water.vessel_invalid`).
+- The hull is the convex hull of the collider (Rapier's quickhull, in the solver's f32, as it builds
+  a hull collider): a ball or a capsule as a polygon of 24 segments round and 6 rings to a pole, its
+  radius grown so that it holds the round shape's volume; a mesh or a compound by the hull of its
+  points, its hollows filled. Under a rim, the part of the hull under the plane at that height, its
+  opening closed by a fan. Its triangles are split until no edge is longer than an eighth of the
+  hull's largest extent, as far as the lattice's nodes lie apart, and at least 0.25 m: the water's
+  surface is a plane across each.
+- The water is sampled on a lattice over the hull's footprint, aligned with its heading: at most 9 x
+  9 nodes, at least 0.25 m apart, at the height of the body. A vertex takes the water between the
+  four nodes around it. In a resident region each node is a current-pose sample, as a Floater's
+  point is (role `Vessel(node)`, within `MAX_SAMPLES`); a CPU region and the sea are read directly.
+- The boat readings (`afloat`) take a vessel's `submerged` as they take a Floater's.
+
+### 62.2 The load
+
+- **The water's weight.** Each face under the surface is cut where the surface crosses it and
+  pressed by rho g d, d its depth under the surface, linear over the face, at its centre of
+  pressure, ((sum d)(sum p) + sum d_i p_i) / (4 sum d) over its corners p_i. Under a plane this is
+  Archimedes' force through the centre of buoyancy, exactly (the divergence theorem over the hull
+  closed by the waterplane, where d = 0); under waves, the long-wave Froude-Krylov force (47). Each
+  vertex is taken where it will stand at the step's end against the surface then, linearly implicit
+  (47).
+- **The volume under the water.** Each face under the surface holds the column between it and the
+  surface: its area projected on the horizontal times its mean depth, positive under a face looking
+  down. Their sum is the hull's volume under the water (`submerged`); each node takes the columns
+  around it, which a region with `WaterDisplacement` receives (46), with the head the hull's own
+  change of it adds over the step (56).
+- **The flow.** A face meeting the water, its velocity u relative to the water's with u . n > 0
+  along its outward normal n, is pressed back by half rho `pressure` |u| (u . n) along n: a plate
+  face-on meets a drag coefficient of 1, and at an angle a to the flow it takes a normal force
+  growing as sin a, its lift and drag. A face leaving the water is not pulled back (its wake's
+  suction is left out). Along each face under the water, skin friction half rho C_F A |u_t| u_t,
+  C_F the ITTC 1957 model-ship correlation line, 0.075 / (log10 Re - 2)^2 times `friction`, Re =
+  |u| L / nu with L the hull's largest extent and nu = 1.0e-6 m^2/s, and no lower than 1e5, where
+  the line begins. Each face's drag is implicit over its share of the moving mass by wetted area,
+  c / (1 + c dt / m_i). A region with `WaterFeedback` takes each node's share of the faces'
+  horizontal forces back, as from a Floater (22).
+
+### 62.3 Water inside
+
+- The water inside stands level: at the height under which the hull holds `flooded`, found by
+  false position with the Illinois step (M. Dowell and P. Jarratt, "A modified regula falsi method
+  for computing the root of an equation", BIT 11(2), 1971) to a millionth of the hull's volume, its
+  centre the centre of the columns under that height.
+- **Holes.** Each passes c a sqrt(2 g |h|) a second toward the side whose water stands higher over
+  it, h the head of the water outside over the hole less that of the water inside, a the hole's area
+  and c = 0.61, a sharp-edged orifice's coefficient (its vena contracta).
+- **The rim.** Each edge of an open hull's rim passes (2/3) c l sqrt(2 g) |h|^(3/2), a sharp-crested
+  weir (G. Poleni's rectangular weir), h the difference of the heads over it outside and inside, the
+  mean over its two ends. The opening is closed for the water's pressure: a rim under the water
+  presses on it until the water poured in fills the hull.
+- **The water's weight.** The water inside moves with the hull. The water's load F and its torque
+  are applied times m / (m + m_w), m_w = rho `flooded`, while the engine applies the hull's own
+  weight: hull and water then fall and accelerate together as one mass under F and their weight. The
+  water's weight acts at its centre, so as the hull heels the water runs to its low side and the
+  boat loses the stability its waterplane gave it, the free-surface effect (K. J. Rawson and E. C.
+  Tupper, "Basic Ship Theory", 5th ed., 2001, 4): a swamped open boat heels and fills over its rim.
+  The water's turning inertia is taken in proportion to its mass.
+
+### 62.4 Checks, cost and limits
+
+`cargo test -p amoris-physics --lib vessel`: the hulls of a ball, a capsule, a box and a box open at
+half its height hold the shapes' volumes to 1e-6; a 2 x 1 x 4 m box rolled 20 degrees with its
+centre at the surface feels rho g 4 m^3 through the centroid of the wedge under the surface to 1e-9
+m; 1.2 m^3 in a 2 x 2 m hull stands 0.3 m deep; a hole and a rim pass Torricelli's and the weir's
+flows.
+
+`cargo test -p amoris-physics --test vessel`, on a CPU region of still water:
+
+- A 2 x 1 x 4 m box half as dense as water floats with its centre 0.7 mm over the surface, 0.4993
+  under (over the last 3 s of 20); a 0.5 m ball a quarter as dense floats with its centre at 0.1742
+  m against the cap's 0.1736 m, 0.2501 under.
+- The box, rolled 2.5 degrees with its pressure and friction off, rolls at periods of 2.002 to
+  2.005 s against 2 pi k / sqrt(g GM) = 2.006 s (GM = 0.417 m, k^2 = 5/12 m^2), and gains no energy;
+  a 1 x 2 x 2 m box as dense, GM = -0.417 m, capsizes and lies on its side at 89.7 degrees.
+- The box afloat and pushed along at 2 m/s decelerates at 0.491 m/s^2 against the plate's and the
+  friction line's 0.519 m/s^2, 5 percent less: the implicit drag of the first tick.
+- An open 400 kg boat, 2 x 4 m and 0.9 m deep, with a hole of 0.1 m^2 in its bottom fills upright
+  at 0.06035 m^3/s against 0.61 a sqrt(2 g h) = 0.06042 for h = 400 / (1000 x 8) = 5 cm: the water
+  outside stands that much over the water inside however deep it is. Then it heels, fills over its
+  rim at 65.6 s and rests on the floor; the same boat without the hole floats 5 cm deep.
+
+`cargo test -p amoris-app --test gpu_floaters vessel_crates_float_at_their_draft_on_all_three_backends_with_no_points`:
+the floaters' four 0.6 m crates as vessels float 0.35 under at 2.09 m on cpu, gpu and gpu_resident,
+the same to the bit on all three; with `WaterDisplacement` the resident lake takes their 4 x 0.0756
+m^3.
+
+`cargo run --release -p amoris-app --example vessel_shots -- --out out/vessels --at 120,3600,7200`:
+the pool party's two 60 kg dinghies (`samples/pool-party`, a flat bottom and a raked bow, the hull's
+points also its collider) float in the cannonballs' waves. The leaky one, a 100 cm^2 hole in its
+bottom, takes in about 0.004 m^3 a second for 85 s; with 0.35 m^3 inside it heels past 12 degrees,
+its rim goes under at 91 s, it is full (0.72 m^3) four seconds later and lies on the deep end's
+floor at 97 s. `gpu_frontier_scenes` still plays the pool party through, and in Chrome 155 its
+export (with `dinghy.glb`) plays at 16.7 ms a frame with no WebGPU validation error or script
+exception.
+
+The cost is in [liquids.md](../bench/liquids.md) 14.
+
+Limits:
+
+- The hull is convex: a catamaran's tunnel or a hull's hollows are filled, and a compound's parts
+  are one hull. A hull is rigid and has no thickness: its own material displaces no water, so a
+  holed hull with no flotation always sinks.
+- Under the water the hull takes the surface across each of its faces as a plane, and the water
+  between lattice nodes as bilinear: waves shorter than the nodes' spacing are not felt.
+- The water inside levels at once: it neither sloshes nor lags, and it is not drawn. The water that
+  comes in is not taken from the region, and the water going out through a hole or over the rim is
+  not given to it.
+- A hull resting on the bed still feels the water's pressure under it; its collider holds it up.
+- No suction behind a face leaving the water, no slamming beyond the face's pressure, no wave
+  making resistance but the region's own waves where it takes the displaced volume, and no added
+  mass (a Floater's `added_mass`, 56).

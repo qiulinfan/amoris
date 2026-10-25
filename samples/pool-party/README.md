@@ -1,8 +1,8 @@
 # Pool party
 
 A 16 × 8 m backyard pool on a resident GPU water field: a shallow end with entry steps, a ramp,
-and a 2.6 m deep end under a diving board. Beach balls, swim rings, a raft and eight rubber
-ducks float in it; three guests take turns cannonballing off the board every four seconds.
+and a 2.6 m deep end under a diving board. Beach balls, swim rings, a raft, two dinghies and eight
+rubber ducks float in it; three guests take turns cannonballing off the board every four seconds.
 
 From the repository root:
 
@@ -29,12 +29,17 @@ water and its eye's position, and the events `party.duck`, `party.splash` and `p
   bob on everyone else's.
 - The surface carries short waves at their true speed for the depth (dispersion), so a
   cannonball's ring waves spread and reflect off the walls as they would in a real pool.
+- The dinghies float by their hull alone: the water presses on the part of it under the
+  surface, with no buoyancy points placed by hand. The orange one has a hole in its bottom: it
+  fills for a minute and a half, heels as the water inside slops to one side, takes water over
+  its rim and sinks to the floor of the deep end.
 - A body entering fast throws a crown of spray in proportion to its speed and the volume it
   pushes aside.
 - The sun's light under the water gathers into caustics on the floor and on everything
   submerged, and fades with depth.
 
-`python3 samples/pool-party/build_scene.py` rebuilds `scene.json` and `perception.json`. It uses
+`python3 samples/pool-party/build_scene.py` rebuilds `scene.json`, `perception.json` and the
+dinghy's model, `dinghy.glb`. It uses
 only Python's standard library and no downloaded assets. The gameplay check plays the whole
 party through the player's controls:
 

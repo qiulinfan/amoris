@@ -7,6 +7,9 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 fn setup(mode: &str, flat: bool) -> Arc<GameSetup> {
+    Arc::new(base(mode, flat))
+}
+fn base(mode: &str, flat: bool) -> GameSetup {
     let root =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-floaters");
     let mut setup = Project::load(&root).unwrap().setup(false).unwrap();
@@ -18,7 +21,7 @@ fn setup(mode: &str, flat: bool) -> Arc<GameSetup> {
             tile["bed"] = json!(vec![0.0; 256]);
         }
     }
-    Arc::new(setup)
+    setup
 }
 fn read(game: &mut Game, name: &str) -> Value {
     game.apply(&Command::new(
@@ -118,4 +121,98 @@ fn dam_floaters_follow_current_and_restore_without_old_pose_samples() {
             "{moved}"
         );
     });
+}
+
+/// The floaters' crates as vessels (water.md 62): no buoyancy points, their cube's hull cut at the
+/// water's surface; with `displace`, the lake takes their displaced volume.
+fn vessel_setup(mode: &str, displace: bool) -> Arc<GameSetup> {
+    let mut setup = base(mode, true);
+    for entity in &mut setup.scene.entities {
+        if entity
+            .name
+            .as_deref()
+            .is_some_and(|n| n.starts_with("Float"))
+        {
+            entity.components.remove("Floater");
+            entity.components.insert("Vessel".into(), json!({}));
+        }
+    }
+    if displace {
+        setup.scene.entities[1]
+            .components
+            .insert("WaterDisplacement".into(), json!({}));
+    }
+    Arc::new(setup)
+}
+
+#[test]
+fn vessel_crates_float_at_their_draft_on_all_three_backends_with_no_points() {
+    big_stack(|| {
+        let mut reference = None;
+        for mode in ["cpu", "gpu", "gpu_resident"] {
+            let mut game = water_compute::builder(vessel_setup(mode, false), 1)
+                .build()
+                .unwrap();
+            // Dropped 0.6 m over their draft, they bob at about a second's period: the mean over
+            // the last second is where they float.
+            let mut sums = vec![[0.0; 2]; 4];
+            for tick in 0..600 {
+                step(&mut game, 1);
+                if tick >= 540 {
+                    for (n, sum) in sums.iter_mut().enumerate() {
+                        let row =
+                            read_fields(&mut game, &format!("Float{n}"), &["Transform", "Vessel"]);
+                        sum[0] += row["Transform"]["position"][1].as_f64().unwrap() / 60.0;
+                        sum[1] += row["Vessel"]["submerged"].as_f64().unwrap() / 60.0;
+                    }
+                }
+            }
+            // A 0.6 m cube 0.35 as dense as water: 0.21 m under, its centre 0.09 m over the
+            // surface at 2 m.
+            for [y, wet] in &sums {
+                assert!((wet - 0.35).abs() < 0.005, "{mode}: {wet}");
+                assert!((y - 2.09).abs() < 0.005, "{mode}: {y}");
+            }
+            if let Some(expected) = &reference {
+                assert_eq!(
+                    &sums, expected,
+                    "a constant field must give vessels identical forces on {mode}"
+                );
+            } else {
+                reference = Some(sums);
+            }
+        }
+        // The resident lake takes the crates' displaced volume: four times 0.0756 m^3.
+        let mut game = water_compute::builder(vessel_setup("gpu_resident", true), 1)
+            .build()
+            .unwrap();
+        step(&mut game, 600);
+        let lake = game
+            .apply(&Command::new(
+                Source::Developer(9),
+                1,
+                "world.get",
+                json!({"entity":"Lake","fields":["WaterDisplacement"]}),
+            ))
+            .unwrap()["fields"]["WaterDisplacement"]
+            .clone();
+        let applied = lake["applied_m3"].as_f64().unwrap();
+        assert!((applied - 4.0 * 0.0756).abs() < 0.01, "{lake}");
+        for n in 0..4 {
+            let row = read_fields(&mut game, &format!("Float{n}"), &["Transform", "Vessel"]);
+            let wet = row["Vessel"]["submerged"].as_f64().unwrap();
+            assert!((wet - 0.35).abs() < 0.05, "{row}");
+        }
+    });
+}
+
+fn read_fields(game: &mut Game, name: &str, fields: &[&str]) -> Value {
+    game.apply(&Command::new(
+        Source::Developer(9),
+        1,
+        "world.get",
+        json!({"entity":name,"fields":fields}),
+    ))
+    .unwrap()["fields"]
+        .clone()
 }

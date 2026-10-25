@@ -28,6 +28,8 @@ impl HullPoint {
 pub(crate) enum Role {
     Floater(usize),
     Hull(HullPoint),
+    /// A node of a vessel's lattice (vessel.rs, water.md 62).
+    Vessel(usize),
 }
 pub(crate) type Key = (EntityId, Role);
 #[derive(Clone, Debug, PartialEq)]
@@ -97,6 +99,16 @@ impl Point {
     pub fn floater(actor: EntityId, index: usize, at: V3, grid: [f64; 2], coupled: bool) -> Self {
         Self {
             key: (actor, Role::Floater(index)),
+            at,
+            grid,
+            coupled,
+            pose: None,
+            field: None,
+        }
+    }
+    pub fn vessel(actor: EntityId, node: usize, at: V3, grid: [f64; 2], coupled: bool) -> Self {
+        Self {
+            key: (actor, Role::Vessel(node)),
             at,
             grid,
             coupled,
@@ -215,15 +227,9 @@ impl Samples {
             .filter(|old| old.tick == tick)
             .map(|old| old.column)
     }
-    pub fn get(
-        &self,
-        key: (EntityId, usize),
-        at: V3,
-        region: EntityId,
-        tick: u64,
-    ) -> Option<super::WaterColumn> {
+    pub fn get(&self, key: Key, at: V3, region: EntityId, tick: u64) -> Option<super::WaterColumn> {
         self.rows
-            .get(&(key.0, Role::Floater(key.1)))
+            .get(&key)
             .filter(|s| s.at == at && s.region == region && s.tick == tick)
             .map(|s| s.column)
     }
@@ -314,7 +320,10 @@ mod tests {
             );
         }
         assert_eq!(samples.rows.len(), 4);
-        assert_eq!(samples.get((actor, 0), at, region_id, 7), Some([1.0; 7]));
+        assert_eq!(
+            samples.get((actor, Role::Floater(0)), at, region_id, 7),
+            Some([1.0; 7])
+        );
         for (i, role) in HullPoint::ALL.into_iter().enumerate() {
             assert_eq!(
                 samples.get_hull(&point(role), region_id, &recipe, 7),

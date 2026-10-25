@@ -37,6 +37,7 @@ pub mod sea;
 pub mod shallow;
 mod shapes;
 pub mod solver;
+pub mod vessel;
 pub mod walk;
 pub mod walker;
 pub mod water;
@@ -51,6 +52,7 @@ pub use cache::{IDENTITY, PhysicsCache, declare};
 pub use forces::start_time;
 pub use sea::{GRAVITY, Sea, SeaLook, Water, Wave, WaveField, Wind};
 pub use solver::{BodyIndex, ContactLog, Physics, RebuiltSolver};
+pub use vessel::{Hole, Vessel};
 pub use walker::Walker;
 pub use water::{
     BedSource, Edge, Style, WaterDrain, WaterLook, WaterRegion, WaterScratch, WaterSource,
@@ -76,6 +78,7 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     w.insert_resource(WaterScratch::default());
     w.insert_resource(WaterSteps::default());
     w.insert_resource(water::buoyancy::Samples::default());
+    w.insert_resource(vessel::Hulls::default());
     w.insert_resource(water::swimming::Samples::default());
     w.insert_resource(water::resident::WaterCheckpoints::default());
     ComponentRegistry::register::<Transform>(w, None)?;
@@ -84,6 +87,7 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     ComponentRegistry::register::<Collider>(w, None)?;
     ComponentRegistry::register::<ExternalForce>(w, None)?;
     ComponentRegistry::register::<Floater>(w, None)?;
+    ComponentRegistry::register::<Vessel>(w, None)?;
     ComponentRegistry::register::<Boat>(w, None)?;
     ComponentRegistry::register::<Sail>(w, None)?;
     ComponentRegistry::register::<Hull>(w, None)?;

@@ -3,7 +3,7 @@
 //! whether it is afloat. The sail's readings (apparent wind, boom, drive, trim) are written by
 //! `physics.sail`.
 
-use crate::boat::{Boat, Floater};
+use crate::boat::Boat;
 use crate::body::{Transform, Velocity};
 use crate::geom;
 use crate::sea::WaveField;
@@ -27,7 +27,7 @@ pub fn after_step(
     boat: &mut Boat,
     tf: &Transform,
     v: &Velocity,
-    floater: Option<&Floater>,
+    submerged: Option<f64>,
     sea: Option<&WaveField>,
     time: f64,
     aground: bool,
@@ -42,6 +42,6 @@ pub fn after_step(
         boat.heel_deg = amoris_sim::math::atan2(geom::dot(up, starboard), up[1]).to_degrees();
     }
     boat.aground = aground;
-    let in_water = floater.is_some_and(|f| f.submerged > 0.0 && f.submerged < 1.0);
+    let in_water = submerged.is_some_and(|s| s > 0.0 && s < 1.0);
     boat.afloat = sea.is_some() && in_water && !aground;
 }
