@@ -285,10 +285,12 @@ credential cleanup. File-verification records remain local, including in that ar
 
 ## GPU water maintenance
 
-The retained scope is host-backed shallow water, not dense 3D liquid or a completed surfing/fall
-game. WaterRegion selects cpu (default), gpu (full readback) or gpu_resident. GPU errors stop and
-poison the tick; never substitute CPU work. Game-side crates never link wgpu. Native hosts and
-the browser worker install the numerical service through amoris-runtime::water_compute.
+The adopted scope (charter, 2026-10-25; docs/imports/pioneer-2026-10-25.md) is host-backed shallow
+water with its frontier extensions and the played water games; dense 3D liquid stays out of scope
+and thrown water is presentation only. WaterRegion selects cpu (default), gpu (full readback) or
+gpu_resident. GPU errors stop and poison the tick; never substitute CPU work. Game-side crates never
+link wgpu. Native hosts and the browser worker install the numerical service through
+amoris-runtime::water_compute.
 
 Resident water persists checked complete MAC checkpoints, bounded programs and GPU field digests.
 After initialization CPU tiles are empty: never read them or omit checkpoint data when merging
