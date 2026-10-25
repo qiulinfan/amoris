@@ -114,7 +114,7 @@ impl WaterNh {
         let chebyshev = buffer("water nh chebyshev", 64 * 8, storage);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("water nh"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/water_nh.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/det/water_nh.wgsl").into()),
         });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("water nh"),

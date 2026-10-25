@@ -14,25 +14,23 @@ use amoris_assets::water_field::{
 };
 use std::sync::Arc;
 
-/// Numerical source compatibility shared by the authoritative service and visual replicas.
-/// Device/backend compatibility remains part of the complete authoritative environment string.
+/// Numerical source compatibility shared by the authoritative service and visual replicas: the
+/// generated deterministic kernels (water.md 66) and the code that dispatches them.
 pub fn kernel_key() -> &'static str {
     static KEY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     KEY.get_or_init(|| {
         amoris_assets::water_field::execution_key(&[
-            include_bytes!("../shaders/water_compute.wgsl"),
-            include_bytes!("../shaders/water_depth_first_order.wgsl"),
-            include_bytes!("../shaders/water_maccormack.wgsl"),
-            include_bytes!("../shaders/water_boundaries.wgsl"),
-            include_bytes!("../shaders/water_edits.wgsl"),
-            include_bytes!("../shaders/water_reactions.wgsl"),
-            include_bytes!("../shaders/water_point.wgsl"),
-            include_bytes!("../shaders/water_samples.wgsl"),
-            include_bytes!("../shaders/water_summary.wgsl"),
-            include_bytes!("../shaders/water_waves.wgsl"),
-            include_bytes!("../shaders/water_fft.wgsl"),
-            include_bytes!("../shaders/water_occupancy.wgsl"),
-            include_bytes!("../shaders/water_nh.wgsl"),
+            include_bytes!("../shaders/det/water_compute.wgsl"),
+            include_bytes!("../shaders/det/water_maccormack.wgsl"),
+            include_bytes!("../shaders/det/water_boundaries.wgsl"),
+            include_bytes!("../shaders/det/water_edits.wgsl"),
+            include_bytes!("../shaders/det/water_reactions.wgsl"),
+            include_bytes!("../shaders/det/water_samples.wgsl"),
+            include_bytes!("../shaders/det/water_summary.wgsl"),
+            include_bytes!("../shaders/det/water_waves.wgsl"),
+            include_bytes!("../shaders/det/water_fft.wgsl"),
+            include_bytes!("../shaders/det/water_occupancy.wgsl"),
+            include_bytes!("../shaders/det/water_nh.wgsl"),
             include_bytes!("water_compute.rs"),
             include_bytes!("water_waves.rs"),
             include_bytes!("water_occupancy.rs"),
@@ -618,15 +616,9 @@ impl ResidentWater {
             program: None,
             latest: None,
             valid: false,
-            environment: format!(
-                "{} {:?}; {}; {}; features {:?}; kernels {}",
-                gpu.info.name,
-                gpu.info.backend,
-                gpu.info.driver,
-                gpu.info.driver_info,
-                gpu.device.features(),
-                kernel_key()
-            ),
+            // The kernels compute the same bits on every device (water.md 66), so a program from
+            // any adapter, driver or backend replays here: the environment names them alone.
+            environment: format!("deterministic; kernels {}", kernel_key()),
             transfers: Transfers::default(),
             body_start: u32::MAX,
         })
@@ -829,7 +821,7 @@ impl ResidentWater {
         recipe: &FieldRecipe,
     ) -> Result<bool, String> {
         if !recipe.environment.is_empty() && recipe.environment != self.environment {
-            return Err("resident water execution environment differs from its checkpoint (adapter, driver, backend, features or numerical kernels changed)".into());
+            return Err("resident water execution environment differs from its checkpoint (the numerical kernels changed)".into());
         }
         if recipe.steps().len() > MAX_STEPS {
             return Err("resident replay bound exceeded".into());

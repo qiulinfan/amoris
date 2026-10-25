@@ -94,12 +94,15 @@ coming out, so the round trip is deterministic and visible in one place. The eng
 same place; the physics spike computed them in `f32` with `libm`'s `f32` functions, which the
 cross-target check covers the same way.
 
-GPU water is an explicit exception to cross-target bitwise determinism (owner's direction,
-2026-10-19; [water.md](water.md) 17). Its component still stores f64 values, but its selected
-`gpu` backend computes substeps in f32 and widens the returned values exactly. The persisted
-`WaterRegion.solver` records this choice. The CPU path retains the deterministic contract above;
-GPU results are checked against it with tolerances. Device/driver/backend changes can change GPU
-results, and a missing GPU service is an error rather than a precision-changing fallback.
+GPU water computes in f32 (owner's direction, 2026-10-19; [water.md](water.md) 17). Its component
+still stores f64 values, but its selected `gpu` backend computes substeps in f32 and widens the
+returned values exactly. The persisted `WaterRegion.solver` records this choice. The CPU path
+retains the deterministic contract above; GPU results are checked against it with tolerances, as
+a different computation. Since 2026-10-23 the GPU kernels are generated deterministic ones
+([water.md](water.md) 66): every f32 operation rounded once and kept apart, division, roots and the
+transcendentals built from such operations, so every device whose f32 arithmetic rounds to nearest
+even computes the same bits, and GPU water joins the cross-target determinism above. A missing GPU
+service is an error rather than a precision-changing fallback.
 
 ### 3.2 Integers
 

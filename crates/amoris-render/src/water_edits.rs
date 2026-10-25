@@ -62,7 +62,9 @@ impl WaterEdits {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("resident water edits"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/water_edits.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/det/water_edits.wgsl").into(),
+            ),
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("resident water edits"),
@@ -132,7 +134,7 @@ impl WaterEdits {
         let n = field.size()[0] * field.size()[1];
         let mut grouped = std::collections::BTreeMap::<u32, Vec<f32>>::new();
         for e in edits {
-            let delta = e.depth_m as f32;
+            let delta = amoris_assets::water_field::field_f32(e.depth_m);
             if e.column >= n || !delta.is_finite() {
                 return Err("resident water edit is outside the field or f32 range".into());
             }

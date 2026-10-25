@@ -102,7 +102,7 @@ impl WaterDevice {
                 }
             });
             eprintln!(
-                "amoris: GPU water on {} ({:?}), f32; cross-device replay is not guaranteed",
+                "amoris: GPU water on {} ({:?}), deterministic f32 kernels",
                 gpu.info.name, gpu.info.backend
             );
             self.gpu = Some(gpu);
@@ -146,7 +146,12 @@ impl WaterCompute for NativeWater {
         // Keep every converted point set alive until the complete cohort has finished mapping.
         let points: Vec<Vec<_>> = requests
             .iter()
-            .map(|r| r.points.iter().map(|p| p.map(|v| v as f32)).collect())
+            .map(|r| {
+                r.points
+                    .iter()
+                    .map(|p| p.map(amoris_assets::water_field::field_f32))
+                    .collect()
+            })
             .collect();
         let batch: Vec<_> = requests
             .iter()
@@ -199,10 +204,10 @@ impl WaterCompute for NativeWater {
             for i in 0..nx {
                 let n = i + nx * k;
                 let fresh = [
-                    (grid.bed[n] - datum) as f32,
-                    grid.depth[n] as f32,
-                    grid.u[i + (nx + 1) * k] as f32,
-                    grid.w[n] as f32,
+                    amoris_assets::water_field::field_f32(grid.bed[n] - datum),
+                    amoris_assets::water_field::field_f32(grid.depth[n]),
+                    amoris_assets::water_field::field_f32(grid.u[i + (nx + 1) * k]),
+                    amoris_assets::water_field::field_f32(grid.w[n]),
                 ];
                 let active = u32::from(grid.active[n]);
                 dirty = dirty
@@ -230,10 +235,10 @@ impl WaterCompute for NativeWater {
         field
             .advance_uploaded(
                 columns,
-                cell_m as f32,
-                substep_dt as f32,
+                amoris_assets::water_field::field_f32(cell_m),
+                amoris_assets::water_field::field_f32(substep_dt),
                 substeps,
-                [friction as f32, calm as f32],
+                [friction, calm].map(amoris_assets::water_field::field_f32),
             )
             .map_err(failed)?;
         if let Some(e) = error

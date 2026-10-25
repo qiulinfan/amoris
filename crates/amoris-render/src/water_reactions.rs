@@ -68,12 +68,7 @@ impl WaterReactions {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("water reaction"),
             source: wgpu::ShaderSource::Wgsl(
-                format!(
-                    "{}\n{}",
-                    include_str!("../shaders/water_point.wgsl"),
-                    include_str!("../shaders/water_reactions.wgsl")
-                )
-                .into(),
+                include_str!("../shaders/det/water_reactions.wgsl").into(),
             ),
         });
         let pipelines = ["prepare", "apply", "summarize"].map(|entry| {
@@ -155,12 +150,8 @@ impl WaterReactions {
         let mut points = Vec::with_capacity(impulses.len());
         let mut owners = BTreeMap::<(u32, u32), Vec<u32>>::new();
         for (n, p) in impulses.iter().enumerate() {
-            let point = [
-                p.at[0] as f32,
-                p.at[1] as f32,
-                p.impulse[0] as f32,
-                p.impulse[1] as f32,
-            ];
+            let point = [p.at[0], p.at[1], p.impulse[0], p.impulse[1]]
+                .map(amoris_assets::water_field::field_f32);
             if point.iter().any(|v| !v.is_finite()) {
                 return Err("water reaction must fit finite f32 values".into());
             }

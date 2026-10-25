@@ -80,12 +80,7 @@ impl WaterSamples {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("water point samples"),
             source: wgpu::ShaderSource::Wgsl(
-                format!(
-                    "{}\n{}",
-                    include_str!("../shaders/water_point.wgsl"),
-                    include_str!("../shaders/water_samples.wgsl")
-                )
-                .into(),
+                include_str!("../shaders/det/water_samples.wgsl").into(),
             ),
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {

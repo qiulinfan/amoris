@@ -4,7 +4,7 @@
 //! regions of a joined group rest only together, since one resting while its neighbour steps would
 //! let water leave the one without reaching the other.
 use super::{Edge, WaterRegion, resident::WaterResident, solve::G};
-use amoris_assets::water_field::FieldExterior;
+use amoris_assets::water_field::{FieldExterior, field_f32};
 use amoris_contract::{Problem, detail};
 use amoris_sim::EntityId;
 use serde_json::json;
@@ -155,7 +155,7 @@ fn seam(
             }
             // At most half its upwind column leaves through one face in a tick.
             let most = 0.5 * depth * cell / dt;
-            Some([u as f32, (u * depth).clamp(-most, most) as f32])
+            Some([field_f32(u), field_f32((u * depth).clamp(-most, most))])
         })
         .collect()
 }

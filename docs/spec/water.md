@@ -597,6 +597,9 @@ The same review corrected the draft:
 
 ## 17. GPU execution (2026-10-19)
 
+Section 66 (2026-10-23) replaces the f32 kernels with generated deterministic ones: what this and
+later sections say of replay being bound to one device, driver or backend no longer holds.
+
 The owner requested GPU solving as an engine direction. `WaterRegion.solver` selects `cpu` or
 `gpu`; it is persisted and hashed. CPU remains the default for existing scenes and the reference
 for cross-target bitwise determinism. GPU is an explicit f32 execution mode: the CPU/GPU results
@@ -4170,3 +4173,91 @@ Limits:
 - The edit world previews regions over a terrain; regions over voxels or colliders show their
   water from their first step.
 - No brush yet sculpts the ground by hand: the features are its shape.
+
+## 66. The same water on every device (Pioneer, 2026-10-23)
+
+GPU water's f32 kernels gave each device its own water. On one M5, Metal and Vulkan (MoltenVK)
+parted at the second tick of every sample: wgpu compiles Metal shaders with Metal's default fast
+math, DXC without IEEE strictness, and drivers fuse multiplies into adds; and the WGSL specification
+lets an implementation reassociate operations, fuse them when no less accurate, round a correctly
+rounded result either way, flush subnormals and ignore the sign of zero (WGSL, "Floating Point
+Evaluation"; how compilers and platforms change floating-point results: D. Monniaux, ACM TOPLAS
+30(3), 2008). So a viewer's replica drifted from its host, the same inputs gave two machines two
+fields, and a program from another device was refused rather than replayed (17, 37). Now the kernels
+compute the same bits on every device, and with them the whole world's hashes.
+
+### 66.1 The deterministic kernels
+
+The pipelines load kernels generated from the sources (`shaders/det/`, written by
+`crates/amoris-render/tests/water_det.rs`): naga parses each composed module and rebuilds every
+function so that
+
+- every f32 addition, subtraction, multiplication and negation, and the floor, ceiling, rounding
+  and truncation that can make a negative zero, is rounded once and passed through a guard: the
+  value as bits, a magnitude under 2^-100 (subnormals among them) or a negative zero as zero, then
+  an XOR with `det_z`, a zero the entry point reads from its uniforms (`p.size.x >> 16`) that no
+  compiler can know, and back. Nothing can be fused into or reordered across a guard;
+- division, square roots, `inverseSqrt`, `exp`, `log`, `pow`, `sin`, `cos`, `tanh`, `acosh`,
+  `length`, `dot`, `mix`, `fma` and `smoothstep` call the functions of `water_det.wgsl`, built from
+  those operations and integer ones: a reciprocal from a first guess on the bits and four Newton
+  steps; a square root from the inverse root's magic-constant guess (C. Lomont's 0x5f375a86,
+  Purdue technical report, 2003; analysed by L. Moroz et al., Appl. Math. Comput. 316, 2018), three
+  Newton steps and one on the root; exponentials, logarithms and sines by W. J. Cody and W. Waite's
+  range reductions (Software Manual for the Elementary Functions, 1980) and Taylor polynomials. Each
+  is within two units in the last place over the range the kernels use it in;
+- comparisons, `min`, `max`, `abs`, `clamp`, `select`, conversions and integer work stay as they
+  are: exact on values with no subnormal and no negative zero.
+
+Every value the CPU hands the kernels goes through `field_f32` (amoris-assets), the guard's rule on
+the CPU, so no device reads a subnormal its own way. The one assumption left is that a device's f32
+addition, subtraction and multiplication, and its conversion of an integer to f32, round to nearest
+even, as every GPU and CPU in use does; the probe below checks it on each device it runs on.
+
+Why not the fixed-point kernels or the server-authoritative field stream the step named: integer
+kernels would be exact by the specification's integer rules, but every quantity needs its scale, the
+products need 64-bit integers WGSL lacks, and the checkpoints would change form; a stream would keep
+viewers exact only by sending the field (a 256 x 256 region changes about 0.8 MB a tick) and would
+not let a save or a replay move to another machine. The deterministic form keeps the kernels, their
+f32 state words, checkpoints, programs and every earlier section's behaviour.
+
+### 66.2 What follows
+
+- The execution environment a program records is `deterministic; kernels K`, K the generated
+  kernels and the code that dispatches them: no adapter, driver, backend or features. A program
+  replays, forks and restores on any device, and the environment no longer changes the world's
+  hash. The execution identity is domain v10.
+- A viewport's replica replays its host's program to the host's exact field, on any GPU and in any
+  browser.
+- The CPU solver remains the reference computation in f64; GPU results are compared with it within
+  tolerances as before. Drawing-only shaders (ripples, spray, lips, foam, caustics, the medium) stay
+  ordinary f32: no state depends on them.
+
+### 66.3 Checks, cost and limits
+
+- `cargo test -p amoris-render --test water_det`: `shaders/det/` is what the generator makes of the
+  current sources (`AMORIS_BLESS=1` rewrites it after a kernel changes); and a probe of 4096 inputs,
+  ties between neighbouring floats, a fused multiply-add's tell-tale, an underflow, a negative zero,
+  an inexact conversion and every function of `water_det.wgsl`, gives on the GPU the CPU's bits for
+  all 18 of its results, on Metal, Vulkan and the WebGPU baseline device.
+- `cargo test --release -p amoris-app --test gpu_determinism`: eight samples' GPU water (the pool,
+  the party with its boats, the river and its fall, 600 ticks of the surf with its sea, dispersion
+  and plunging crests, the shore, the floaters, the feedback and the valley's joined regions), each
+  region's field digest after every tick, 2700 ticks, equals `golden/water-digests.txt` on Metal,
+  on Vulkan (MoltenVK) and on the WebGPU baseline device.
+- `node tools/water_determinism_check.mjs`: the same samples in Chrome's game worker (Dawn and Tint
+  compiling the WGSL, not wgpu and naga) give the record's digests on the M5; with `--adapter
+  swiftshader`, on SwiftShader, Chrome's WebGPU on the CPU, a device of another kind entirely,
+  over each sample's first 120 ticks (`--ticks 120`: a CPU takes six minutes for those).
+- `amoris hashes <sample>` gives the same world hash after every tick on Metal and Vulkan; before,
+  every scene with GPU water parted at its first tick.
+
+The cost is in [liquids.md](../bench/liquids.md) 18.
+
+Limits:
+
+- A device that rounds f32 arithmetic otherwise than to nearest even computes other water; the
+  probe and the record find it, no run refuses it.
+- Not run yet on R1 (NVIDIA and AMD, Direct3D 12 and Vulkan): the record lets one command check it
+  there.
+- The research examples that compare schemes (`water_radiation`, `water_shoreline`, the
+  depth-transport lab) compose the f32 sources, not the deterministic kernels.

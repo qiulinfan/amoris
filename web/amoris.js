@@ -7,6 +7,8 @@
 //
 //   const { module } = await loadModule();
 //   const amoris = start(module, packageBytes, { seed: 1, pacing: "stepped" });
+//   // waterTimeoutMs: how long one tick's GPU water may take before the tick fails (default 10 s;
+//   // a CPU WebGPU such as SwiftShader needs longer).
 //   await amoris.ready;                                  // the worker answered `ready`
 //   const r = await amoris.command(name, params, opts);  // resolves with the result, rejects with {code, message, detail}
 //   amoris.latest();                                     // {version, tick, writes, world_hash, time}
@@ -70,7 +72,8 @@ class Amoris {
     };
     const project = new Uint8Array(packageBytes).slice().buffer;
     const init = { seed: options.seed, pacing: options.pacing || "stepped" };
-    this.worker.postMessage({ t: "init", module, project, options: init }, [project]);
+    this.worker.postMessage({ t: "init", module, project, options: init,
+      waterTimeoutMs: options.waterTimeoutMs }, [project]);
   }
 
   onMessage(m) {

@@ -32,7 +32,7 @@ CPU 保持跨目标确定性；GPU 使用 WebGPU 基线支持的 f32，只在相
 **Pioneer 2026-10-22（`explore/water`、`explore/water-nh`）。** 所有者要求在 Amoris Pioneer 上把水物
 理继续做到前沿水准，并以三个游戏场景验收：河流汇入瀑布、泳池派对、强浪海滩冲浪。为此 Pioneer 越过上
 文 2026-10-21 的交付范围，在 `gpu_resident` 区域上加入以下能力，契约见 [water.md](spec/water.md)
-46–65，测量见 [liquids.md](bench/liquids.md) 7–17：
+46–66，测量见 [liquids.md](bench/liquids.md) 7–18：
 
 - 物体排水的竖直双向耦合：浮体点和游泳者把水面下的体积作为压力水头加到水柱上，水量严格守恒（思路来自
   M. Müller, GDC 2008）。浮力按步末位置线性隐式求值（D. Baraff 与 A. Witkin, SIGGRAPH 1998），阻力隐
@@ -135,6 +135,16 @@ CPU 保持跨目标确定性；GPU 使用 WebGPU 基线支持的 f32，只在相
   的编辑世界里，未步进的常驻区域按地形水床和灌水预览出来。编辑器的右键菜单新建地形和地形上的水域，河
   道工具在地面上点出河道、回车刻出，灌水工具点哪灌哪，各是一次 `world.edit`。`samples/water-valley`
   的湖、峡谷河、瀑布、跌水潭和出口全由组件声明，场景 5 KB，不用 Python。`WaterRegion` 升到版本 9。
+- 跨设备一致（2026-10-23）：管线加载的水体内核改为由 naga 从源码生成的确定性版本：每个 f32 加、减、
+  乘和取负只舍入一次，并经过一道编译器看不穿的屏障（与运行时从 uniform 读出的零做异或），因此不会被
+  融合成乘加或重新结合；小于 2^-100 的值（含次正规数）和负零一律归零；除法、开方和超越函数由这些运算
+  和整数运算构成（Newton 迭代、Lomont 常数、W. J. Cody 与 W. Waite 的约化）。原先同一台 M5 上 Metal
+  与 Vulkan 从第 2 个 tick 起水场就不同；现在 8 个样例共 2700 个 tick 的水场摘要在 Metal、Vulkan、
+  WebGPU 基线设备、Chrome（Dawn 与 Tint）和 SwiftShader（Chrome 在 CPU 上的 WebGPU）上逐位相同，整个
+  世界的哈希也相同。执行环境只记内核、不记设备，程序可在任何设备上重放，观众端的副本与主机逐位一致。
+  没有选定点数内核（要逐量定标，需要 WGSL 没有的 64 位整数乘法，检查点格式也要换），也没有选水场压缩
+  同步（256² 区域每 tick 约变 0.8 MB，存档和回放仍不能换机器）。前提是设备的 f32 加减乘按就近偶数舍
+  入，探针测试在每台设备上核对。
 
 验收：`amoris-app` 的 `gpu_frontier_scenes` 用玩家的第一人称动作玩通
 `samples/pool-party`、`samples/river-falls` 和 `samples/surf-beach`；三个样例导出的网页包在 Chrome

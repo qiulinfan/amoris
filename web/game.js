@@ -15,6 +15,7 @@ let finished = false;
 let rendering = false; // the page asked for the render feed (a viewport draws it)
 let water = null;
 let computing = false;
+let waterTimeoutMs = 10000; // the start option `waterTimeoutMs` (amoris.js)
 const wake = new MessageChannel();
 wake.port1.onmessage = () => {
   scheduled = false;
@@ -97,7 +98,9 @@ async function computeWater() {
   try {
     const result = await Promise.race([
       host.advance(job),
-      new Promise((_, reject) => { watchdog = setTimeout(() => reject(new Error("GPU water timed out after 10 seconds")), 10000); }),
+      new Promise((_, reject) => {
+        watchdog = setTimeout(() => reject(new Error(`GPU water timed out after ${waterTimeoutMs} ms`)), waterTimeoutMs);
+      }),
     ]);
     if (!finished) game.complete_water_job(result);
   } catch (e) {
@@ -152,6 +155,7 @@ onmessage = async (event) => {
     return;
   }
   try {
+    if (m.waterTimeoutMs > 0) waterTimeoutMs = m.waterTimeoutMs;
     const t0 = performance.now();
     await init({ module_or_path: m.module });
     const t1 = performance.now();

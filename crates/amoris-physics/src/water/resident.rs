@@ -2,6 +2,7 @@
 //! transport are not. Consumers use explicit observations rather than the old checkpoint tiles.
 use amoris_assets::water_field::{
     CheckedCheckpoint, FieldBoundary, FieldCheckpoint, FieldPhysics, FieldRecipe, FieldStep,
+    field_f32,
 };
 use amoris_sim::{ContentHash, EntityId};
 use bevy_ecs::prelude::{Component, Resource};
@@ -595,13 +596,7 @@ pub(crate) fn seed(
             let (tile, c) = r.locate(i, k);
             let t = &r.tiles[tile];
             columns.push(
-                [
-                    (t.bed[c] - datum) as f32,
-                    t.depth[c] as f32,
-                    t.u[c] as f32,
-                    t.w[c] as f32,
-                ]
-                .map(f32::to_bits),
+                [t.bed[c] - datum, t.depth[c], t.u[c], t.w[c]].map(|v| field_f32(v).to_bits()),
             );
         }
     }
@@ -646,7 +641,8 @@ pub(crate) fn seed(
                         0.0,
                     )
                 }
-            } as f32;
+            };
+            let velocity = field_f32(velocity);
             match side {
                 0 | 2 => checkpoint.columns[n][axis + 2] = velocity.to_bits(),
                 1 => checkpoint.far_faces[along] = velocity.to_bits(),

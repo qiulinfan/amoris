@@ -339,6 +339,17 @@ paired web game/viewport and run
 actual Chrome worker/resident/probe/floater and water_pool_check.mjs checks. samples/water-pool
 uses real player input and only scores poses/contact; scripts never move the swimmer.
 
+The water kernels the pipelines load are generated (water.md 66): render `tests/water_det.rs` makes
+`shaders/det/` from the WGSL sources and `water_det.wgsl`, rounding every f32 operation once behind
+a guard no compiler sees through and building division, roots and the transcendentals from such
+operations, so every device computes the same bits; no pipeline loads a source kernel. After a
+kernel or `water_det.wgsl` changes, `AMORIS_BLESS=1 cargo test -p amoris-render --test water_det`
+rewrites them; a change of the numbers rewrites app `gpu_determinism`'s record (`AMORIS_BLESS=1`),
+which then passes on Metal, Vulkan and `AMORIS_GPU_MINIMAL`, and in Chrome by
+`tools/water_determinism_check.mjs`, also with `--adapter swiftshader`. Every value the CPU hands
+the kernels goes through `field_f32`. A built-in new to the kernels needs its form in
+`water_det.wgsl` and its CPU mirror in the probe (`the_kernels_arithmetic_is_the_cpus_bit_for_bit`).
+
 Rendering uses actual GPU fields, preserves dry-region ocean ownership and WebGPU's eight fragment
 storage-buffer limit. Test water image cases, water_foam and the actual browser after visual
 changes. The wet bed (water.md 61.2) finds its points from this frame's scene depth, resolved

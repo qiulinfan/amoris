@@ -49,7 +49,7 @@ impl WaterOccupancy {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("water occupancy"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/water_occupancy.wgsl").into(),
+                include_str!("../shaders/det/water_occupancy.wgsl").into(),
             ),
         });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -156,12 +156,7 @@ impl WaterOccupancy {
         let points: Vec<[f32; 4]> = displacements
             .iter()
             .map(|d| {
-                [
-                    d.at[0] as f32,
-                    d.at[1] as f32,
-                    d.volume_m3 as f32,
-                    d.radius as f32,
-                ]
+                [d.at[0], d.at[1], d.volume_m3, d.radius].map(amoris_assets::water_field::field_f32)
             })
             .collect();
         self.queue.write_buffer(

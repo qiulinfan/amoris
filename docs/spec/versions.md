@@ -704,10 +704,10 @@ WaterFeedback, WaterOutletStage, WaterColliderBed, WaterFocus, Terrain and Terra
 1. Checkpoints carry
 complete MAC state, including east/north faces; bounded FieldStep programs include edits, horizontal
 impulses, boundary controls, optional spatial Sea forcing and joined seams. Numerical execution
-identity uses domain v8 and fingerprints actual kernel/dispatch/dependency sources and device
-configuration. An incompatible authoritative environment is refused without migration or CPU
-fallback. The checked checkpoint/feed source contributes to render-feed FORMAT; rebuild game and
-viewport together.
+identity uses domain v10 and fingerprints the generated deterministic kernels and the code that
+dispatches them, not the device (water.md 66): a program replays on any adapter, driver or backend.
+A program of other kernels is refused without migration or CPU fallback. The checked checkpoint/feed
+source contributes to render-feed FORMAT; rebuild game and viewport together.
 
 Checked immutable checkpoints share ownership in snapshots and frames. Derived validation
 witnesses, query caches, allocation capacity and GPU resources are not persisted or hashed.

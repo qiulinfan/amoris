@@ -155,11 +155,13 @@ impl WaterWaves {
         use Kind::{Slot, Uniform, Write};
         let waves = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("water waves"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/water_waves.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/det/water_waves.wgsl").into(),
+            ),
         });
         let fft_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("water fft"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/water_fft.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/det/water_fft.wgsl").into()),
         });
         let make = |module: &wgpu::ShaderModule, entry: &str, entries: &[(u32, Kind)]| {
             let l = layout(device, entries);

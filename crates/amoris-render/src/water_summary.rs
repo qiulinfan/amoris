@@ -110,7 +110,9 @@ impl WaterSummary {
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("water summary"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/water_summary.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/det/water_summary.wgsl").into(),
+            ),
         });
         let pipelines = ["leaves", "parents"].map(|entry| {
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {

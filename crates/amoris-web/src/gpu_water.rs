@@ -139,19 +139,19 @@ impl Service {
             for i in 0..nx {
                 let n = i + nx * k;
                 columns.push([
-                    (r.bed[n] - datum) as f32,
-                    r.depth[n] as f32,
-                    r.u[i + (nx + 1) * k] as f32,
-                    r.w[n] as f32,
+                    amoris_assets::water_field::field_f32(r.bed[n] - datum),
+                    amoris_assets::water_field::field_f32(r.depth[n]),
+                    amoris_assets::water_field::field_f32(r.u[i + (nx + 1) * k]),
+                    amoris_assets::water_field::field_f32(r.w[n]),
                 ]);
             }
         }
         let active: Vec<u32> = r.active.iter().map(|a| u32::from(*a)).collect();
         let params = (
-            r.cell_m as f32,
-            r.dt as f32,
+            amoris_assets::water_field::field_f32(r.cell_m),
+            amoris_assets::water_field::field_f32(r.dt),
             r.substeps,
-            [r.friction as f32, r.calm_per_s as f32],
+            [r.friction, r.calm_per_s].map(amoris_assets::water_field::field_f32),
         );
         // The owned f64 input is no longer needed once packed. Do not hold another full window
         // through mapping and output conversion; the game's continuation already owns its copy.
@@ -183,7 +183,12 @@ impl Service {
         let points: Vec<Vec<_>> = r
             .requests
             .iter()
-            .map(|r| r.points.iter().map(|p| p.map(|v| v as f32)).collect())
+            .map(|r| {
+                r.points
+                    .iter()
+                    .map(|p| p.map(amoris_assets::water_field::field_f32))
+                    .collect()
+            })
             .collect();
         let batch: Vec<_> = r
             .requests

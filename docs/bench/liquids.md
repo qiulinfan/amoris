@@ -227,8 +227,8 @@ cargo run --release -p amoris-app --example resident_water -- --frames 180
 
 Run native tests on each available backend and with WebGPU baseline features/limits, using
 AMORIS_GPU_MINIMAL=features,limits,timestamps. Apple M5 Metal and baseline MoltenVK were verified
-locally. GPU determinism is scoped to the same execution environment; no cross-vendor replay
-claim follows from these checks. Performance remains a measured result, never a pass condition.
+locally. Since section 18 the kernels are deterministic across devices ([water.md](../spec/water.md)
+66). Performance remains a measured result, never a pass condition.
 
 The actual-browser checks use rebuilt paired game/viewport modules and tools/water_worker_check.mjs,
 water_resident_worker_check.mjs, water_probe_script_check.mjs and water_floater_check.mjs.
@@ -668,3 +668,28 @@ is edited. A tick of the valley's two regions runs their resident steps as any r
 (sections 4 to 16).
 
 Not measured: the renderer's meshing, the browser and R1.
+
+## 18. The deterministic kernels (Pioneer, 2026-10-23)
+
+The generated kernels of [water.md](../spec/water.md) 66 on the M5, macOS, Metal, release builds,
+2026-10-23, the machine otherwise idle. `cargo test --release -p amoris-app --test gpu_determinism
+time_samples -- --ignored --nocapture`: the wall time of a tick, its GPU work and readbacks waited
+for, over ticks 61 to 360. The f32 kernels' column is the same test built against bc730ab7, the
+commit before them; the runs alternated, two of each:
+
+| Sample | f32 kernels | Deterministic kernels |
+|---|---|---|
+| surf-beach (512 x 256, non-hydrostatic, dispersion, plunging) | 5.158, 5.120 ms | 6.425, 6.334 ms |
+| river-falls | 4.960, 4.888 ms | 5.191, 5.056 ms |
+| pool-party | 2.976, 2.947 ms | 3.045, 2.990 ms |
+| water-valley (two joined regions) | 6.235, 6.133 ms | 6.315, 6.249 ms |
+
+The guards cost the arithmetic-heavy passes most: the surf's non-hydrostatic Chebyshev cycles and
+its Airy split take a quarter more, the other samples a few percent. The generated WGSL is 440 KB
+(75 KB gzipped) where the sources are 98 KB; the WebGPU viewport's module grew from
+4,233,888 to 4,493,461 bytes (1,558,393 to 1,590,047 gzipped). On SwiftShader the largest modules
+take 2.6 to 3.8 s to create their pipelines (the MacCormack faces, the non-hydrostatic block solve,
+the FFT).
+
+Not measured: R1, and the browser's tick (the determinism check steps tick by tick with a world read
+between ticks).

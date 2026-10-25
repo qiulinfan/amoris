@@ -14,16 +14,28 @@ pub const MAX_BATCH_COLUMNS: usize = 4 * 512 * 512;
 
 /// Runtime replay identity for the actual numerical kernels/dispatch implementation. This is
 /// not a file-audit inventory: a changed solver must not reuse an old execution environment.
-/// v9 adds body displacement heads, ballistic falls, breaking and dispersive surface waves.
-/// Changing it here also changes the feed fingerprint, so a previous viewport refuses
-/// incompatible programs.
+/// v10 runs the generated deterministic kernels (water.md 66), which compute the same bits on every
+/// device, so the identity names the kernels alone. Changing it here also changes the feed
+/// fingerprint, so a previous viewport refuses incompatible programs.
 pub fn execution_key(parts: &[&[u8]]) -> String {
-    let mut key = blake3::Hasher::new_derive_key("Amoris resident water execution v9");
+    let mut key = blake3::Hasher::new_derive_key("Amoris resident water execution v10");
     for part in parts {
         key.update(&(part.len() as u64).to_le_bytes());
         key.update(part);
     }
     key.finalize().to_hex().to_string()
+}
+
+/// `x` as the deterministic kernels hold it (water.md 66): rounded to the nearest f32, with
+/// magnitudes under 2^-100 (subnormals among them) and negative zero as zero, which devices may
+/// otherwise each read their own way. Every value the CPU hands the kernels goes through it.
+pub fn field_f32(x: f64) -> f32 {
+    let v = x as f32;
+    if v.to_bits() & 0x7f80_0000 < 27 << 23 {
+        0.0
+    } else {
+        v
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

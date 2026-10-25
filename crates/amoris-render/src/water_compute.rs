@@ -5,7 +5,7 @@
 
 use amoris_assets::water_field::{
     CheckedCheckpoint, FieldBoundary, FieldCheckpoint, FieldExterior, FieldPhysics, FieldSea,
-    FieldStep, MAX_SEA_WAVES, PointVolume,
+    FieldStep, MAX_SEA_WAVES, PointVolume, field_f32,
 };
 use bytemuck::{Pod, Zeroable};
 
@@ -244,13 +244,10 @@ impl GpuWater {
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("water compute"),
+            // The deterministic kernels generated from water_compute.wgsl and
+            // water_depth_first_order.wgsl (tests/water_det.rs, water.md 66).
             source: wgpu::ShaderSource::Wgsl(
-                format!(
-                    "{}\n{}",
-                    include_str!("../shaders/water_compute.wgsl"),
-                    include_str!("../shaders/water_depth_first_order.wgsl")
-                )
-                .into(),
+                include_str!("../shaders/det/water_compute.wgsl").into(),
             ),
         });
         let pipelines = ["faces", "depth_first_donors", "depth_first_transport"].map(|entry| {
@@ -606,10 +603,10 @@ impl GpuWater {
         step.validate((self.size[0] * self.size[1]) as usize)?;
         self.encode_inner(
             encoder,
-            step.cell_m as f32,
-            step.substep_dt as f32,
+            field_f32(step.cell_m),
+            field_f32(step.substep_dt),
             step.substeps,
-            [step.friction as f32, step.calm_per_s as f32],
+            [field_f32(step.friction), field_f32(step.calm_per_s)],
             true,
             &step.boundaries,
             step.sea.as_ref(),
@@ -688,19 +685,19 @@ impl GpuWater {
                     outward_velocity_mps: u,
                 } => {
                     kinds[i] = 4;
-                    rates[i] = h as f32;
-                    normals[i] = u as f32;
+                    rates[i] = field_f32(h);
+                    normals[i] = field_f32(u);
                 }
                 FieldBoundary::Outflow => kinds[i] = 2,
                 FieldBoundary::Stage {
                     surface_relative_m: h,
                 } => {
                     kinds[i] = 3;
-                    rates[i] = h as f32;
+                    rates[i] = field_f32(h);
                 }
                 FieldBoundary::Inflow { m3s_per_m: q } => {
                     kinds[i] = 1;
-                    rates[i] = q as f32;
+                    rates[i] = field_f32(q);
                 }
                 FieldBoundary::Joined => kinds[i] = 6,
             }
@@ -751,7 +748,7 @@ impl GpuWater {
                 dt,
                 friction: damping[0],
                 breaking: if physics.breaking { 1.0 } else { 0.0 },
-                fall_min: physics.fall_min_m as f32,
+                fall_min: field_f32(physics.fall_min_m),
                 occupancy_on: if occupied { 1.0 } else { 0.0 },
                 calm: damping[1],
                 advection: match self.advection {
@@ -765,7 +762,7 @@ impl GpuWater {
                 edge_rate: rates,
                 edge_normal: normals,
                 sea_meta: [
-                    sea.map_or(0.0, |s| s.level_relative_m as f32),
+                    sea.map_or(0.0, |s| field_f32(s.level_relative_m)),
                     sea.map_or(0.0, |s| s.waves.len() as f32),
                     if physics.dispersion { 1.0 } else { 0.0 },
                     0.0,
@@ -774,12 +771,12 @@ impl GpuWater {
                     sea.and_then(|s| s.waves.get(i))
                         .map_or(WaveParams::zeroed(), |w| WaveParams {
                             phase: [
-                                w.wave_vector_rad_m[0] as f32,
-                                w.wave_vector_rad_m[1] as f32,
-                                w.angular_frequency_rad_s as f32,
-                                w.phase_at_start_rad as f32,
+                                field_f32(w.wave_vector_rad_m[0]),
+                                field_f32(w.wave_vector_rad_m[1]),
+                                field_f32(w.angular_frequency_rad_s),
+                                field_f32(w.phase_at_start_rad),
                             ],
-                            data: [w.amplitude_m as f32, 0.0, 0.0, 0.0],
+                            data: [field_f32(w.amplitude_m), 0.0, 0.0, 0.0],
                         })
                 }),
             }),
@@ -953,12 +950,7 @@ impl GpuWater {
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("water MacCormack"),
                 source: wgpu::ShaderSource::Wgsl(
-                    format!(
-                        "{}\n{}",
-                        include_str!("../shaders/water_compute.wgsl"),
-                        include_str!("../shaders/water_maccormack.wgsl")
-                    )
-                    .into(),
+                    include_str!("../shaders/det/water_maccormack.wgsl").into(),
                 ),
             });
         let pipelines = MAC_STAGES.map(|(entry, family, _)| {
@@ -1093,12 +1085,7 @@ impl GpuWater {
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("water boundaries"),
                 source: wgpu::ShaderSource::Wgsl(
-                    format!(
-                        "{}\n{}",
-                        include_str!("../shaders/water_compute.wgsl"),
-                        include_str!("../shaders/water_boundaries.wgsl")
-                    )
-                    .into(),
+                    include_str!("../shaders/det/water_boundaries.wgsl").into(),
                 ),
             });
         let pipelines = [
