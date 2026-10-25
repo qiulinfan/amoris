@@ -143,8 +143,9 @@ credential cleanup. File-verification records remain local, including in that ar
   callback synchronously. Native Metal gives a process 32 timestamp query sets across all its
   devices and loses the device that creates a 33rd (`DeviceError::Unexpected`), so a renderer's
   profiler holds one (profiler.rs `QUERIES`) and parallel GPU test cases stay under the limit. The
-  TAA image tests run in parallel, reject validation errors and unexpected device loss, and retain
-  strict pixel comparisons. Local integration decisions and validation are in
+  TAA and water image tests run their cases in parallel (on MoltenVK too, behind
+  `profiler::TimestampSet`), reject validation errors and unexpected device loss, and retain strict
+  pixel comparisons. Local integration decisions and validation are in
   [pioneer-2026-10-16.md](docs/imports/pioneer-2026-10-16.md).
 - Vulkan on macOS runs through MoltenVK (`brew install molten-vk vulkan-loader`); select it with
   `AMORIS_BACKEND=vulkan` and launch with `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib` so the

@@ -35,7 +35,9 @@ const ORTHO: f32 = 9.0;
 
 // A lost device or a validation error fails the case with its cause, never as a wrong image. The
 // cases run in parallel: each keeps at most three renderers alive, and a renderer takes one
-// timestamp query set, one of the 32 counter sample buffers Metal gives a process (profiler.rs).
+// timestamp query set, one of the 32 counter sample buffers Metal gives a process (profiler.rs);
+// on MoltenVK a dropped renderer's query set waits for its queue to go idle (profiler.rs
+// `TimestampSet`).
 fn gpu() -> Option<Gpu> {
     let gpu = Gpu::headless(BackendChoice::from_env()).ok();
     if let Some(gpu) = &gpu {
