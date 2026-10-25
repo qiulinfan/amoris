@@ -266,6 +266,8 @@ mod tests {
                     }],
                     displacements: vec![],
                     physics: Default::default(),
+                    wind: None,
+                    rain_m: 0.0,
                 };
                 recipe = reference
                     .advance(&checkpoint, &recipe, &step, &[], false)
@@ -344,6 +346,8 @@ mod tests {
                     radius: 1.5,
                 }],
                 physics: Default::default(),
+                wind: None,
+                rain_m: 0.0,
             };
             // The head presentation would take, summed over the columns, metres.
             let rise = |replica: &mut WaterReplica| {

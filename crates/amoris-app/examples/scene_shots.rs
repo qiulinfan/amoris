@@ -2,6 +2,7 @@
 //! headless captures of any scene for checking how its water looks. `--eye x,y,z --at x,y,z`
 //! place the camera, `--ticks a,b,c` (or `--every n --from a --to b`) choose the frames, and the
 //! captures go to `<out>/<name>-<tick>.png` under a directory that belongs in ignored `out/`.
+//! MSAA unless `AMORIS_AA` says otherwise.
 //! cargo run --release -p amoris-app --example scene_shots -- samples/river-falls --out out/falls \
 //!     --eye 60,12,40 --at 80,4,40 --ticks 600,1200
 #[path = "../src/water_compute.rs"]
@@ -56,7 +57,7 @@ fn main() {
             renderer.set_asset_source(Box::new(amoris_render::loader::FileAssets::new(
                 project.clone(),
             )));
-            renderer.set_antialiasing(Antialiasing::Msaa);
+            renderer.set_antialiasing(Antialiasing::from_env(Antialiasing::Msaa));
             renderer.set_gtao(Gtao::Off);
             renderer.set_camera_override(Some(CameraState::look_at(eye, target)));
             let last = *ticks.iter().max().unwrap();

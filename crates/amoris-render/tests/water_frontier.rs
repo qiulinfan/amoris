@@ -81,6 +81,8 @@ fn step(cell: f64, substeps: u32, friction: f64) -> FieldStep {
         impulses: vec![],
         displacements: vec![],
         physics: FieldPhysics::default(),
+        wind: None,
+        rain_m: 0.0,
     }
 }
 

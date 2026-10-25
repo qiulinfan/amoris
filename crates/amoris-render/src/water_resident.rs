@@ -1156,6 +1156,8 @@ mod kernel_tests {
             impulses: vec![],
             displacements: vec![],
             physics: Default::default(),
+            wind: None,
+            rain_m: 0.0,
         };
         let mut recipe = FieldRecipe::new(
             checkpoint.key(),

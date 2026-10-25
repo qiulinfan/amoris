@@ -4239,11 +4239,11 @@ f32 state words, checkpoints, programs and every earlier section's behaviour.
   ties between neighbouring floats, a fused multiply-add's tell-tale, an underflow, a negative zero,
   an inexact conversion and every function of `water_det.wgsl`, gives on the GPU the CPU's bits for
   all 18 of its results, on Metal, Vulkan and the WebGPU baseline device.
-- `cargo test --release -p amoris-app --test gpu_determinism`: eight samples' GPU water (the pool,
+- `cargo test --release -p amoris-app --test gpu_determinism`: nine samples' GPU water (the pool,
   the party with its boats, the river and its fall, 600 ticks of the surf with its sea, dispersion
-  and plunging crests, the shore, the floaters, the feedback and the valley's joined regions), each
-  region's field digest after every tick, 2700 ticks, equals `golden/water-digests.txt` on Metal,
-  on Vulkan (MoltenVK) and on the WebGPU baseline device.
+  and plunging crests, the shore, the floaters, the feedback, the valley's joined regions and the
+  storm's wind and rain, 67), each region's field digest after every tick, 3000 ticks, equals
+  `golden/water-digests.txt` on Metal, on Vulkan (MoltenVK) and on the WebGPU baseline device.
 - `node tools/water_determinism_check.mjs`: the same samples in Chrome's game worker (Dawn and Tint
   compiling the WGSL, not wgpu and naga) give the record's digests on the M5; with `--adapter
   swiftshader`, on SwiftShader, Chrome's WebGPU on the CPU, a device of another kind entirely,
@@ -4261,3 +4261,143 @@ Limits:
   there.
 - The research examples that compare schemes (`water_radiation`, `water_shoreline`, the
   depth-transport lab) compose the f32 sources, not the deterministic kernels.
+
+## 67. Wind, rain and traced reflections (Pioneer, 2026-10-23)
+
+The wind blew only on the sea, and only for the eye (60): the regions' water did not feel it,
+nothing rained, and the water reflected what the screen showed, by marching its depth, so what the
+camera did not see the water could not reflect. Now a region's physics can take the world's `Wind`
+and `Rain`, a lake the wind blows on draws the sea it raises, rain rings the surface, and with ray
+queries the water's reflected rays trace the scene. `samples/water-storm` is a walled harbour basin
+under a gusting gale and rain, crates drifting downwind in it and a lighthouse on its quay.
+
+### 67.1 The wind on the water
+
+- `WaterPhysics.wind` (resident regions): the world's first `Wind` (the lowest id) blows on the
+  region. On each face with water on either side, every substep, its stress tau = rho_air C_D |U| U,
+  U the wind 10 m up with its gusts at the face (`Wind::at`: the speed times 1 + gust sin(phase - 2
+  pi x / gust_length), x along the wind) and C_D = (0.8 + 0.065 |U|) 10^-3 (J. Wu, "Wind-stress
+  coefficients over sea surface from breeze to hurricane", JGR 87(C12), 1982), accelerates the
+  face's depth-averaged flow by tau / (rho_water max(h, 0.1 m)), rho_air / rho_water = 1.225 / 1000:
+  the bed's friction holds a thinner film.
+- The step carries the wind (`FieldStep.wind`: its velocity in the region's axes, the gusts' share,
+  their phase at the region's corner and their wavenumber along the wind), worked out on the CPU
+  with `amoris_sim::math`; the kernels add the gusts face by face with the deterministic sine of
+  66.1, so every device steps the same water and programs replay.
+- In a closed basin the stress piles the water downwind until the surface's slope holds it, g h
+  d(eta)/dx = tau / rho_water, and the basin seiches when the wind drops. The storm's gale of 12 m/s
+  raises 0.6 mm over its 32 m basin and a current of millimetres a second; over a lake kilometres
+  long the same gale raises decimetres.
+- The drift: the stress drags the water's top layer faster than the depth-averaged flow, which the
+  field does not hold. A floater's point takes, besides its column's velocity, 3% of the wind at the
+  point at the surface, falling linearly to none 0.5 m down (J. Wu, "Sea-surface drift currents
+  induced by wind and waves", J. Phys. Oceanogr. 13(8), 1983: about 3% of the wind 10 m up, the
+  waves' share included).
+- A region the wind blows on does not rest, beyond every focus (64.2) either: a sleeping region the
+  wind found would otherwise never feel it.
+
+### 67.2 Rain
+
+- `Rain { intensity_mm_h, drop_mm }`: mm of water an hour (0 to 500; 2.5 is light rain, 10 heavy, 50
+  a cloudburst) and the drops' median diameter (0.5 to 6 mm). Persisted, version 1.
+- `WaterPhysics.rain` (resident regions): the world's first `Rain` adds its depth to every column,
+  wet or dry, a millimetre at a time. The region keeps what it is owed in f64
+  (`WaterResident.rain_owed_m`) and adds a whole millimetre in the step that comes to owe one: added
+  a substep at a time, heavy rain's 23 nanometres would be under half a unit in the last place of a
+  metre of water in f32, and lost. The ledger counts it (`BoundaryLedger.rained_total`, m^3), so the
+  region's volume closes with the rain in it.
+- Rain does not keep a still region awake: between its millimetres the region rests as it would
+  (64), what it is owed growing, and the step that comes to owe a millimetre steps it, beyond every
+  focus too.
+
+### 67.3 Drawn
+
+- `WeatherView`, sent when a wind, a rain or a region changes: the wind sea of the regions the wind
+  blows on when no sea brings one, its fetch their longest reach along the wind, and the rain.
+- A lake the wind blows on draws that wind sea as a region under the sea does (60.6): the renderer
+  synthesizes it for the fetch (60.1 to 60.5), and the region takes its slopes, their mean square
+  slope and its foam, its waves as high as its depth lets them be. Over the storm's 32 m, 12 m/s
+  raises a chop peaking at 0.45 s, 0.32 m long, with a significant height of 3.5 cm (60's JONSWAP
+  fetch laws). Presentation only, as in 60.
+- Raindrops strike the ripple window (57) as craters: a drop of diameter d takes out a half-sphere
+  of radius 1.25 d, whose collapse sends out its ring (A. Prosperetti and H. N. Oğuz, "The impact
+  of drops on liquid surfaces and the underwater noise of rain", Annu. Rev. Fluid Mech. 25, 1993),
+  as many as fall on the window in the mean (Poisson's), at most 4096 a step.
+- Finer than the window, the shading draws the rings themselves (forward.wgsl's `rain_rings`):
+  every 6 cm cell has three slots, each striking a drop once a period at hashed places and times,
+  the period set so a square metre takes the rain's drops a second; a ring runs out at 0.23 m/s,
+  the least phase speed of capillary-gravity waves (at 1.7 cm), and fades over 0.45 s. Where a pixel
+  is wider than a third of their wavelength, their slopes give way to the roughness they leave; a
+  pixel wider than two thirds of it finds no ring at all.
+
+### 67.4 Traced reflections
+
+`AMORIS_RT_REFLECTIONS=1`, on a native adapter with ray queries ([rt-shadows.md](rt-shadows.md)),
+traces the water's reflected rays:
+
+- The forward shader's `water_reflect`, the screen-space march, becomes `ssr_water_reflect`, and
+  rt_reflections.wgsl's takes its place. The reflected ray meets the nearest opaque instance in the
+  top level, alpha-masked candidates passing the masked shadow test. The hit is lit as `shade`
+  lights an opaque surface by the sun, through its shadow lookup at the hit's own view depth
+  (traced with `AMORIS_RT_SHADOWS=1`, else the cascades'), and by the sky's irradiance, plus its
+  emission, without its specular term or the punctual lights, as hybrid renderers shade reflected
+  hits (C. Barré-Brisebois et al., "Hybrid Rendering for Real-Time Ray Tracing", Ray Tracing Gems,
+  2019); it is fogged as the surface there is, and under water attenuated over the reflected path as
+  the march attenuates its own. A ray that meets nothing keeps the sky.
+- The top level holds the drawn instances either effect needs, each with a mask (`RtEffects`,
+  rt_shadows.rs): shadow rays meet the casters, reflected rays every opaque instance (one neither
+  blending nor transmitting).
+- On Metal, ray queries in fragment shaders draw one sample a pixel (rt-shadows.md, Metal): MSAA
+  becomes off with them.
+- Native only: the browser and the WebGPU baseline keep the march.
+
+### 67.5 Checks, cost and limits
+
+- `cargo test -p amoris-physics --lib weather`: the wind over a region is `Wind::at`'s, gusts
+  included; 36 mm an hour over 150 s brings one whole millimetre and owes the rest, nothing lost;
+  rain past 500 mm an hour is refused; the drift is 3% of the wind at the surface and none 0.5 m
+  down.
+- `cargo test --release -p amoris-app --test gpu_weather`, a walled pool 32 x 8 m and a metre deep:
+  - 15 m/s toward +x for 40 s, then averaged over 10 s: the surface slopes by 5.011e-5 against the
+    stress over the water's weight, 4.987e-5 (1.55 mm over the pool); without wind it lies level
+    within 10 micrometres.
+  - 360 mm an hour for 30 s: 2.003 mm, 0.5129 m^3, has fallen in whole millimetres, what fell and
+    what is owed are the rain to 1e-12 m, the volume grew by the rain to 1.3e-4 m^3 (f32's
+    rounding), and a probe's depth rose by it.
+  - a crate as light as pine drifts downwind at 0.237 m/s under 10 m/s (3% at the surface, less at
+    its bottom), at 0.000 m/s in still air.
+- `cargo test -p amoris-runtime --features transpile --test water the_weather`: the weather reaches
+  the feed (the wind sea toward 90 degrees over the region's 32 m, the rain); a change to the rain
+  sends it again; `Rain` persists through a snapshot and a restore with the world's hash; a region
+  the wind does not blow on raises no wind sea.
+- `cargo test -p amoris-render --test rt_reflections`, on Metal (MoltenVK has no ray queries):
+  - a red block above the view: the march's image holds no red pixel, the traced one 676, all in
+    the water;
+  - a grey block in view, lit by the sun and a blue sky: over the 651 pixels whose traced colour it
+    changes, the marched and the traced water's mean luminance are 0.3440 and 0.3347, 2.7% apart.
+    The march's reflection breaks into bands and stops short of the block's height; the traced one
+    is whole.
+- `cargo test -p amoris-render --lib rt_shadows`: each forward variant (shadows, reflections, both)
+  validates and replaces only what it traces.
+- `cargo test --release -p amoris-app --test gpu_determinism`: the storm's 300 ticks join the
+  record, with the same digests on Metal, Vulkan (MoltenVK) and the WebGPU baseline device, in
+  Chrome on the M5 (`tools/water_determinism_check.mjs`) and, over its first 120 ticks, on
+  SwiftShader; the other samples' digests are unchanged, in Chrome too.
+- `samples/water-storm` served headless (`amoris serve`, `amoris call capture`): the crates drift
+  downwind, one 6.7 m in 25 s.
+
+The cost is in [liquids.md](../bench/liquids.md) 19.
+
+Limits:
+
+- The waves the wind raises over a region are drawn, not simulated: the field takes the stress's
+  setup, currents and seiches, and its own waves do not grow with the wind; a floater rides the
+  field's waves and the drift, not the drawn chop.
+- The stress acts on the depth-averaged flow and the drift layer is the floaters' alone: the field,
+  its foam and the ripples do not run faster at the surface.
+- Rain arrives a millimetre at a time (a column's depth steps by 1 mm every 6 minutes of heavy
+  rain); nothing soaks into the bed or runs off ground outside the regions. No streaks fall through
+  the air, and nothing beyond the regions' wet bed (61.2) gets wet.
+- Traced reflections take one ray a pixel along the water's normal, so they are as sharp as the
+  water's slopes make them; the hit's own specular and the punctual lights are left out; the water,
+  the sea, splats and particles are not in the top level, and reflect only through the sky.

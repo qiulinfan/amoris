@@ -99,6 +99,8 @@ fn region_pool_reuses_independent_fields_and_rebuilds_evicted_or_divergent_input
                     }],
                     displacements: vec![],
                     physics: Default::default(),
+                    wind: None,
+                    rain_m: 0.0,
                 };
                 let expected = reference
                     .advance(&checkpoint, recipe, &step, &points, false)
@@ -278,6 +280,8 @@ fn bounded_resident_execution_replays_branches_and_compacts_exact_state() {
             impulses: vec![],
             displacements: vec![],
             physics: Default::default(),
+            wind: None,
+            rain_m: 0.0,
         };
         for tick in 1..=64 {
             step.substeps = 1 + tick % 3;
@@ -443,6 +447,8 @@ fn sized_pool_retains_small_fields_and_authenticates_growth_restore_and_item_evi
                     impulses: vec![],
                     displacements: vec![],
                     physics: Default::default(),
+                    wind: None,
+                    rain_m: 0.0,
                 };
                 let expected = reference
                     .advance(&checkpoint, recipe, &step, &points, false)

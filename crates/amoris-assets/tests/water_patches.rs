@@ -36,6 +36,8 @@ fn recipe(count: usize) -> FieldRecipe {
                 }],
                 displacements: vec![],
                 physics: Default::default(),
+                wind: None,
+                rain_m: 0.0,
             })
             .collect(),
         if count == 0 {

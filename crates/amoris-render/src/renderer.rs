@@ -1078,9 +1078,7 @@ impl Renderer {
         });
         let fwd_module = shaders::module(device, "forward");
         // With ray-traced shadows the lit pipelines (forward, ocean) trace the sun's shadow rays.
-        let rt_module = rt_shadows
-            .as_ref()
-            .map(|_| crate::rt_shadows::RtShadows::forward_module(device));
+        let rt_module = rt_shadows.as_ref().map(|rt| rt.forward_module(device));
         let lit_module = rt_module.as_ref().unwrap_or(&fwd_module);
         let batches = Batches::new(device, &gpu.caps);
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -2159,6 +2157,9 @@ impl Renderer {
         if let Some(stirs) = frame.stirs.take() {
             self.water.set_stirs(frame.t_s, stirs);
         }
+        if let Some(weather) = &frame.weather {
+            self.water.set_rain(weather.rain);
+        }
         if !frame.terrain.is_empty() || !frame.terrain_removed.is_empty() {
             let changes = self.terrains.apply(&frame.terrain, &frame.terrain_removed);
             for (key, mesh) in &changes.meshes {
@@ -2242,7 +2243,11 @@ impl Renderer {
 
     fn neural_pipelines(&self, layout: &NeuralLayout) -> Forward {
         let device = &self.gpu.device;
-        let source = shaders::forward_neural(layout, self.neural_f16, self.rt_shadows.is_some());
+        let source = shaders::forward_neural(
+            layout,
+            self.neural_f16,
+            self.rt_shadows.as_ref().map(|rt| rt.effects),
+        );
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("forward (neural textures)"),
             source: wgpu::ShaderSource::Wgsl(source.into()),
@@ -2470,7 +2475,11 @@ impl Renderer {
         let mesh_count = self.meshes.len() as u32;
         // Ray-traced shadows meet the full meshes: a receiver drawn coarser than the mesh its rays
         // start from shadows itself (docs/spec/lod.md 7), so they draw full meshes.
-        let want_lod = self.lod.on() && self.rt_shadows.is_none();
+        let want_lod = self.lod.on()
+            && !self
+                .rt_shadows
+                .as_ref()
+                .is_some_and(|rt| rt.effects.shadows);
         let replaced = self.meshes.take_replaced();
         // A double-sided transparent draw of a replaced row would read its old two-sided list.
         self.transparent.forget_rows(&replaced);
@@ -2983,6 +2992,15 @@ impl Renderer {
                 self.water.owned_rectangles(),
                 &self.materials.buffer,
             );
+        } else {
+            // A lake the wind blows on takes the wind sea the weather brings (water.md 67).
+            let t = self.scene.t_s - self.scene.dt_s * (1.0 - f64::from(alpha));
+            self.ocean.update_wind(
+                &self.gpu.device,
+                &queue,
+                self.scene.weather.wind.as_ref(),
+                t as f32,
+            );
         }
         {
             let t = self.scene.t_s - self.scene.dt_s * (1.0 - f64::from(alpha));
@@ -3011,7 +3029,11 @@ impl Renderer {
             }
         }
         // Ray-traced shadows replace the cascades: no cascade views to cull or draw.
-        let cascades = shadows && self.rt_shadows.is_none();
+        let cascades = shadows
+            && !self
+                .rt_shadows
+                .as_ref()
+                .is_some_and(|rt| rt.effects.shadows);
         let views = if cascades { VIEWS } else { 1 };
         // Each cascade's casters must also reach the slice it shades (docs/spec/occlusion.md 11).
         let slices = if cascades && self.shadow_cull == ShadowCull::On {
@@ -3108,7 +3130,7 @@ impl Renderer {
             .map_or(1.0 / 60.0, |t| (now_s - t).clamp(0.0, 0.1)) as f32;
         self.last_frame_s = Some(now_s);
         self.water.set_spray(self.splashes_on);
-        if self.scene.sea.is_some() {
+        if self.scene.sea.is_some() || self.scene.weather.wind.is_some() {
             self.ocean.encode(&mut enc, &mut self.profiler);
         }
         self.water.encode(

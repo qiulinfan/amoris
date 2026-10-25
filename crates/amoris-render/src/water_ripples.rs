@@ -19,7 +19,7 @@
 //! it, so a scene with no stirring points draws exactly what it drew without the layer.
 use std::collections::HashMap;
 
-use amoris_assets::frame::{MAX_STIRS, StirView};
+use amoris_assets::frame::{MAX_STIRS, RainView, StirView};
 use bytemuck::{Pod, Zeroable};
 
 /// Cells along the window's side, and the finest cell's edge, metres.
@@ -41,6 +41,8 @@ const CARRIED_COLUMNS: f32 = 4.0;
 const LONGEST_M: f32 = 4.0;
 /// One step covers at most this much drawn time, s; a longer gap between frames is cut to it.
 const MAX_STEP_S: f64 = 1.0 / 15.0;
+/// The most raindrops a step strikes the window with; past it, a heavier rain strikes no more.
+const MAX_DROPS: usize = 4096;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -55,6 +57,13 @@ struct Params {
     fresh: u32,
     cell: f32,
     joined: u32,
+}
+
+/// A number in [0, 1) from `n`: the PCG hash of common.wgsl's `pcg_hash`.
+fn hash01(n: u32) -> f32 {
+    let state = n.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+    let word = ((state >> ((state >> 28) + 4)) ^ state).wrapping_mul(277_803_737);
+    (((word >> 22) ^ word) >> 8) as f32 / 16_777_216.0
 }
 
 /// The water the ripples ride on: a region's displayed columns (surface, depth, velocity).
@@ -135,6 +144,7 @@ impl Placement {
 
 struct Pipelines {
     stir: wgpu::ComputePipeline,
+    rain: wgpu::ComputePipeline,
     forward_rows: wgpu::ComputePipeline,
     columns: wgpu::ComputePipeline,
     rows: wgpu::ComputePipeline,
@@ -157,6 +167,8 @@ struct Step {
     dt: f32,
     previous: [i32; 2],
     points: Vec<[f32; 4]>,
+    /// Raindrops striking the window this step: world x, z, crater volume (negative), radius.
+    drops: Vec<[f32; 4]>,
 }
 
 /// The feed's stirring points: its two latest lists with their simulated times (drawn time falls
@@ -255,6 +267,11 @@ pub struct Ripples {
     points: wgpu::Buffer,
     memory: wgpu::Buffer,
     depth_min: wgpu::Buffer,
+    drops: wgpu::Buffer,
+    /// The feed's rain, the drops owed short of a whole one, and the drops' random sequence.
+    rain: Option<RainView>,
+    drops_owed: f64,
+    drop_seed: u32,
     _texture: wgpu::Texture,
     view: wgpu::TextureView,
     stirs: Stirs,
@@ -312,6 +329,7 @@ impl Ripples {
         };
         let pipelines = Pipelines {
             stir: make("stir"),
+            rain: make("rain"),
             forward_rows: make("forward_rows"),
             columns: make("turn_columns"),
             rows: make("turn_rows"),
@@ -353,6 +371,7 @@ impl Ripples {
         let points = buffer("water ripples points", MAX_STIRS as u64 * 32, storage);
         let memory = buffer("water ripples records", MAX_STIRS as u64 * 32, storage);
         let depth_min = buffer("water ripples shallowest", 4, storage);
+        let drops = buffer("water ripples raindrops", MAX_DROPS as u64 * 16, storage);
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("water ripples"),
             size: wgpu::Extent3d {
@@ -444,6 +463,10 @@ impl Ripples {
             points,
             memory,
             depth_min,
+            drops,
+            rain: None,
+            drops_owed: 0.0,
+            drop_seed: 0,
             _texture: texture,
             view,
             stirs: Stirs::default(),
@@ -479,6 +502,46 @@ impl Ripples {
     /// The window's cells' edge, metres.
     pub fn cell_m(&self) -> f32 {
         self.cell
+    }
+
+    /// The feed's rain, which strikes the window with its drops (water.md 67).
+    pub fn set_rain(&mut self, rain: Option<RainView>) {
+        self.rain = rain;
+    }
+
+    /// The raindrops striking the window over `dt` seconds: Poisson's numbers in the mean, the
+    /// drops of `rain.drop_mm` that bring its depth, each a crater of 2.5 drop radii (water.md 67).
+    fn drops(&mut self, origin: [i32; 2], dt: f64) -> Vec<[f32; 4]> {
+        let Some(rain) = self
+            .rain
+            .filter(|r| r.intensity_mm_h > 0.0 && r.drop_mm > 0.0)
+        else {
+            return Vec::new();
+        };
+        let d = f64::from(rain.drop_mm) * 1e-3;
+        let per_m2_s =
+            f64::from(rain.intensity_mm_h) / 3.6e6 / (std::f64::consts::PI * d * d * d / 6.0);
+        let side = f64::from(SIDE) * f64::from(self.cell);
+        let wanted = per_m2_s * side * side * dt + self.drops_owed;
+        let count = (wanted.floor() as usize).min(MAX_DROPS);
+        self.drops_owed = (wanted - count as f64).min(1.0);
+        let crater = 1.25 * d;
+        let volume = -(2.0 / 3.0 * std::f64::consts::PI * crater * crater * crater) as f32;
+        let radius = (crater as f32).max(1.5 * self.cell);
+        (0..count)
+            .map(|_| {
+                let u = [0, 1].map(|_| {
+                    self.drop_seed = self.drop_seed.wrapping_add(1);
+                    hash01(self.drop_seed)
+                });
+                [
+                    (origin[0] as f32 + u[0] * SIDE as f32) * self.cell,
+                    (origin[1] as f32 + u[1] * SIDE as f32) * self.cell,
+                    volume,
+                    radius,
+                ]
+            })
+            .collect()
     }
 
     /// The feed's list of stirring points at simulated time `t`.
@@ -531,6 +594,8 @@ impl Ripples {
         let origin = [0, 1].map(|a| (place.centre[a] / self.cell).floor() as i32 - half);
         let previous = self.origin.replace(origin).unwrap_or(origin);
         let (points, stirring) = self.stirs.at(t);
+        let drops = self.drops(origin, dt);
+        let stirring = stirring || !drops.is_empty();
         if !self.active && !stirring {
             // Nothing has stirred the window: it is still and exactly zero. Points seen now are
             // recorded once something steps.
@@ -544,6 +609,7 @@ impl Ripples {
             dt: dt as f32,
             previous,
             points,
+            drops,
         });
         self.window()
     }
@@ -584,6 +650,18 @@ impl Ripples {
         if count > 0 {
             queue.write_buffer(&self.points, 0, bytemuck::cast_slice(&step.points));
         }
+        if !step.drops.is_empty() {
+            queue.write_buffer(&self.drops, 0, bytemuck::cast_slice(&step.drops));
+        }
+        let rain = group(
+            device,
+            &self.pipelines.rain,
+            &[
+                (0, self.params.as_entire_binding()),
+                (6, self.source.as_entire_binding()),
+                (11, self.drops.as_entire_binding()),
+            ],
+        );
         let stir = group(
             device,
             &self.pipelines.stir,
@@ -620,6 +698,11 @@ impl Ripples {
             pass.set_pipeline(&p.stir);
             pass.set_bind_group(0, &stir, &[]);
             pass.dispatch_workgroups(count, 1, 1);
+        }
+        if !step.drops.is_empty() {
+            pass.set_pipeline(&p.rain);
+            pass.set_bind_group(0, &rain, &[]);
+            pass.dispatch_workgroups(step.drops.len() as u32, 1, 1);
         }
         pass.set_pipeline(&p.forward_rows);
         pass.set_bind_group(0, &rows, &[]);

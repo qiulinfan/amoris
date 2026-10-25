@@ -184,6 +184,8 @@ pub struct Scene {
     pub environment: Option<EnvironmentView>,
     pub environment_changed: bool,
     pub sea: Option<SeaView>,
+    /// The weather on the water (water.md 67).
+    pub weather: amoris_assets::frame::WeatherView,
     pub splats: Vec<SplatView>,
     pub splats_changed: bool,
     /// The world's particle emitters.
@@ -469,6 +471,9 @@ impl Scene {
         }
         if let Some(s) = frame.sea {
             self.sea = s;
+        }
+        if let Some(w) = frame.weather {
+            self.weather = w;
         }
         if let Some(s) = frame.splats {
             self.splats = s;

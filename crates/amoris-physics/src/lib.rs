@@ -51,7 +51,7 @@ pub use body::{
 };
 pub use cache::{IDENTITY, PhysicsCache, declare};
 pub use forces::start_time;
-pub use sea::{GRAVITY, Sea, SeaLook, Water, Wave, WaveField, Wind};
+pub use sea::{GRAVITY, Rain, Sea, SeaLook, Water, Wave, WaveField, Wind};
 pub use solver::{BodyIndex, ContactLog, Physics, RebuiltSolver};
 pub use terrain::{Terrain, TerrainFeature, TerrainLayer, TerrainLook};
 pub use vessel::{Hole, Vessel};
@@ -95,6 +95,7 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     ComponentRegistry::register::<Hull>(w, None)?;
     ComponentRegistry::register::<Sea>(w, None)?;
     ComponentRegistry::register::<Wind>(w, None)?;
+    ComponentRegistry::register::<Rain>(w, None)?;
     ComponentRegistry::register::<Walker>(w, None)?;
     ComponentRegistry::register::<Board>(w, None)?;
     ComponentRegistry::register::<amoris_sim::voxels::Voxels>(w, None)?;

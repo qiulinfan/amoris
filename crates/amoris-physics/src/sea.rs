@@ -224,6 +224,36 @@ impl Wind {
     }
 }
 
+/// Rain falling on the scene (water.md 67): how hard, and the size of its drops. A water region
+/// whose physics take the rain gains its depth; its surface shows the drops' rings.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct Rain {
+    /// mm of water an hour: 2.5 light rain, 10 heavy, 50 a cloudburst (0 to 500).
+    pub intensity_mm_h: f64,
+    /// The drops' median diameter, mm (0.5 to 6).
+    pub drop_mm: f64,
+}
+
+impl Default for Rain {
+    fn default() -> Self {
+        Rain {
+            intensity_mm_h: 10.0,
+            drop_mm: 2.0,
+        }
+    }
+}
+
+impl Rain {
+    /// The depth it adds to standing water, m/s.
+    pub fn depth_per_s(&self) -> f64 {
+        self.intensity_mm_h / 3.6e6
+    }
+    pub fn valid(&self) -> bool {
+        (0.0..=500.0).contains(&self.intensity_mm_h) && (0.5..=6.0).contains(&self.drop_mm)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -14,6 +14,8 @@ struct Shallow {
     sea: vec4f,           // per side (-x, +x, -z, +z) open on the sea: the band (m) where the
                           // water turns to the sea's (water.md 60), else 0
     joined: vec4f,        // per side, 1 when joined to another region (water.md 64.3)
+    rain: vec4f,          // the rain (water.md 67): drops a square metre gets a second, their
+                          // diameter (m); zero without rain
 };
 
 @group(3) @binding(1) var<uniform> shallow: Shallow;

@@ -23,7 +23,7 @@ use glam::{Mat3, Quat, Vec3, Vec4};
 
 use crate::Gpu;
 use crate::meshes::MeshPool;
-use crate::scene::{FLAG_ALIVE, FLAG_SHADOW, FLAG_VISIBLE, Scene, VARIANT_SHIFT};
+use crate::scene::{FLAG_ALIVE, FLAG_SHADOW, FLAG_TRANSPARENT, FLAG_VISIBLE, Scene, VARIANT_SHIFT};
 
 /// The lighting group's bindings (forward.wgsl's group 1, rt_shadows.wgsl): the top level, the
 /// casters' table, and the mesh pool's indices and vertices for masked casters' texture lookups.
@@ -33,6 +33,30 @@ pub const BINDINGS: [u32; 4] = [11, 12, 13, 14];
 pub fn requested() -> bool {
     !cfg!(target_arch = "wasm32") && std::env::var("AMORIS_RT_SHADOWS").is_ok_and(|v| v == "1")
 }
+
+/// What a device's ray queries are for: the sun's shadows (`AMORIS_RT_SHADOWS=1`), the water's
+/// reflections (`AMORIS_RT_REFLECTIONS=1`, water.md 67), or both. Never in the browser.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RtEffects {
+    pub shadows: bool,
+    pub reflections: bool,
+}
+impl RtEffects {
+    pub fn from_env() -> RtEffects {
+        RtEffects {
+            shadows: requested(),
+            reflections: !cfg!(target_arch = "wasm32")
+                && std::env::var("AMORIS_RT_REFLECTIONS").is_ok_and(|v| v == "1"),
+        }
+    }
+    pub fn any(self) -> bool {
+        self.shadows || self.reflections
+    }
+}
+
+/// Instance masks (rt_common.wgsl): what the shadow rays meet, and what the reflected rays do.
+const CASTS: u8 = 1;
+const SEEN: u8 = 2;
 
 /// What the last frame's top level held (FrameStats-style numbers for benchmarks).
 #[derive(Clone, Copy, Debug, Default)]
@@ -78,6 +102,8 @@ pub struct RtShadows {
     capacity: u32,
     /// Bumped when the top level or its table is replaced (bind groups hold them).
     pub generation: u64,
+    /// The effects the device's ray queries serve (`Capabilities::rt`).
+    pub effects: RtEffects,
     /// Instances in the last build (entries past it are cleared when fewer follow).
     built: usize,
     /// Slots changed since the last build (the renderer reports its dirty uploads).
@@ -242,8 +268,14 @@ impl RtShadows {
         if !gpu.caps.ray_query {
             return None;
         }
-        log::info!("ray-traced sun shadows: on (AMORIS_RT_SHADOWS=1)");
+        let effects = gpu.caps.rt;
+        log::info!(
+            "ray tracing: sun shadows {}, water reflections {}",
+            if effects.shadows { "on" } else { "off" },
+            if effects.reflections { "on" } else { "off" }
+        );
         Some(RtShadows {
+            effects,
             device: gpu.device.clone(),
             metal: gpu.info.backend == wgpu::Backend::Metal,
             blas: Vec::new(),
@@ -330,35 +362,57 @@ impl RtShadows {
 
     /// The forward shader with `shadow_factor` replaced by rt_shadows.wgsl's ray query (the
     /// cascaded version stays, unused, as `csm_shadow_factor`).
-    pub fn forward_source() -> String {
+    pub fn forward_source(effects: RtEffects) -> String {
         format!(
             "enable wgpu_ray_query;\n{}",
-            Self::traced(&crate::shaders::source("forward"))
+            Self::traced(&crate::shaders::source("forward"), effects)
         )
     }
 
-    /// A forward shader (forward.wgsl and what is composed around it) with its `shadow_factor`
-    /// traced; the module must begin with `enable wgpu_ray_query;`.
-    pub fn traced(forward: &str) -> String {
-        assert_eq!(
-            forward.matches("fn shadow_factor(").count(),
-            1,
-            "forward.wgsl defines shadow_factor once"
-        );
-        format!(
-            "{}\n{}",
-            forward.replacen("fn shadow_factor(", "fn csm_shadow_factor(", 1),
-            include_str!("../shaders/rt_shadows.wgsl")
-        )
+    /// A forward shader (forward.wgsl and what is composed around it) with what `effects` trace:
+    /// its `shadow_factor` (the cascaded one kept as `csm_shadow_factor`), its `water_reflect`
+    /// (the screen-space one kept as `ssr_water_reflect`, water.md 67), or both. The module must
+    /// begin with `enable wgpu_ray_query;`.
+    pub fn traced(forward: &str, effects: RtEffects) -> String {
+        let mut source = format!("{forward}\n{}", include_str!("../shaders/rt_common.wgsl"));
+        for (on, name, kept, file) in [
+            (
+                effects.shadows,
+                "shadow_factor",
+                "csm_shadow_factor",
+                include_str!("../shaders/rt_shadows.wgsl"),
+            ),
+            (
+                effects.reflections,
+                "water_reflect",
+                "ssr_water_reflect",
+                include_str!("../shaders/rt_reflections.wgsl"),
+            ),
+        ] {
+            if !on {
+                continue;
+            }
+            let defined = format!("fn {name}(");
+            assert_eq!(
+                source.matches(&defined).count(),
+                1,
+                "forward.wgsl defines {name} once"
+            );
+            source = format!(
+                "{}\n{file}",
+                source.replacen(&defined, &format!("fn {kept}("), 1)
+            );
+        }
+        source
     }
 
-    /// The forward module for ray-traced shadows, with all of naga's runtime checks: without the
+    /// The forward module for its effects, with all of naga's runtime checks: without the
     /// ray-query tracker the one shadow ray per pixel was only about 1% cheaper
     /// (docs/spec/rt-shadows.md), unlike the research tracers' loops of queries.
-    pub fn forward_module(device: &wgpu::Device) -> wgpu::ShaderModule {
+    pub fn forward_module(&self, device: &wgpu::Device) -> wgpu::ShaderModule {
         device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("forward (ray-traced sun shadows)"),
-            source: wgpu::ShaderSource::Wgsl(Self::forward_source().into()),
+            label: Some("forward (ray-traced)"),
+            source: wgpu::ShaderSource::Wgsl(Self::forward_source(self.effects).into()),
         })
     }
 
@@ -470,12 +524,24 @@ impl RtShadows {
             return;
         }
         self.stale = false;
-        let need = FLAG_ALIVE | FLAG_VISIBLE | FLAG_SHADOW;
+        let drawn = FLAG_ALIVE | FLAG_VISIBLE;
         let mut table = Vec::new();
         let mut masked = 0;
         let mut skinned = Vec::new();
         for slot in &scene.slots {
-            if slot.flags & need != need || table.len() == self.capacity as usize {
+            if slot.flags & drawn != drawn || table.len() == self.capacity as usize {
+                continue;
+            }
+            // The shadow rays meet the casters the cascades would draw; the reflected rays every
+            // opaque instance drawn.
+            let mut mask = 0;
+            if self.effects.shadows && slot.flags & FLAG_SHADOW != 0 {
+                mask |= CASTS;
+            }
+            if self.effects.reflections && slot.flags & FLAG_TRANSPARENT == 0 {
+                mask |= SEEN;
+            }
+            if mask == 0 {
                 continue;
             }
             let Some(opaque) = self.blas.get(slot.mesh as usize).and_then(Option::as_ref) else {
@@ -502,7 +568,7 @@ impl RtShadows {
                 blas,
                 transform(slot, alpha),
                 0,
-                0xff,
+                mask,
             ));
             table.push(CasterGpu {
                 material: slot.material,
@@ -576,20 +642,34 @@ mod tests {
         assert!((world(&half, v) - expect).length() < 1e-5);
     }
 
-    /// The ray-traced forward variant still defines everything the forward pipelines need.
+    /// Each ray-traced forward variant still defines everything the forward pipelines need and
+    /// replaces only what its effects trace.
     #[test]
-    fn forward_variant_replaces_only_the_shadow_lookup() {
-        let source = RtShadows::forward_source();
-        assert!(source.starts_with("enable wgpu_ray_query;"));
-        assert_eq!(source.matches("fn shadow_factor(").count(), 1);
-        assert_eq!(source.matches("fn csm_shadow_factor(").count(), 1);
-        let module = wgpu::naga::front::wgsl::parse_str(&source)
-            .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
-        wgpu::naga::valid::Validator::new(
-            wgpu::naga::valid::ValidationFlags::all(),
-            wgpu::naga::valid::Capabilities::all(),
-        )
-        .validate(&module)
-        .unwrap_or_else(|e| panic!("{e:?}"));
+    fn forward_variants_replace_only_what_they_trace() {
+        for (shadows, reflections) in [(true, false), (false, true), (true, true)] {
+            let source = RtShadows::forward_source(RtEffects {
+                shadows,
+                reflections,
+            });
+            assert!(source.starts_with("enable wgpu_ray_query;"));
+            assert_eq!(source.matches("fn shadow_factor(").count(), 1);
+            assert_eq!(
+                source.matches("fn csm_shadow_factor(").count(),
+                usize::from(shadows)
+            );
+            assert_eq!(source.matches("fn water_reflect(").count(), 1);
+            assert_eq!(
+                source.matches("fn ssr_water_reflect(").count(),
+                usize::from(reflections)
+            );
+            let module = wgpu::naga::front::wgsl::parse_str(&source)
+                .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
+            wgpu::naga::valid::Validator::new(
+                wgpu::naga::valid::ValidationFlags::all(),
+                wgpu::naga::valid::Capabilities::all(),
+            )
+            .validate(&module)
+            .unwrap_or_else(|e| panic!("{e:?}"));
+        }
     }
 }

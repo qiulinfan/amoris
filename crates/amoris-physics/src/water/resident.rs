@@ -34,6 +34,9 @@ pub struct WaterResident {
     /// (water.md 64.3).
     #[serde(default)]
     pub edges: Vec<EdgeColumns>,
+    /// Rain fallen on it since its columns last gained a millimetre, m (water.md 67).
+    #[serde(default)]
+    pub rain_owed_m: f64,
 }
 
 /// One side's edge columns, from the side's first cell: world free surface, world bed, then the
@@ -127,6 +130,9 @@ pub struct BoundaryLedger {
     pub edited_total: f64,
     pub edit_requested_total: f64,
     pub edit_difference_total: f64,
+    /// Rain the region's columns gained, m^3 (water.md 67).
+    #[serde(default)]
+    pub rained_total: f64,
     pub entered: f64,
     pub left: f64,
     pub tick: u64,
@@ -139,8 +145,9 @@ impl BoundaryLedger {
         after: f64,
         flow: BoundaryFlux,
         requested_edit: f64,
+        rained: f64,
     ) -> Result<(), amoris_contract::Problem> {
-        if [before, after, flow.entered, flow.left]
+        if [before, after, flow.entered, flow.left, rained]
             .iter()
             .any(|v| !v.is_finite() || *v < 0.0)
         {
@@ -150,7 +157,9 @@ impl BoundaryLedger {
             return Err(failed("invalid local volume edit receipt"));
         }
         self.configuration_total += before - self.current_volume;
-        self.numerical_residual += (after - before) - flow.entered + flow.left - flow.edited;
+        self.numerical_residual +=
+            (after - before) - flow.entered + flow.left - flow.edited - rained;
+        self.rained_total += rained;
         self.edited_total += flow.edited;
         self.edit_requested_total += requested_edit;
         self.edit_difference_total += flow.edited - requested_edit;
@@ -168,6 +177,7 @@ impl BoundaryLedger {
             self.edited_total,
             self.edit_requested_total,
             self.edit_difference_total,
+            self.rained_total,
         ]
         .iter()
         .any(|v| !v.is_finite())
@@ -409,6 +419,10 @@ impl ResidentPlan {
                 self.step
                     .as_ref()
                     .map_or(0.0, |s| s.edits.iter().map(|e| e.depth_m * self.area).sum()),
+                self.step.as_ref().map_or(0.0, |s| {
+                    let [nx, nz] = self.checkpoint.size;
+                    s.rain_m * f64::from(nx) * f64::from(nz) * self.area
+                }),
             )?;
             let disturbed = self.step.as_ref().is_some_and(|s| {
                 !s.edits.is_empty() || !s.impulses.is_empty() || !s.displacements.is_empty()
@@ -444,7 +458,7 @@ impl ResidentPlan {
             debug_assert!(self.local_ready);
             self.state
                 .boundary
-                .record(tick, before, before, BoundaryFlux::default(), 0.0)?;
+                .record(tick, before, before, BoundaryFlux::default(), 0.0, 0.0)?;
             super::feedback::ReactionBudget::default()
         };
         self.state.completed_tick = tick;
@@ -491,6 +505,7 @@ pub(crate) fn initial(
             ..Default::default()
         },
         edges: vec![],
+        rain_owed_m: 0.0,
     })
 }
 
@@ -542,7 +557,7 @@ const STEADY_VOLUME: f64 = 1e-5;
 
 impl amoris_sim::Persisted for WaterResident {
     const NAME: &'static str = "WaterResident";
-    const VERSION: u32 = 9;
+    const VERSION: u32 = 10;
     fn trace(
         t: &mut serde_reflection::Tracer,
         s: &serde_reflection::Samples,

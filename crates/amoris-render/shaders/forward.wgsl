@@ -1268,6 +1268,54 @@ fn ripple_at(world: vec2f, footprint: f32) -> vec3f {
     return vec3f(r.yz, max(r.w - dot(r.yz, r.yz), 0.0)) * fade;
 }
 
+// Raindrops' rings finer than the field or the ripples carry (water.md 67): each cell of RAIN_CELL
+// metres has RAIN_SLOTS slots, each striking a drop a period at hashed places and times, the period
+// set so a square metre gets the rain's drops a second. A ring runs out at RAIN_SPEED, the minimum
+// phase speed of capillary-gravity waves (0.23 m/s at 1.7 cm), its crest a raindrop's crater rim
+// in height and fading over RAIN_LIFE s. Slope (x, z) and, where the pixel spans the rings, the
+// slope variance they leave instead (z).
+const RAIN_CELL: f32 = 0.06;
+const RAIN_SLOTS: u32 = 3u;
+const RAIN_SPEED: f32 = 0.23;
+const RAIN_LIFE: f32 = 0.45;
+const RAIN_K: f32 = 370.0;
+fn rain_unit(h: u32) -> f32 { return f32(h >> 8u) / 16777216.0; }
+fn rain_rings(p: vec2f, t: f32, footprint: f32) -> vec3f {
+    let rate = shallow.rain.x * RAIN_CELL * RAIN_CELL;
+    if (rate <= 0.0) { return vec3f(0.0); }
+    let period = max(f32(RAIN_SLOTS) / rate, RAIN_LIFE);
+    let height = 0.1 * shallow.rain.y;
+    // A pixel wider than a third of the rings' wavelength sees their slopes as roughness, and one
+    // wider than two thirds of it nothing else: no ring need be found.
+    let resolved = 1.0 - smoothstep(0.004, 0.012, footprint);
+    let lit = min(RAIN_LIFE / period, 1.0) * f32(RAIN_SLOTS) * 9.0;
+    let spread = height * RAIN_K;
+    let rough = (1.0 - resolved) * 0.5 * spread * spread * min(lit / 27.0, 1.0);
+    if (resolved <= 0.0) { return vec3f(0.0, 0.0, rough); }
+    var slope = vec2f(0.0);
+    let base = vec2i(floor(p / RAIN_CELL));
+    for (var j = 0; j < 9; j++) {
+        let c = base + vec2i(j % 3 - 1, j / 3 - 1);
+        for (var s = 0u; s < RAIN_SLOTS; s++) {
+            let h = pcg_hash((bitcast<u32>(c.x) * 73856093u) ^ (bitcast<u32>(c.y) * 19349663u)
+                ^ (s * 83492791u));
+            let since = t + rain_unit(h) * period;
+            let n = floor(since / period);
+            let age = since - n * period;
+            if (age > RAIN_LIFE) { continue; }
+            let h2 = pcg_hash(h ^ bitcast<u32>(i32(n)));
+            let at = (vec2f(c) + vec2f(rain_unit(h2), rain_unit(pcg_hash(h2)))) * RAIN_CELL;
+            let d = p - at;
+            let r = length(d);
+            let x = r - RAIN_SPEED * age;
+            let envelope = exp(-x * x / (0.005 * 0.005)) * (1.0 - age / RAIN_LIFE)
+                / sqrt(1.0 + r / RAIN_CELL);
+            slope += -height * envelope * RAIN_K * sin(RAIN_K * x) * d / max(r, 1e-4);
+        }
+    }
+    return vec3f(slope * resolved, rough);
+}
+
 fn shallow_foam_at(world: vec2f) -> f32 {
     let pos = (world - shallow.origin) / shallow.cell - 0.5;
     let hi = shallow.count.xy - vec2u(1u);
@@ -1804,6 +1852,9 @@ fn fs_shallow(in: ShallowOut) -> ShallowFragment {
     // as it was.
     let stirred = ripple_at(in.world.xz, footprint);
     if (any(stirred != vec3f(0.0))) { g += stirred.xy; }
+    // Rain strikes it with rings finer still (water.md 67).
+    let rained = rain_rings(in.world.xz, shallow.time, footprint);
+    g += rained.xy;
     let n = normalize(vec3f(n0.x - g.x * n0.y, n0.y, n0.z - g.y * n0.y));
     let above = dot(n0,v) >= 0.0;
     let normal = select(-n,n,above);
@@ -1814,7 +1865,9 @@ fn fs_shallow(in: ShallowOut) -> ShallowFragment {
     var rough = mix(smooth_rough, 0.5, foam);
     // Ripples finer than the pixel widen the glints: their slope variance adds to the lobe's
     // (GGX alpha^2 about twice the slope variance).
-    if (stirred.z > 0.0) { rough = sqrt(sqrt(rough * rough * rough * rough + 2.0 * stirred.z)); }
+    if (stirred.z + rained.z > 0.0) {
+        rough = sqrt(sqrt(rough * rough * rough * rough + 2.0 * (stirred.z + rained.z)));
+    }
     let a = rough * rough;
     let transmitted_ray = refract(-v,normal,select(1.3333333,0.75,above));
     let total_reflection = dot(transmitted_ray,transmitted_ray)<1e-6;

@@ -65,6 +65,9 @@ pub struct Ocean {
     /// Whether this frame's sea has a wind, and a look.
     windy: bool,
     looked: bool,
+    /// Whether the sea's bind group holds the wind sea (made for regions under the wind before
+    /// there was a sea, it still holds the blank one).
+    grouped_waves: bool,
     blank_waves: wgpu::TextureView,
     wave_sampler: wgpu::Sampler,
     wind: wgpu::Buffer,
@@ -434,6 +437,7 @@ impl Ocean {
             waves: None,
             windy: false,
             looked: false,
+            grouped_waves: false,
             blank_waves,
             wave_sampler,
             wind,
@@ -460,6 +464,26 @@ impl Ocean {
         if let Some(waves) = self.waves.as_ref().filter(|_| self.windy) {
             waves.encode(encoder, profiler);
         }
+    }
+
+    /// The wind sea alone, for the regions the wind blows on when there is no sea (water.md 67):
+    /// its texture and uniform, which `waves_binding` hands the regions.
+    pub fn update_wind(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        wind: Option<&amoris_assets::frame::WindSeaView>,
+        t: f32,
+    ) {
+        self.windy = wind.is_some();
+        if wind.is_some() && self.waves.is_none() {
+            self.waves = Some(crate::ocean_waves::OceanWaves::new(device));
+        }
+        let uniform = match (wind, &mut self.waves) {
+            (Some(view), Some(waves)) => waves.update(queue, view, t),
+            _ => crate::ocean_waves::WindSeaUniform::off(),
+        };
+        queue.write_buffer(&self.wind, 0, bytemuck::bytes_of(&uniform));
     }
 
     /// Writes the sea's waves at simulated time `t`.
@@ -513,7 +537,8 @@ impl Ocean {
                 mapped_at_creation: false,
             });
         }
-        if resized || made {
+        if resized || made || (self.waves.is_some() && !self.grouped_waves) {
+            self.grouped_waves = self.waves.is_some();
             self.group = ocean_group(
                 device,
                 &self.bind_layout,

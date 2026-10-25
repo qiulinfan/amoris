@@ -399,6 +399,8 @@ mod validation_tests {
             impulses: vec![],
             displacements: vec![],
             physics: Default::default(),
+            wind: None,
+            rain_m: 0.0,
         });
         let regions = [2, 1].map(|id| amoris_sim::EntityId::new(id).unwrap());
         let requests: Vec<_> = (0..2)

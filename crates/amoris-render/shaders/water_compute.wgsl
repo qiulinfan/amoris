@@ -17,6 +17,9 @@ struct Params {
     edge_normal:vec4f,
     sea_meta:vec4f,
     waves:array<SeaWave,16>,
+    wind:vec4f,         // x, z: the wind 10 m up, m/s; w: 1 when it blows on the water (water.md 67)
+    gust:vec4f,         // x: the gusts' share, y: their phase at the corner, rad, z: rad/m downwind
+    rain:vec4f,         // x: depth rain adds to every column each substep, m
 }
 @group(0) @binding(0) var<uniform> p: Params;
 // bed, depth, -x velocity, -z velocity (outer +x/+z faces are walls).
@@ -56,6 +59,26 @@ fn sample_face(pos: vec2<f32>, axis: u32) -> f32 {
     let bottom = c + (d - c) * t.x;
     return top + (bottom - top) * t.y;
 }
+// The wind's stress on a face (water.md 67): tau = rho_air C_D |U| U with C_D = (0.8 + 0.065 |U|)
+// 1e-3 (J. Wu, "Wind-stress coefficients over sea surface from breeze to hurricane", JGR 87(C12),
+// 1982), U the wind 10 m up with its gusts at the face, accelerating the face's depth-averaged
+// flow by tau / (rho_water h). h is at least WIND_DEPTH: the bed's friction holds a thinner film.
+const AIR_PER_WATER: f32 = 0.001225;
+const WIND_DEPTH: f32 = 0.1;
+fn wind_accel(i: u32, k: u32, axis: u32) -> f32 {
+    if (p.wind.w == 0.0) { return 0.0; }
+    let n = at(i, k);
+    let o = select(n - 1u, n - p.size.x, axis == 1u);
+    let h = max(src[n].y, src[o].y);
+    if (h <= 0.0001) { return 0.0; }
+    let speed = length(p.wind.xy);
+    if (speed == 0.0) { return 0.0; }
+    let face = select(vec2f(f32(i), f32(k) + 0.5), vec2f(f32(i) + 0.5, f32(k)), axis == 1u) * p.cell;
+    let gusting = 1.0 + p.gust.x * sin(p.gust.y - p.gust.z * dot(p.wind.xy, face) / speed);
+    let u = speed * gusting;
+    let cd = (0.8 + 0.065 * u) * 0.001;
+    return AIR_PER_WATER * cd * u * p.wind[axis] * gusting / max(h, WIND_DEPTH);
+}
 fn pressure(v0: f32, a: u32, b: u32) -> f32 {
     return pressure_heads(v0, a, b, 0.0, 0.0, false);
 }
@@ -90,12 +113,12 @@ fn faces(@builtin(global_invocation_id) id: vec3<u32>) {
     if i > 0u && awake[n - 1u] != 0u {
         let cross = (w(i - 1u, k) + w(i, k) + w(i - 1u, k + 1u) + w(i, k + 1u)) * 0.25;
         let pos = vec2<f32>(f32(i) - u(i, k) * back, f32(k) - cross * back);
-        v.x = pressure(sample_face(pos, 0u), n - 1u, n);
+        v.x = pressure(sample_face(pos, 0u) + p.dt * wind_accel(i, k, 0u), n - 1u, n);
     }
     if k > 0u && awake[n - p.size.x] != 0u {
         let cross = (u(i, k - 1u) + u(i + 1u, k - 1u) + u(i, k) + u(i + 1u, k)) * 0.25;
         let pos = vec2<f32>(f32(i) - cross * back, f32(k) - w(i, k) * back);
-        v.y = pressure(sample_face(pos, 1u), n - p.size.x, n);
+        v.y = pressure(sample_face(pos, 1u) + p.dt * wind_accel(i, k, 1u), n - p.size.x, n);
     }
     velocity[n*2u]=v.x;velocity[n*2u+1u]=v.y;
 }
@@ -248,7 +271,7 @@ fn transport(@builtin(global_invocation_id) id:vec3u){
     if(i+1u<p.size.x){net+=face_net(vx(i+1u,k),n,n+1u,0u,n);}else if(p.edge_kind.y!=0u){net-=edge_flux[p.size.y+k].x;}
     if(k>0u){net+=face_net(vz(i,k),n-p.size.x,n,1u,n);}else if(p.edge_kind.z!=0u){net+=edge_flux[2u*p.size.y+i].x;}
     if(k+1u<p.size.y){net+=face_net(vz(i,k+1u),n,n+p.size.x,1u,n);}else if(p.edge_kind.w!=0u){net-=edge_flux[2u*p.size.y+p.size.x+i].x;}
-    dst[n]=vec4f(src[n].x,max(src[n].y+net*p.dt/p.cell,0.0),vec2f(velocity[n*2u],velocity[n*2u+1u]));
+    dst[n]=vec4f(src[n].x,max(src[n].y+net*p.dt/p.cell,0.0)+p.rain.x,vec2f(velocity[n*2u],velocity[n*2u+1u]));
 }
 // Landed depth first, into the free donor-scale scratch, so the next pass reads stable depths.
 @compute @workgroup_size(8,8)

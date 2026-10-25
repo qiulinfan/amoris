@@ -1181,6 +1181,8 @@ fn resident_programs_draw_the_current_field_after_skipped_frames_compaction_and_
             },
             displacements: vec![],
             physics: Default::default(),
+            wind: None,
+            rain_m: 0.0,
             edits: if tick % 11 == 0 {
                 vec![ColumnDelta {
                     column: 17,

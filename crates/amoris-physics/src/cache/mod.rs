@@ -34,7 +34,7 @@ use crate::boat::{Boat, Floater, Hull, Sail, Trim};
 use crate::body::{
     BodyKind, Collider, ExternalForce, PartShape, RigidBody, Shape, Transform, Velocity,
 };
-use crate::sea::{Sea, Wind};
+use crate::sea::{Rain, Sea, Wind};
 use crate::shapes::{self, ShapeKey};
 use crate::solver::{
     BodyIndex, ContactLog, Physics, RebuiltSolver, entity_of, rebuild_index, spec_hash, spec_of,
@@ -71,6 +71,7 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
         .component::<Hull>()
         .component::<Sea>()
         .component::<Wind>()
+        .component::<Rain>()
         .component::<Walker>()
         .component::<crate::board::Board>()
         .component::<amoris_sim::voxels::Voxels>()
@@ -366,6 +367,7 @@ persisted! {
     Sail => "Sail",
     Hull => "Hull",
     Wind => "Wind",
+    Rain => "Rain",
     WaterSource => "WaterSource",
     WaterDrain => "WaterDrain",
 }
@@ -413,7 +415,7 @@ impl Persisted for Sea {
 
 impl Persisted for WaterRegion {
     const NAME: &'static str = "WaterRegion";
-    const VERSION: u32 = 9;
+    const VERSION: u32 = 10;
 
     fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
         t.trace_type::<crate::water::Solver>(s)?;
@@ -484,6 +486,7 @@ mod tests {
         Hull::trace(&mut t, &s).unwrap();
         Sea::trace(&mut t, &s).unwrap();
         Wind::trace(&mut t, &s).unwrap();
+        Rain::trace(&mut t, &s).unwrap();
         let reg = t.registry().unwrap();
         for name in [
             "Transform",
@@ -507,6 +510,7 @@ mod tests {
             "Sea",
             "Wave",
             "Wind",
+            "Rain",
         ] {
             assert!(
                 reg.contains_key(name),

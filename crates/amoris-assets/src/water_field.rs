@@ -401,6 +401,41 @@ pub struct FieldStep {
     /// Bodies' volume under the free surface during this step (two-way vertical coupling).
     pub displacements: Vec<PointVolume>,
     pub physics: FieldPhysics,
+    /// The wind over the water this step, when the region's physics take it (water.md 67).
+    #[serde(default)]
+    pub wind: Option<FieldWind>,
+    /// Depth rain adds to every column this step, m (water.md 67): the rain the region owed,
+    /// whole millimetres at a time.
+    #[serde(default)]
+    pub rain_m: f64,
+}
+
+/// The wind 10 m up over a region for one step (water.md 67), as `Wind::at` gives it: along world
+/// x and z, with gusts that sweep downwind.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FieldWind {
+    /// m/s.
+    pub velocity_mps: [f64; 2],
+    /// The gusts' share of the speed; 0 for a steady wind.
+    pub gust: f64,
+    /// The gusts' phase at the region's corner at the step's start, rad, in [-pi, pi].
+    pub gust_phase_rad: f64,
+    /// How fast the phase falls downwind, rad/m (2 pi over the gusts' spacing).
+    pub gust_rad_per_m: f64,
+}
+impl FieldWind {
+    pub fn validate(&self) -> Result<(), String> {
+        let [x, z] = self.velocity_mps;
+        if !(x.is_finite() && z.is_finite() && x * x + z * z <= 100.0 * 100.0)
+            || !(0.0..=1.0).contains(&self.gust)
+            || !(-4.0..=4.0).contains(&self.gust_phase_rad)
+            || !(0.0..=1.0e3).contains(&self.gust_rad_per_m)
+        {
+            return Err("resident water wind is invalid".into());
+        }
+        Ok(())
+    }
 }
 impl FieldStep {
     pub fn validate(&self, columns: usize) -> Result<(), String> {
@@ -426,6 +461,12 @@ impl FieldStep {
         }
         if let Some(sea) = &self.sea {
             sea.validate()?;
+        }
+        if let Some(wind) = &self.wind {
+            wind.validate()?;
+        }
+        if !(0.0..=0.01).contains(&self.rain_m) {
+            return Err("resident water rain must add 0 to 10 mm a step".into());
         }
         let mut sides = [false; 4];
         for e in &self.exterior {
@@ -763,6 +804,8 @@ mod tests {
                     impulses: vec![],
                     displacements: vec![],
                     physics: Default::default(),
+                    wind: None,
+                    rain_m: 0.0,
                 };
                 MAX_STEPS + 1
             ],
@@ -863,6 +906,8 @@ mod tests {
             impulses: vec![],
             displacements: vec![],
             physics: Default::default(),
+            wind: None,
+            rain_m: 0.0,
         };
         assert!(step.validate(256).is_err());
         let wave = FieldSeaWave {

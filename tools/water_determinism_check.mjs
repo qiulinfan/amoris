@@ -4,7 +4,7 @@
 // every native backend. node tools/water_determinism_check.mjs [--adapter swiftshader]
 // [--samples a,b] [--ticks N]. Build first: tools/build_web.sh with the samples the record names
 // (water-resident pool-party river-falls surf-beach water-shore water-floaters water-feedback
-// water-valley). `--adapter swiftshader` runs WebGPU on SwiftShader, Chrome's CPU implementation:
+// water-valley water-storm). `--adapter swiftshader` runs WebGPU on SwiftShader, Chrome's CPU implementation:
 // another device entirely. Prints one JSON line {ok, adapter, samples: {name: {ticks, regions,
 // first_divergence}}, errors}; exit code 0 when every digest matched. Chrome is found as
 // tools/web_bench.mjs finds it (CHROME= overrides; CHROME_FLAGS= adds switches).

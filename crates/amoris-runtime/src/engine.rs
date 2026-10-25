@@ -19,8 +19,8 @@ use amoris_physics::water::displacement::WaterDisplacement;
 use amoris_physics::water::feedback::WaterFeedback;
 use amoris_physics::water::resident::{WaterOutletStage, WaterProbe, WaterResident};
 use amoris_physics::{
-    Board, Boat, Collider, ExternalForce, Floater, Hull, RigidBody, Sail, Sea, Terrain, Transform,
-    Trim, Velocity, Vessel, Walker, WaterDrain, WaterRegion, WaterSource, Wind,
+    Board, Boat, Collider, ExternalForce, Floater, Hull, Rain, RigidBody, Sail, Sea, Terrain,
+    Transform, Trim, Velocity, Vessel, Walker, WaterDrain, WaterRegion, WaterSource, Wind,
 };
 use amoris_script::{EngineFns, register_engine};
 use amoris_sim::registry::{
@@ -91,7 +91,7 @@ where
 /// Every engine component a scene or `world_edit` can name (`Name` is the entity's own `name`);
 /// the first three are the player layer's (perception.md: who observes, what can be perceived,
 /// what blocks sight).
-pub fn engine_components() -> [EngineComponent; 40] {
+pub fn engine_components() -> [EngineComponent; 41] {
     [
         entry::<amoris_interface::perception::Observer>(),
         entry::<amoris_interface::perception::Perceivable>(),
@@ -120,6 +120,7 @@ pub fn engine_components() -> [EngineComponent; 40] {
         entry::<Vessel>(),
         entry::<Walker>(),
         entry::<Wind>(),
+        entry::<Rain>(),
         voxels_entry(),
         water_entry(),
         entry::<WaterResident>(),
@@ -782,6 +783,21 @@ fn board_fns() -> EngineFns<Board> {
     }
 }
 
+fn rain_schema() -> Result<ComponentSchema, Problem> {
+    schema(
+        "Rain",
+        Rain::VERSION,
+        "Rain falling on the scene: water regions whose physics take it gain its depth.",
+        vec![
+            f(
+                "intensity_mm_h",
+                "mm of water an hour: 2.5 light, 10 heavy, 50 a cloudburst.",
+            ),
+            f("drop_mm", "The drops' median diameter, mm."),
+        ],
+    )
+}
+
 fn wind_schema() -> Result<ComponentSchema, Problem> {
     schema(
         "Wind",
@@ -883,6 +899,23 @@ fn ui_text_fns() -> EngineFns<UiText> {
     }
 }
 
+fn rain_fns() -> EngineFns<Rain> {
+    EngineFns {
+        read: |r| nums(&[r.intensity_mm_h, r.drop_mm]),
+        write: |r, v| {
+            let n = &v.nums;
+            (r.intensity_mm_h, r.drop_mm) = (n[0], n[1]);
+        },
+        make: |v| {
+            let n = &v.nums;
+            Rain {
+                intensity_mm_h: n[0],
+                drop_mm: n[1],
+            }
+        },
+    }
+}
+
 fn wind_fns() -> EngineFns<Wind> {
     EngineFns {
         read: |w| nums(&[w.from_deg, w.speed, w.gust, w.gust_period, w.gust_length]),
@@ -976,6 +1009,7 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     ComponentRegistry::register::<Boat>(world, Some(boat_schema()?))?;
     ComponentRegistry::register::<Board>(world, Some(board_schema()?))?;
     ComponentRegistry::register::<Wind>(world, Some(wind_schema()?))?;
+    ComponentRegistry::register::<Rain>(world, Some(rain_schema()?))?;
     ComponentRegistry::register::<Walker>(world, Some(walker_schema()?))?;
     ComponentRegistry::register::<Voxels>(world, None)?;
     ComponentRegistry::register::<WaterRegion>(world, None)?;
@@ -1075,6 +1109,7 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     register_engine::<Boat>(world, boat_fns())?;
     register_engine::<Board>(world, board_fns())?;
     register_engine::<Wind>(world, wind_fns())?;
+    register_engine::<Rain>(world, rain_fns())?;
     register_engine::<Walker>(world, walker_fns())?;
     register_engine::<UiText>(world, ui_text_fns())?;
     register_engine::<WaterSource>(world, flow_fns!(WaterSource))?;

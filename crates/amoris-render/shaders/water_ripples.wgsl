@@ -230,6 +230,16 @@ fn stir(@builtin(workgroup_id) group: vec3u, @builtin(local_invocation_index) la
     }
 }
 
+// Raindrops (water.md 67): each takes a crater out of the surface where it strikes, as its
+// volume's splat; the ring that spreads from it is the dispersion relation's. One workgroup a drop:
+// its world x and z, its crater's volume (negative) and the radius it spreads over.
+@group(0) @binding(11) var<storage, read> drops: array<vec4f>;
+@compute @workgroup_size(64)
+fn rain(@builtin(workgroup_id) group: vec3u, @builtin(local_invocation_index) lane: u32) {
+    let d = drops[group.x];
+    splat(lane, d.xy, d.w, d.z);
+}
+
 // --- 2, 3. Fourier transforms and the exact dispersive step ----------------------------------
 
 var<workgroup> other: array<vec2f, 512>;

@@ -114,6 +114,8 @@ fn step(tick: usize) -> FieldStep {
         },
         displacements: vec![],
         physics: Default::default(),
+        wind: None,
+        rain_m: 0.0,
     }
 }
 

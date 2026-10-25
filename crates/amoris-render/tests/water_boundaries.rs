@@ -202,6 +202,8 @@ fn local_edit_receipts_measure_stored_clamped_changes_before_transport() {
             impulses: vec![],
             displacements: vec![],
             physics: Default::default(),
+            wind: None,
+            rain_m: 0.0,
             edits: vec![
                 ColumnDelta {
                     column: 0,

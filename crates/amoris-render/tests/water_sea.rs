@@ -38,6 +38,8 @@ fn step(substeps: u32, dt: f64) -> FieldStep {
         impulses: vec![],
         displacements: vec![],
         physics: Default::default(),
+        wind: None,
+        rain_m: 0.0,
     }
 }
 fn checkpoint() -> FieldCheckpoint {

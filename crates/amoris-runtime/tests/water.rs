@@ -167,6 +167,85 @@ fn a_seas_wind_sea_and_look_persist_and_reach_the_feed() {
     });
 }
 
+/// The weather (water.md 67) reaches the feed: the wind sea of the regions the wind blows on, its
+/// fetch their longest reach along it, and the rain; `Rain` persists (version 1), and a change to
+/// the wind, the rain or the regions sends the weather again.
+#[test]
+fn the_weather_reaches_the_feed_and_the_rain_persists() {
+    common::big_stack(|| {
+        let mut entities = lake([0.0, 0.0, 0.0]);
+        let region = &mut entities[1]["components"]["WaterRegion"];
+        region["solver"] = json!("gpu_resident");
+        region["size"] = json!([64, 32]);
+        region["physics"] = json!({"wind": true, "rain": true});
+        entities.as_array_mut().unwrap().extend([
+            json!({"name": "Gale", "components": {"Wind": {"from_deg": 270.0, "speed": 9.0}}}),
+            json!({"name": "Shower", "components": {"Rain": {"intensity_mm_h": 12.0, "drop_mm": 2.0}}}),
+        ]);
+        let root = project("weather", MAIN, entities);
+        let mut g = game(&root).unwrap_or_else(|e| panic!("{e:#?}"));
+        let feed = amoris_assets::Feed::new();
+        let mailbox = feed.subscribe();
+        let mut extractor = amoris_runtime::Extractor::default();
+        g.present(&mut extractor, &feed);
+        let weather = mailbox.take().weather.expect("the weather is sent");
+        // Blowing toward +x over a region 32 m along x and 16 m across it.
+        assert_eq!(
+            weather,
+            amoris_assets::frame::WeatherView {
+                wind: Some(amoris_assets::frame::WindSeaView {
+                    speed: 9.0,
+                    toward_deg: 90.0,
+                    fetch_km: 0.032
+                }),
+                rain: Some(amoris_assets::frame::RainView {
+                    intensity_mm_h: 12.0,
+                    drop_mm: 2.0
+                }),
+            }
+        );
+        let rain_of = |g: &Game| {
+            let mut q = g.world().try_query::<&amoris_physics::Rain>().unwrap();
+            *q.single(g.world()).unwrap()
+        };
+        let snap = g.snapshot().unwrap();
+        let hash = g.world_hash().unwrap();
+        let edit = |g: &mut Game, n: u64, edits: Value| {
+            g.apply(&amoris_runtime::Command::new(
+                amoris_link::Source::Developer(0),
+                n,
+                "world_edit",
+                json!({ "edits": edits }),
+            ))
+            .unwrap();
+        };
+        edit(
+            &mut g,
+            1,
+            json!([{"op": "set", "entity": "Shower", "component": "Rain",
+                "value": {"intensity_mm_h": 40.0}}]),
+        );
+        g.present(&mut extractor, &feed);
+        let weather = mailbox.take().weather.expect("the weather is sent again");
+        assert_eq!(weather.rain.map(|r| r.intensity_mm_h), Some(40.0));
+        g.restore(&snap).unwrap();
+        assert_eq!(rain_of(&g).intensity_mm_h, 12.0);
+        assert_eq!(g.world_hash().unwrap(), hash);
+        // A region the wind does not blow on raises no wind sea.
+        edit(
+            &mut g,
+            2,
+            json!([{"op": "set", "entity": "Lake", "component": "WaterRegion",
+                "value": {"physics": {"wind": false, "rain": true}}}]),
+        );
+        g.present(&mut extractor, &feed);
+        let weather = mailbox.take().weather.expect("the weather is sent again");
+        assert_eq!(weather.wind, None);
+        assert!(weather.rain.is_some());
+        std::fs::remove_dir_all(root).unwrap();
+    });
+}
+
 #[test]
 fn a_misaligned_region_is_refused_at_load() {
     common::big_stack(|| {

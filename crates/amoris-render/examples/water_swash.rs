@@ -104,6 +104,8 @@ impl Kernel {
             impulses: Vec::new(),
             displacements: Vec::new(),
             physics: FieldPhysics::default(),
+            wind: None,
+            rain_m: 0.0,
         };
         self.field.encode_transport(encoder, &step, None).unwrap();
     }

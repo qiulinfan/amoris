@@ -120,6 +120,8 @@ fn checked_and_raw_recipe_validation_have_identical_bounds_and_digest_rules() {
         impulses: vec![],
         displacements: vec![],
         physics: Default::default(),
+        wind: None,
+        rain_m: 0.0,
     };
     let mut recipes = vec![
         FieldRecipe::new(raw.key(), vec![], raw.digest(), String::new()),

@@ -153,6 +153,21 @@ pub struct WindSeaView {
     pub fetch_km: f32,
 }
 
+/// The weather drawn on the water (water.md 67): the wind sea of the regions the wind blows on when
+/// no sea brings one (its fetch their reach along the wind), and the rain.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct WeatherView {
+    pub wind: Option<WindSeaView>,
+    pub rain: Option<RainView>,
+}
+
+/// Rain: mm of water an hour and the drops' median diameter, mm.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RainView {
+    pub intensity_mm_h: f32,
+    pub drop_mm: f32,
+}
+
 /// The sea's optical depth, as a water region's look gives it.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SeaLookView {
@@ -377,6 +392,9 @@ pub struct RenderFrame {
     pub environment: Option<EnvironmentView>,
     /// `Some(None)`: the sea was removed.
     pub sea: Option<Option<SeaView>>,
+    /// The weather on the water, when it changed (water.md 67).
+    #[serde(default)]
+    pub weather: Option<WeatherView>,
     /// The full list, when any splat changed.
     pub splats: Option<Vec<SplatView>>,
     /// The full list of UI elements, when any changed (or an entity carrying one moved).
@@ -423,6 +441,7 @@ impl RenderFrame {
             && self.cameras.is_none()
             && self.environment.is_none()
             && self.sea.is_none()
+            && self.weather.is_none()
             && self.splats.is_none()
             && self.ui.is_none()
             && self.audio.is_none()
@@ -509,6 +528,9 @@ impl RenderFrame {
         }
         if next.sea.is_some() {
             self.sea = next.sea;
+        }
+        if next.weather.is_some() {
+            self.weather = next.weather;
         }
         if next.splats.is_some() {
             self.splats = next.splats;

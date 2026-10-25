@@ -211,11 +211,11 @@ fn mac_faces(@builtin(global_invocation_id) id:vec3u){
     // for active neighbours. Do not leak a frozen nonzero face into conservative fluxes.
     if(awake[n]==0u){velocity[n*2u]=0.0;velocity[n*2u+1u]=0.0;return;}
     if(mac_face_open(i,k,0u)){
-        let v=mac_breaking(i,k,0u,mac_advected(i,k,0u));
+        let v=mac_breaking(i,k,0u,mac_advected(i,k,0u))+p.dt*wind_accel(i,k,0u);
         value.x=pressure_heads(v,n-1u,n,mac_head(n-1u),mac_head(n),p.advection!=0.0);
     }
     if(mac_face_open(i,k,1u)){
-        let v=mac_breaking(i,k,1u,mac_advected(i,k,1u));
+        let v=mac_breaking(i,k,1u,mac_advected(i,k,1u))+p.dt*wind_accel(i,k,1u);
         value.y=pressure_heads(v,n-p.size.x,n,mac_head(n-p.size.x),mac_head(n),p.advection!=0.0);
     }
     velocity[n*2u]=value.x;velocity[n*2u+1u]=value.y;

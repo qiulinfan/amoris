@@ -122,8 +122,11 @@ pub struct Capabilities {
     pub shader_f16: bool,
     pub float32_filterable: bool,
     /// Inline ray queries (`EXPERIMENTAL_RAY_QUERY`), requested only for ray-traced sun shadows
-    /// (`AMORIS_RT_SHADOWS=1`, rt_shadows.rs) on a native adapter that has them.
+    /// (`AMORIS_RT_SHADOWS=1`, rt_shadows.rs) or water reflections (`AMORIS_RT_REFLECTIONS=1`) on a
+    /// native adapter that has them.
     pub ray_query: bool,
+    /// What the ray queries serve; none without them.
+    pub rt: crate::rt_shadows::RtEffects,
 }
 
 /// The device the renderer draws with.
@@ -308,17 +311,24 @@ impl Gpu {
         surface: Option<&wgpu::Surface<'_>>,
         minimal: Minimal,
     ) -> Result<Gpu, GpuError> {
-        Gpu::create(instance, surface, minimal, crate::rt_shadows::requested()).await
+        Gpu::create(
+            instance,
+            surface,
+            minimal,
+            crate::rt_shadows::RtEffects::from_env(),
+        )
+        .await
     }
 
-    /// [`Gpu::new_with`], asking for ray queries when `wants_ray_query` (instead of when
-    /// `AMORIS_RT_SHADOWS=1` does).
+    /// [`Gpu::new_with`], asking for ray queries for `effects` (instead of for what
+    /// `AMORIS_RT_SHADOWS=1` and `AMORIS_RT_REFLECTIONS=1` ask).
     async fn create(
         instance: wgpu::Instance,
         surface: Option<&wgpu::Surface<'_>>,
         minimal: Minimal,
-        wants_ray_query: bool,
+        effects: crate::rt_shadows::RtEffects,
     ) -> Result<Gpu, GpuError> {
+        let wants_ray_query = effects.any();
         let adapter = match adapter_override() {
             Some(wanted) => pick_adapter(&instance, surface, &wanted).await?,
             None => instance
@@ -425,6 +435,11 @@ impl Gpu {
             shader_f16: required.contains(wgpu::Features::SHADER_F16),
             float32_filterable: required.contains(wgpu::Features::FLOAT32_FILTERABLE),
             ray_query,
+            rt: if ray_query {
+                effects
+            } else {
+                crate::rt_shadows::RtEffects::default()
+            },
         };
         // Log every validation error instead of panicking at the first: an engine keeps running and
         // reports (the editor and agents read the log).
@@ -481,13 +496,29 @@ impl Gpu {
     /// the `rt_shadows` example). `caps.ray_query` tells which it got.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn headless_ray_query(choice: BackendChoice, ray_query: bool) -> Result<Gpu, GpuError> {
+        Gpu::headless_ray_traced(
+            choice,
+            crate::rt_shadows::RtEffects {
+                shadows: ray_query,
+                reflections: false,
+            },
+        )
+    }
+
+    /// A headless device whose ray queries serve `effects`, when the adapter has them (tests and
+    /// examples comparing the effects in one process).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn headless_ray_traced(
+        choice: BackendChoice,
+        effects: crate::rt_shadows::RtEffects,
+    ) -> Result<Gpu, GpuError> {
         let minimal = Minimal::from_env();
         let _one = open_one_at_a_time();
         pollster::block_on(Gpu::create(
             instance_with(choice, minimal),
             None,
             minimal,
-            ray_query,
+            effects,
         ))
     }
 

@@ -5,7 +5,7 @@
 
 use amoris_assets::water_field::{
     CheckedCheckpoint, FieldBoundary, FieldCheckpoint, FieldExterior, FieldPhysics, FieldSea,
-    FieldStep, MAX_SEA_WAVES, PointVolume, field_f32,
+    FieldStep, FieldWind, MAX_SEA_WAVES, PointVolume, field_f32,
 };
 use bytemuck::{Pod, Zeroable};
 
@@ -38,6 +38,12 @@ struct Params {
     edge_normal: [f32; 4],
     sea_meta: [f32; 4],
     waves: [WaveParams; MAX_SEA_WAVES],
+    /// The wind 10 m up along x and z, and 1 when it blows (water.md 67).
+    wind: [f32; 4],
+    /// The gusts' share, their phase at the corner, rad, and rad per metre downwind.
+    gust: [f32; 4],
+    /// Depth rain adds to every column each substep, m.
+    rain: [f32; 4],
 }
 
 /// How the resident kernel transports its face velocities (water.md 61.1). Regions always run
@@ -459,6 +465,8 @@ impl GpuWater {
             &[],
             &[],
             None,
+            0.0,
+            None,
         )
     }
 
@@ -488,6 +496,8 @@ impl GpuWater {
             FieldPhysics::default(),
             &[],
             &[],
+            None,
+            0.0,
             profiler,
         )
     }
@@ -530,6 +540,8 @@ impl GpuWater {
             FieldPhysics::default(),
             &[],
             &[],
+            None,
+            0.0,
             profiler,
         )
     }
@@ -558,6 +570,8 @@ impl GpuWater {
             FieldPhysics::default(),
             &[],
             &[],
+            None,
+            0.0,
             None,
         )
     }
@@ -588,6 +602,8 @@ impl GpuWater {
             FieldPhysics::default(),
             &[],
             &[],
+            None,
+            0.0,
             profiler,
         )
     }
@@ -613,6 +629,8 @@ impl GpuWater {
             step.physics,
             &step.displacements,
             &step.exterior,
+            step.wind.as_ref(),
+            step.rain_m,
             profiler,
         )
     }
@@ -631,6 +649,8 @@ impl GpuWater {
         physics: FieldPhysics,
         displacements: &[PointVolume],
         exterior: &[FieldExterior],
+        wind: Option<&FieldWind>,
+        rain_m: f64,
         mut profiler: Option<&mut crate::profiler::GpuProfiler>,
     ) -> Result<(), String> {
         self.has_boundary_report = false;
@@ -779,6 +799,23 @@ impl GpuWater {
                             data: [field_f32(w.amplitude_m), 0.0, 0.0, 0.0],
                         })
                 }),
+                wind: wind.map_or([0.0; 4], |w| {
+                    [
+                        field_f32(w.velocity_mps[0]),
+                        field_f32(w.velocity_mps[1]),
+                        0.0,
+                        1.0,
+                    ]
+                }),
+                gust: wind.map_or([0.0; 4], |w| {
+                    [
+                        field_f32(w.gust),
+                        field_f32(w.gust_phase_rad),
+                        field_f32(w.gust_rad_per_m),
+                        0.0,
+                    ]
+                }),
+                rain: [field_f32(rain_m / f64::from(substeps)), 0.0, 0.0, 0.0],
             }),
         );
         if physics.dispersion {
@@ -1424,6 +1461,8 @@ impl GpuWater {
             FieldPhysics::default(),
             &[],
             &[],
+            None,
+            0.0,
             None,
         )?;
         let bytes = (columns.len() * 16) as u64;

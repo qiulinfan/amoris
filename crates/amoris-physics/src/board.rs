@@ -126,6 +126,7 @@ type BoardItem<'a> = (
 pub(crate) fn board(
     clock: Res<SimClock>,
     seas: Query<(&EntityId, &Sea)>,
+    winds: Query<(&EntityId, &crate::Wind)>,
     regions: Query<(&EntityId, Option<&Transform>, &crate::water::WaterRegion)>,
     samples: Res<crate::water::buoyancy::Samples>,
     riders: Query<(&EntityId, &Walker)>,
@@ -136,6 +137,7 @@ pub(crate) fn board(
     }
     let t = crate::forces::start_time(&clock);
     let field = crate::forces::sea_field(&seas);
+    let wind = by_id(&winds).next().map(|(_, w)| w);
     let regions: Vec<_> = by_id(&regions)
         .filter_map(|(id, t, r)| {
             crate::water::buoyancy::Cover::new(*id, t.map_or([0.0; 3], |t| t.position), r)
@@ -175,6 +177,7 @@ pub(crate) fn board(
                 &regions,
                 &samples,
                 &field,
+                wind,
                 t,
                 clock.tick.0,
             )?);

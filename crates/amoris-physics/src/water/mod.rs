@@ -22,6 +22,7 @@ pub mod resident;
 mod sea;
 pub(crate) mod solve;
 pub(crate) mod swimming;
+pub(crate) mod weather;
 
 use amoris_contract::{Problem, detail};
 use amoris_sim::math;
@@ -152,6 +153,11 @@ pub struct WaterPhysics {
     /// Plunging breakers: where a steep front's crest outruns the water ahead, part of its flow
     /// leaves the crest's top and lands ahead, the plunging lip (water.md 63).
     pub plunging: bool,
+    /// The world's `Wind` blows on the water (water.md 67): its stress drives currents and piles
+    /// the water downwind, and its drift carries what floats at the surface.
+    pub wind: bool,
+    /// The world's `Rain` falls into the region (water.md 67), a millimetre at a time.
+    pub rain: bool,
 }
 impl WaterPhysics {
     pub fn field(self) -> amoris_assets::water_field::FieldPhysics {
@@ -544,7 +550,7 @@ impl WaterRegion {
         if self.physics != WaterPhysics::default() && self.solver != Solver::GpuResident {
             return Err(invalid(
                 "physics",
-                "dispersion, breaking and falls need the gpu_resident solver".into(),
+                "dispersion, breaking, falls, wind and rain need the gpu_resident solver".into(),
             ));
         }
         if let Err(message) = self.physics.field().validate() {
@@ -1123,6 +1129,8 @@ type ForcingInput<'w, 's> = (
     Query<'w, 's, (&'static EntityId, &'static crate::Sea)>,
     Query<'w, 's, (&'static EntityId, &'static Transform, &'static WaterFocus)>,
     Query<'w, 's, (&'static crate::terrain::Terrain, Option<&'static Transform>)>,
+    Query<'w, 's, (&'static EntityId, &'static crate::Wind)>,
+    Query<'w, 's, (&'static EntityId, &'static crate::Rain)>,
 );
 type RegionQuery<'w, 's> = Query<
     'w,
@@ -1176,7 +1184,10 @@ pub(crate) fn water(
     }
     let (floaters, hulls, vessels, mut buoy_samples, mut feedbacks, mut displacements) = buoy_input;
     let (walkers, mut swim_samples) = swimmers_input;
-    let (sources, drains, seas, foci, terrains) = forcing;
+    let (sources, drains, seas, foci, terrains, winds, rains) = forcing;
+    // The world's first Wind and Rain, for the regions whose physics take them (water.md 67).
+    let wind = by_id(&winds).next().map(|(_, w)| *w);
+    let rain = by_id(&rains).next().map(|(_, r)| *r);
     let dt = clock.dt();
     let tick = clock.tick.0;
     let since = tick.saturating_sub(1);
@@ -1544,7 +1555,17 @@ pub(crate) fn water(
                             .is_ok_and(|(_, _, f)| !f.pending.is_empty())
                         && !displacements
                             .get(e)
-                            .is_ok_and(|(_, _, d)| !d.pending.is_empty());
+                            .is_ok_and(|(_, _, d)| !d.pending.is_empty())
+                        && weather::weather(
+                            region,
+                            wind.as_ref(),
+                            rain.as_ref(),
+                            s.rain_owed_m,
+                            corner,
+                            crate::forces::start_time(&clock),
+                            dt,
+                        )?
+                        .calm();
                     rest_of(quiet, s, &controls, region, corner, &foci, dt)
                 }
                 None => (false, false),
@@ -1618,10 +1639,20 @@ pub(crate) fn water(
                         .map_err(|_| resident::failed("resident region disappeared"))?;
                     let p = position(t);
                     let controls = controls_of(region, outlet, dt)?;
-                    let state = match resident_states.get(e) {
+                    let mut state = match resident_states.get(e) {
                         Ok((_, s)) => s.clone(),
                         Err(_) => resident::initial(region, &mut checkpoints)?,
                     };
+                    let weather = weather::weather(
+                        region,
+                        wind.as_ref(),
+                        rain.as_ref(),
+                        state.rain_owed_m,
+                        [p[0], p[2]],
+                        crate::forces::start_time(&clock),
+                        dt,
+                    )?;
+                    state.rain_owed_m = weather.owed_m;
                     let checkpoint = checkpoints
                         .fields
                         .get(&state.recipe.checkpoint())
@@ -1729,7 +1760,8 @@ pub(crate) fn water(
                     let quiet = state.controls == controls
                         && edits.is_empty()
                         && impulses.is_empty()
-                        && displaced.is_empty();
+                        && displaced.is_empty()
+                        && weather.calm();
                     // A joined group rests together (join.rs).
                     let rests = if join::joined(region) {
                         joins.rests.contains(&id)
@@ -1814,6 +1846,8 @@ pub(crate) fn water(
                             impulses,
                             displacements: displaced,
                             physics: region.physics.field(),
+                            wind: weather.wind,
+                            rain_m: weather.rain_m,
                         })
                     };
                     if !local_ready {

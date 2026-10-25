@@ -151,6 +151,8 @@ fn radiation_steps_reconstruct_exact_resident_fields_after_control_changes() {
             impulses: vec![],
             displacements: vec![],
             physics: Default::default(),
+            wind: None,
+            rain_m: 0.0,
         };
         let out = resident
             .advance(&cp, &recipe, &step, &[[0.5, 0.5], [15.5, 15.5]], false)
@@ -249,6 +251,8 @@ fn excessive_reservoir_speed_returns_failure_instead_of_clipping_a_successful_st
         impulses: vec![],
         displacements: vec![],
         physics: Default::default(),
+        wind: None,
+        rain_m: 0.0,
     };
     let mut resident = ResidentWater::new(&gpu).unwrap();
     let Err(error) = resident.advance(&cp, &recipe, &step, &[], false) else {

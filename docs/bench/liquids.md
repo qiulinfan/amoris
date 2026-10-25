@@ -672,24 +672,92 @@ Not measured: the renderer's meshing, the browser and R1.
 ## 18. The deterministic kernels (Pioneer, 2026-10-23)
 
 The generated kernels of [water.md](../spec/water.md) 66 on the M5, macOS, Metal, release builds,
-2026-10-23, the machine otherwise idle. `cargo test --release -p amoris-app --test gpu_determinism
+2026-10-23, measured again once the leftover browsers below were stopped; the alternated runs of
+each build agree within 3 percent. `cargo test --release -p amoris-app --test gpu_determinism
 time_samples -- --ignored --nocapture`: the wall time of a tick, its GPU work and readbacks waited
 for, over ticks 61 to 360. The f32 kernels' column is the same test built against bc730ab7, the
-commit before them; the runs alternated, two of each:
+commit before them, the deterministic kernels' against b248c082; the runs alternated, two of each.
+The table this section first had (b248c082) was measured while two headless Chrome instances, left
+behind by an interrupted browser check, kept the GPU drawing; it read 8 to 17 percent higher in both
+columns and is replaced:
 
 | Sample | f32 kernels | Deterministic kernels |
 |---|---|---|
-| surf-beach (512 x 256, non-hydrostatic, dispersion, plunging) | 5.158, 5.120 ms | 6.425, 6.334 ms |
-| river-falls | 4.960, 4.888 ms | 5.191, 5.056 ms |
-| pool-party | 2.976, 2.947 ms | 3.045, 2.990 ms |
-| water-valley (two joined regions) | 6.235, 6.133 ms | 6.315, 6.249 ms |
+| surf-beach (512 x 256, non-hydrostatic, dispersion, plunging) | 4.769, 4.751 ms | 5.903, 5.917 ms |
+| river-falls | 4.258, 4.248 ms | 4.342, 4.422 ms |
+| pool-party | 2.597, 2.592 ms | 2.668, 2.600 ms |
+| water-valley (two joined regions) | 5.567, 5.568 ms | 5.601, 5.593 ms |
 
 The guards cost the arithmetic-heavy passes most: the surf's non-hydrostatic Chebyshev cycles and
-its Airy split take a quarter more, the other samples a few percent. The generated WGSL is 440 KB
-(75 KB gzipped) where the sources are 98 KB; the WebGPU viewport's module grew from
-4,233,888 to 4,493,461 bytes (1,558,393 to 1,590,047 gzipped). On SwiftShader the largest modules
-take 2.6 to 3.8 s to create their pipelines (the MacCormack faces, the non-hydrostatic block solve,
-the FFT).
+its Airy split take a quarter more (24 percent), the river 2 to 4 percent, the pool and the valley
+under 3. The generated WGSL is 440 KB (75 KB gzipped) where the sources are 98 KB; the WebGPU
+viewport's module grew from 4,233,888 to 4,493,461 bytes (1,558,393 to 1,590,047 gzipped). On
+SwiftShader the largest modules take 2.6 to 3.8 s to create their pipelines (the MacCormack faces,
+the non-hydrostatic block solve, the FFT).
 
 Not measured: R1, and the browser's tick (the determinism check steps tick by tick with a world read
 between ticks).
+
+## 19. Wind, rain and traced reflections (Pioneer, 2026-10-23)
+
+The weather of [water.md](../spec/water.md) 67 on the M5, macOS, Metal, release builds, 2026-10-23.
+The machine was not otherwise checked for load; the alternated runs of each case agree within 2
+percent.
+
+**A tick.** `cargo test --release -p amoris-app --test gpu_weather time_weather -- --ignored
+--nocapture`: the wall time of a tick, its GPU work and readbacks waited for, over ticks 61 to 360
+of a walled pool of 512 x 256 half-metre columns whose surface starts tilted by 5 cm, so that it
+sloshes whatever the weather; two runs:
+
+| | A tick |
+|---|---|
+| calm | 1.216, 1.212 ms |
+| a gale of 12 m/s gusting by 0.3 | 1.292, 1.292 ms |
+| rain of 20 mm an hour | 1.208, 1.206 ms |
+
+The wind costs 0.08 ms a tick over 131,072 columns: its stress and gusts on every face of two
+substeps, a deterministic sine a face. The rain costs nothing measurable: an addition a column, and
+a millimetre's step every few minutes. The samples without weather tick as they did before it (the
+deterministic kernels' commit b248c082 against this one, alternated, two runs each): surf-beach
+5.903, 5.917 against 5.908, 5.893 ms; river-falls 4.342, 4.422 against 4.402, 4.416; pool-party
+2.668, 2.600 against 2.559, 2.606; water-valley 5.601, 5.593 against 5.566, 5.590.
+
+**A frame.** `AMORIS_TRACE=frames=300,skip=600,out=PATH cargo run --release -p amoris-app --example
+scene_shots -- samples/water-storm --eye -3,6,-5 --at 22,2,9 --ticks 900`, then `python
+tools/frame_trace.py stats`: the storm from its own view at 1280 x 720 with MSAA, the world stepped
+before each frame and each frame read back, medians over 300 frames. The variants are the storm's
+scene with the rain at 0 mm an hour or the wind at 0 m/s; two runs of each, alternated:
+
+| | Storm | No rain | No wind |
+|---|---|---|---|
+| frame interval | 4.99, 5.04 ms | 4.95, 5.00 ms | 4.18, 4.20 ms |
+| GPU interval coverage | 3.11, 3.11 ms | 3.08, 3.08 ms | 2.68, 2.67 ms |
+| `ocean waves` | 0.210, 0.210 ms | 0.210, 0.210 ms | none |
+| `water ripples` | 0.417, 0.416 ms | 0.391, 0.390 ms | 0.420, 0.419 ms |
+| `water+foreground` | 2.128, 2.131 ms | 2.126, 2.122 ms | 2.187, 2.183 ms |
+
+The rain costs 0.03 ms: the drops struck into the ripple window 0.026 ms, the rings next to nothing.
+The rings first cost 0.42 ms of `water+foreground` (2.548, 2.551 ms against 2.126, 2.123 without
+rain): every pixel searched the 27 nearest slots for rings it could not resolve; a pixel too wide
+for them now takes their roughness alone. The wind sea costs its synthesis, 0.21 ms, and the water
+it keeps moving the rest: in still air the basin's field stops changing, and the passes that present
+a changed field stop running with it.
+
+Traced reflections against the march, both drawing one sample a pixel (`AMORIS_AA=off` for the
+march; ray queries on Metal take MSAA away, water.md 67.4):
+
+| | March | Traced |
+|---|---|---|
+| frame interval | 4.42, 4.44 ms | 4.86, 4.90 ms |
+| GPU interval coverage | 2.53, 2.53 ms | 2.89, 2.88 ms |
+| CPU `submit` | 0.434, 0.441 ms | 0.503, 0.503 ms |
+| `water+foreground` | 1.557, 1.557 ms | 1.337, 1.335 ms |
+
+Tracing makes a frame 0.45 ms longer, 0.07 ms of it the CPU submitting the top level, rebuilt every
+frame while the crates move. The water's own pass took 0.22 ms less, a ray a pixel in place of the
+march's steps. Other passes' intervals moved without their work changing (`opaque+sky` 0.72 against
+0.34 ms): a pass's interval can include waiting for the work before it (12), so the coverage and
+the frame are the measure.
+
+Not measured: R1 (ray queries on Vulkan and Direct3D 12, the RTX 5060 and the 780M), the browser's
+rain and wind sea, and a lake kilometres long.

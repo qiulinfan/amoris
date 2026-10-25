@@ -16,9 +16,10 @@ use std::collections::HashMap;
 
 use amoris_assets::frame::{
     AnimView, AudioView, BlockLook, CameraView, ChunkUpdate, EmitterView, EnvironmentView,
-    InstanceUpdate, LightKindView, LightView, Look, Pose, RenderFrame, ResidentWaterUpdate,
-    SeaLookView, SeaView, SplatView, StirView, TerrainLayerView, TerrainView, UiView, VoxelUpdate,
-    WaterLookView, WaterTileView, WaterUpdate, WaveView, WindSeaView,
+    InstanceUpdate, LightKindView, LightView, Look, Pose, RainView, RenderFrame,
+    ResidentWaterUpdate, SeaLookView, SeaView, SplatView, StirView, TerrainLayerView, TerrainView,
+    UiView, VoxelUpdate, WaterLookView, WaterTileView, WaterUpdate, WaveView, WeatherView,
+    WindSeaView,
 };
 use amoris_assets::{
     Animator, AudioSource, Camera, Environment, Feed, Light, LightKind, Model, ParticleEmitter,
@@ -28,7 +29,9 @@ use amoris_physics::water::{
     Edge, Solver,
     resident::{WaterCheckpoints, WaterResident},
 };
-use amoris_physics::{BedSource, Sea, Style, Terrain, Transform, WaterRegion, WaterSteps, Wind};
+use amoris_physics::{
+    BedSource, Rain, Sea, Style, Terrain, Transform, WaterRegion, WaterSteps, Wind,
+};
 use amoris_sim::voxels::{BlockShape, Voxels};
 use amoris_sim::{ContentHash, EntityId, EntityIndex, SimClock};
 use bevy_ecs::change_detection::DetectChanges;
@@ -373,6 +376,8 @@ struct Queries {
     environment: QueryState<Ref<'static, Environment>>,
     sea: QueryState<Ref<'static, Sea>>,
     wind: QueryState<Ref<'static, Wind>>,
+    rain: QueryState<Ref<'static, Rain>>,
+    regions: QueryState<Ref<'static, WaterRegion>>,
     emitters: QueryState<(Opt<Transform>, Ref<'static, ParticleEmitter>)>,
     audio: QueryState<(Opt<Transform>, Ref<'static, AudioSource>)>,
     ui: QueryState<UiRow, UiFilter>,
@@ -402,6 +407,8 @@ impl Queries {
             environment: QueryState::new(world),
             sea: QueryState::new(world),
             wind: QueryState::new(world),
+            rain: QueryState::new(world),
+            regions: QueryState::new(world),
             emitters: QueryState::new(world),
             audio: QueryState::new(world),
             ui: QueryState::new(world),
@@ -566,6 +573,7 @@ impl Extractor {
         frame.environment =
             Self::environment(world).or_else(|| Some(env_view(&Environment::default())));
         frame.sea = Some(Self::sea(world));
+        frame.weather = Some(Self::weather(world));
         frame.splats = Some(Self::splats(world));
         frame.ui = Some(Self::ui(world));
         frame.audio = Some(Self::audio(world));
@@ -696,6 +704,13 @@ impl Extractor {
             || w.removed::<Sea>().next().is_some()
             || q.wind.iter(w).any(|s| s.is_changed())
             || w.removed::<Wind>().next().is_some();
+        // The weather follows the wind, the rain and the regions they fall on.
+        let weather = q.wind.iter(w).any(|s| s.is_changed())
+            || w.removed::<Wind>().next().is_some()
+            || q.rain.iter(w).any(|s| s.is_changed())
+            || w.removed::<Rain>().next().is_some()
+            || q.regions.iter(w).any(|r| r.is_changed())
+            || w.removed::<WaterRegion>().next().is_some();
         let emitters = q
             .emitters
             .iter(w)
@@ -728,6 +743,9 @@ impl Extractor {
         }
         if sea {
             frame.sea = Some(Self::sea(world));
+        }
+        if weather {
+            frame.weather = Some(Self::weather(world));
         }
         if emitters {
             frame.emitters = Some(Self::emitters(world));
@@ -963,6 +981,46 @@ impl Extractor {
                     scatter: l.scatter,
                 }),
             })
+    }
+
+    /// The weather on the water (water.md 67): the first `Wind`'s sea over the regions it blows
+    /// on, its fetch their longest reach along it, and the first `Rain`.
+    fn weather(world: &mut World) -> WeatherView {
+        let wind = world
+            .query::<(&EntityId, &Wind)>()
+            .iter(world)
+            .min_by_key(|(id, _)| id.get())
+            .map(|(_, w)| *w);
+        let rain = world
+            .query::<(&EntityId, &Rain)>()
+            .iter(world)
+            .min_by_key(|(id, _)| id.get())
+            .map(|(_, r)| *r);
+        let mut reach = |toward: amoris_physics::geom::V3| {
+            world
+                .query::<&WaterRegion>()
+                .iter(world)
+                .filter(|r| r.physics.wind)
+                .map(|r| {
+                    toward[0].abs() * f64::from(r.size[0]) * r.cell_m
+                        + toward[2].abs() * f64::from(r.size[1]) * r.cell_m
+                })
+                .fold(0.0, f64::max)
+        };
+        WeatherView {
+            wind: wind.filter(|w| w.speed > 0.0).and_then(|w| {
+                let fetch = reach(amoris_physics::geom::from_bearing(w.from_deg + 180.0));
+                (fetch > 0.0).then(|| WindSeaView {
+                    speed: f(w.speed),
+                    toward_deg: f((w.from_deg + 180.0).rem_euclid(360.0)),
+                    fetch_km: f(fetch / 1000.0),
+                })
+            }),
+            rain: rain.filter(|r| r.intensity_mm_h > 0.0).map(|r| RainView {
+                intensity_mm_h: f(r.intensity_mm_h),
+                drop_mm: f(r.drop_mm),
+            }),
+        }
     }
 
     fn splats(world: &mut World) -> Vec<SplatView> {

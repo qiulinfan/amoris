@@ -12,8 +12,8 @@ use serde_json::json;
 use std::sync::Arc;
 
 /// The samples and how many ticks of each: a pool and a party of boats, a river with its fall, the
-/// surf with its sea, dispersion and plunging crests, a shore, floaters and their feedback, and
-/// the valley's joined regions over a terrain.
+/// surf with its sea, dispersion and plunging crests, a shore, floaters and their feedback, the
+/// valley's joined regions over a terrain, and a harbour basin under a gusting gale and rain.
 const SAMPLES: &[(&str, u64)] = &[
     ("water-resident", 300),
     ("pool-party", 300),
@@ -23,6 +23,7 @@ const SAMPLES: &[(&str, u64)] = &[
     ("water-floaters", 300),
     ("water-feedback", 300),
     ("water-valley", 300),
+    ("water-storm", 300),
 ];
 
 fn golden() -> std::path::PathBuf {

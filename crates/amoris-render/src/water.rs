@@ -83,6 +83,8 @@ struct Uniform {
     sea: [f32; 4],
     /// 1 per side joined to another region: the surface reaches the side (water.md 64.3).
     joined: [f32; 4],
+    /// The rain's drops a square metre gets a second and their diameter, m (water.md 67).
+    rain: [f32; 4],
 }
 
 /// The region uniform's size in 32-bit words, for the checks that write one by hand.
@@ -399,6 +401,8 @@ pub struct Water {
     ripples_on: bool,
     ripples: Option<crate::water_ripples::Ripples>,
     stirs: Vec<(f64, Vec<StirView>)>,
+    /// The feed's rain, which strikes the ripples' window (water.md 67).
+    rain: Option<amoris_assets::frame::RainView>,
     ripple_region: Option<u64>,
     blank_ripples: wgpu::TextureView,
     ripple_sampler: wgpu::Sampler,
@@ -564,6 +568,7 @@ impl Water {
             ripples_on: ripples_from_env(),
             ripples: None,
             stirs: Vec::new(),
+            rain: None,
             ripple_region: None,
             blank_ripples: device
                 .create_texture(&wgpu::TextureDescriptor {
@@ -677,6 +682,14 @@ impl Water {
                     self.stirs.remove(0);
                 }
             }
+        }
+    }
+
+    /// The feed's rain (water.md 67): its drops strike the ripples' window.
+    pub fn set_rain(&mut self, rain: Option<amoris_assets::frame::RainView>) {
+        self.rain = rain;
+        if let Some(ripples) = &mut self.ripples {
+            ripples.set_rain(rain);
         }
     }
 
@@ -1417,6 +1430,13 @@ impl Water {
                     }
                 }),
                 joined: r.look.joined.map(|j| f32::from(u8::from(j))),
+                rain: self.rain.map_or([0.0; 4], |rain| {
+                    let d = f64::from(rain.drop_mm) * 1e-3;
+                    let drops = f64::from(rain.intensity_mm_h)
+                        / 3.6e6
+                        / (std::f64::consts::PI * d * d * d / 6.0);
+                    [drops as f32, d as f32, 0.0, 0.0]
+                }),
             };
             r.surround_on = surround[1] > 0.0;
             queue.write_buffer(&g.uniform, 0, bytemuck::bytes_of(&u));
@@ -1709,11 +1729,14 @@ impl Water {
         else {
             return [0.0; 4];
         };
-        if self.ripples.is_none() && self.stirs.iter().any(|(_, l)| !l.is_empty()) {
+        if self.ripples.is_none()
+            && (self.stirs.iter().any(|(_, l)| !l.is_empty()) || self.rain.is_some())
+        {
             let mut ripples = crate::water_ripples::Ripples::new(device);
             for (at, list) in self.stirs.drain(..) {
                 ripples.set_stirs(at, &list);
             }
+            ripples.set_rain(self.rain);
             self.ripples = Some(ripples);
             self.ripples_new = true;
         }

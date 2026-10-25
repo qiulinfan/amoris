@@ -179,8 +179,10 @@ credential cleanup. File-verification records remain local, including in that ar
 - Shader hashes are integer (`pcg_hash` in common.wgsl): `fract(sin(x) * k)` differs per vendor
   and API.
 - Ray queries: the research tracers (`path_trace`, `gi_trace`, `ray_query_probe`;
-  `crates/amoris-render/src/gi/`) and the opt-in ray-traced sun shadows (`AMORIS_RT_SHADOWS=1`,
-  [docs/spec/rt-shadows.md](docs/spec/rt-shadows.md)) need an adapter with wgpu's
+  `crates/amoris-render/src/gi/`), the opt-in ray-traced sun shadows (`AMORIS_RT_SHADOWS=1`,
+  [docs/spec/rt-shadows.md](docs/spec/rt-shadows.md)) and water reflections
+  (`AMORIS_RT_REFLECTIONS=1`, water.md 67.4; instance masks keep each effect's rays to its own
+  instances) need an adapter with wgpu's
   `EXPERIMENTAL_RAY_QUERY` (Metal; Vulkan and D3D12 on the RTX 5060 and the 780M here); their GPU
   tests run on every such backend and skip elsewhere. Keep ray queries local to the function that
   traces (naga 30 panics on a `ray_query` pointer argument) and test facing by triangle winding,
@@ -375,3 +377,13 @@ Changes run the renderer's `ocean_waves` tests and water
 `a_region_open_on_a_sea_with_its_look_meets_it_without_a_seam` (also on MoltenVK and under
 AMORIS_GPU_MINIMAL), runtime water `a_seas_wind_sea_and_look_persist_and_reach_the_feed`,
 `ocean_shots`' views and liquids.md 12's trace.
+
+The wind and the rain on resident regions (water.md 67): `WaterPhysics.wind` adds the wind's stress
+to every wet face in the kernels, its gusts by the deterministic sine; `WaterPhysics.rain` adds the
+rain a whole millimetre at a time, what a region is owed kept in f64 in `WaterResident`, and the
+ledger counts it. A region the wind blows on never rests; rain wakes it for each millimetre. Changes
+run physics `weather`, app `gpu_weather` and `gpu_determinism` (`samples/water-storm` is in the
+record), runtime water `the_weather_reaches_the_feed_and_the_rain_persists`, and, for the drawn
+rain, the storm in Chrome. Traced reflections replace the forward shader's `water_reflect` by
+rt_reflections.wgsl's; a change to either runs render `rt_reflections` and the library's
+`rt_shadows` tests, and liquids.md 19's frame comparison.

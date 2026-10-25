@@ -22,8 +22,13 @@ struct Params {
     edge_normal: vec4<f32>,
     sea_meta: vec4<f32>,
     waves: array<SeaWave, 16>,
+    wind: vec4<f32>,
+    gust: vec4<f32>,
+    rain: vec4<f32>,
 }
 
+const AIR_PER_WATER: f32 = 0.001225f;
+const WIND_DEPTH: f32 = 0.1f;
 const FALL_SCALE: f32 = 262144f;
 const FALL_STEPS: u32 = 96u;
 const PLUNGE_SLOPE: f32 = 0.5f;
@@ -155,6 +160,74 @@ fn det_length2_(v_1: vec2<f32>) -> f32 {
     return _e31;
 }
 
+fn det_dot2_(a_1: vec2<f32>, b_2: vec2<f32>) -> f32 {
+    let _e6 = det_z;
+    let _e10 = bitcast<u32>((a_1.x * b_2.x));
+    let _e19 = bitcast<u32>((a_1.y * b_2.y));
+    let _e26 = bitcast<u32>((bitcast<f32>((select(_e10, 0u, ((_e10 & 2139095040u) < 226492416u)) ^ _e6)) + bitcast<f32>((select(_e19, 0u, ((_e19 & 2139095040u) < 226492416u)) ^ _e6))));
+    return bitcast<f32>((select(_e26, 0u, ((_e26 & 2139095040u) < 226492416u)) ^ _e6));
+}
+
+fn det_sincos(x_3: f32) -> vec2<f32> {
+    let _e21 = det_z;
+    let _e23 = bitcast<u32>((x_3 * 0.63661975f));
+    let _e30 = bitcast<u32>(round(bitcast<f32>((select(_e23, 0u, ((_e23 & 2139095040u) < 226492416u)) ^ _e21))));
+    let k_6 = bitcast<f32>((select(_e30, 0u, ((_e30 & 2139095040u) < 226492416u)) ^ _e21));
+    let _e37 = bitcast<u32>((k_6 * 1.5703125f));
+    let _e44 = bitcast<u32>((x_3 - bitcast<f32>((select(_e37, 0u, ((_e37 & 2139095040u) < 226492416u)) ^ _e21))));
+    let _e51 = bitcast<u32>((k_6 * 0.0004837513f));
+    let _e58 = bitcast<u32>((bitcast<f32>((select(_e44, 0u, ((_e44 & 2139095040u) < 226492416u)) ^ _e21)) - bitcast<f32>((select(_e51, 0u, ((_e51 & 2139095040u) < 226492416u)) ^ _e21))));
+    let _e65 = bitcast<u32>((k_6 * 0.0000000754979f));
+    let _e72 = bitcast<u32>((bitcast<f32>((select(_e58, 0u, ((_e58 & 2139095040u) < 226492416u)) ^ _e21)) - bitcast<f32>((select(_e65, 0u, ((_e65 & 2139095040u) < 226492416u)) ^ _e21))));
+    let r = bitcast<f32>((select(_e72, 0u, ((_e72 & 2139095040u) < 226492416u)) ^ _e21));
+    let _e79 = bitcast<u32>((r * r));
+    let z = bitcast<f32>((select(_e79, 0u, ((_e79 & 2139095040u) < 226492416u)) ^ _e21));
+    let _e86 = bitcast<u32>((z * 0.0000027557319f));
+    let _e93 = bitcast<u32>((-0.0001984127f + bitcast<f32>((select(_e86, 0u, ((_e86 & 2139095040u) < 226492416u)) ^ _e21))));
+    let _e100 = bitcast<u32>((z * bitcast<f32>((select(_e93, 0u, ((_e93 & 2139095040u) < 226492416u)) ^ _e21))));
+    let _e107 = bitcast<u32>((0.008333333f + bitcast<f32>((select(_e100, 0u, ((_e100 & 2139095040u) < 226492416u)) ^ _e21))));
+    let _e114 = bitcast<u32>((z * bitcast<f32>((select(_e107, 0u, ((_e107 & 2139095040u) < 226492416u)) ^ _e21))));
+    let _e121 = bitcast<u32>((-0.16666667f + bitcast<f32>((select(_e114, 0u, ((_e114 & 2139095040u) < 226492416u)) ^ _e21))));
+    let _e128 = bitcast<u32>((z * bitcast<f32>((select(_e121, 0u, ((_e121 & 2139095040u) < 226492416u)) ^ _e21))));
+    let _e135 = bitcast<u32>((1f + bitcast<f32>((select(_e128, 0u, ((_e128 & 2139095040u) < 226492416u)) ^ _e21))));
+    let _e142 = bitcast<u32>((r * bitcast<f32>((select(_e135, 0u, ((_e135 & 2139095040u) < 226492416u)) ^ _e21))));
+    let s_2 = bitcast<f32>((select(_e142, 0u, ((_e142 & 2139095040u) < 226492416u)) ^ _e21));
+    let _e149 = bitcast<u32>((z * -0.0000002755732f));
+    let _e156 = bitcast<u32>((0.000024801588f + bitcast<f32>((select(_e149, 0u, ((_e149 & 2139095040u) < 226492416u)) ^ _e21))));
+    let _e163 = bitcast<u32>((z * bitcast<f32>((select(_e156, 0u, ((_e156 & 2139095040u) < 226492416u)) ^ _e21))));
+    let _e170 = bitcast<u32>((-0.0013888889f + bitcast<f32>((select(_e163, 0u, ((_e163 & 2139095040u) < 226492416u)) ^ _e21))));
+    let _e177 = bitcast<u32>((z * bitcast<f32>((select(_e170, 0u, ((_e170 & 2139095040u) < 226492416u)) ^ _e21))));
+    let _e184 = bitcast<u32>((0.041666668f + bitcast<f32>((select(_e177, 0u, ((_e177 & 2139095040u) < 226492416u)) ^ _e21))));
+    let _e191 = bitcast<u32>((z * bitcast<f32>((select(_e184, 0u, ((_e184 & 2139095040u) < 226492416u)) ^ _e21))));
+    let _e198 = bitcast<u32>((-0.5f + bitcast<f32>((select(_e191, 0u, ((_e191 & 2139095040u) < 226492416u)) ^ _e21))));
+    let _e205 = bitcast<u32>((z * bitcast<f32>((select(_e198, 0u, ((_e198 & 2139095040u) < 226492416u)) ^ _e21))));
+    let _e212 = bitcast<u32>((1f + bitcast<f32>((select(_e205, 0u, ((_e205 & 2139095040u) < 226492416u)) ^ _e21))));
+    let c_2 = bitcast<f32>((select(_e212, 0u, ((_e212 & 2139095040u) < 226492416u)) ^ _e21));
+    switch (i32(k_6) & 3i) {
+        case 0: {
+            return vec2<f32>(s_2, c_2);
+        }
+        case 1: {
+            let _e222 = bitcast<u32>(-(s_2));
+            return vec2<f32>(c_2, bitcast<f32>((select(_e222, 0u, ((_e222 & 2139095040u) < 226492416u)) ^ _e21)));
+        }
+        case 2: {
+            let _e230 = bitcast<u32>(-(s_2));
+            let _e237 = bitcast<u32>(-(c_2));
+            return vec2<f32>(bitcast<f32>((select(_e230, 0u, ((_e230 & 2139095040u) < 226492416u)) ^ _e21)), bitcast<f32>((select(_e237, 0u, ((_e237 & 2139095040u) < 226492416u)) ^ _e21)));
+        }
+        default: {
+            let _e245 = bitcast<u32>(-(c_2));
+            return vec2<f32>(bitcast<f32>((select(_e245, 0u, ((_e245 & 2139095040u) < 226492416u)) ^ _e21)), s_2);
+        }
+    }
+}
+
+fn det_sin(x_4: f32) -> f32 {
+    let _e1 = det_sincos(x_4);
+    return _e1.x;
+}
+
 fn det_zero() -> u32 {
     let _e4 = p.size.x;
     return (_e4 >> 16u);
@@ -196,8 +269,8 @@ fn w(i_2: u32, k_2: u32) -> f32 {
 }
 
 fn sample_face(pos: vec2<f32>, axis: u32) -> f32 {
-    var a_1: f32;
-    var b_2: f32;
+    var a_2: f32;
+    var b_3: f32;
     var c_1: f32;
     var d: f32;
 
@@ -211,26 +284,26 @@ fn sample_face(pos: vec2<f32>, axis: u32) -> f32 {
     let t = bitcast<vec2<f32>>((select(_e64, vec2(0u), ((_e64 & vec2(2139095040u)) < vec2(226492416u))) ^ vec2(_e29)));
     if (axis == 0u) {
         let _e73 = u(ij.x, ij.y);
-        a_1 = _e73;
+        a_2 = _e73;
         let _e77 = u((ij.x + 1u), ij.y);
-        b_2 = _e77;
+        b_3 = _e77;
         let _e81 = u(ij.x, (ij.y + 1u));
         c_1 = _e81;
         let _e86 = u((ij.x + 1u), (ij.y + 1u));
         d = _e86;
     } else {
         let _e89 = w(ij.x, ij.y);
-        a_1 = _e89;
+        a_2 = _e89;
         let _e93 = w((ij.x + 1u), ij.y);
-        b_2 = _e93;
+        b_3 = _e93;
         let _e97 = w(ij.x, (ij.y + 1u));
         c_1 = _e97;
         let _e102 = w((ij.x + 1u), (ij.y + 1u));
         d = _e102;
     }
-    let _e103 = a_1;
-    let _e104 = b_2;
-    let _e105 = a_1;
+    let _e103 = a_2;
+    let _e104 = b_3;
+    let _e105 = a_2;
     let _e107 = bitcast<u32>((_e104 - _e105));
     let _e115 = bitcast<u32>((bitcast<f32>((select(_e107, 0u, ((_e107 & 2139095040u) < 226492416u)) ^ _e29)) * t.x));
     let _e122 = bitcast<u32>((_e103 + bitcast<f32>((select(_e115, 0u, ((_e115 & 2139095040u) < 226492416u)) ^ _e29))));
@@ -248,7 +321,59 @@ fn sample_face(pos: vec2<f32>, axis: u32) -> f32 {
     return bitcast<f32>((select(_e169, 0u, ((_e169 & 2139095040u) < 226492416u)) ^ _e29));
 }
 
-fn pressure_heads(v0_: f32, a_2: u32, b_3: u32, oa: f32, ob: f32, climb: bool) -> f32 {
+fn wind_accel(i_3: u32, k_3: u32, axis_1: u32) -> f32 {
+    let _e35 = det_z;
+    let _e38 = p.wind.w;
+    if (_e38 == 0f) {
+        return 0f;
+    }
+    let _e40 = at(i_3, k_3);
+    let _e44 = p.size.x;
+    let o = select((_e40 - 1u), (_e40 - _e44), (axis_1 == 1u));
+    let _e50 = src[_e40].y;
+    let _e53 = src[o].y;
+    let h_1 = max(_e50, _e53);
+    if (h_1 <= 0.0001f) {
+        return 0f;
+    }
+    let _e57 = p.wind;
+    let _e59 = det_length2_(_e57.xy);
+    if (_e59 == 0f) {
+        return 0f;
+    }
+    let _e64 = bitcast<u32>((f32(k_3) + 0.5f));
+    let _e73 = bitcast<u32>((f32(i_3) + 0.5f));
+    let _e84 = p.cell;
+    let _e90 = bitcast<vec2<u32>>((select(vec2<f32>(f32(i_3), bitcast<f32>((select(_e64, 0u, ((_e64 & 2139095040u) < 226492416u)) ^ _e35))), vec2<f32>(bitcast<f32>((select(_e73, 0u, ((_e73 & 2139095040u) < 226492416u)) ^ _e35)), f32(k_3)), (axis_1 == 1u)) * _e84));
+    let face = bitcast<vec2<f32>>((select(_e90, vec2(0u), ((_e90 & vec2(2139095040u)) < vec2(226492416u))) ^ vec2(_e35)));
+    let _e98 = p.gust.x;
+    let _e101 = p.gust.y;
+    let _e104 = p.gust.z;
+    let _e106 = p.wind;
+    let _e108 = det_dot2_(_e106.xy, face);
+    let _e110 = bitcast<u32>((_e104 * _e108));
+    let _e116 = det_div(bitcast<f32>((select(_e110, 0u, ((_e110 & 2139095040u) < 226492416u)) ^ _e35)), _e59);
+    let _e118 = bitcast<u32>((_e101 - _e116));
+    let _e124 = det_sin(bitcast<f32>((select(_e118, 0u, ((_e118 & 2139095040u) < 226492416u)) ^ _e35)));
+    let _e126 = bitcast<u32>((_e98 * _e124));
+    let _e133 = bitcast<u32>((1f + bitcast<f32>((select(_e126, 0u, ((_e126 & 2139095040u) < 226492416u)) ^ _e35))));
+    let gusting = bitcast<f32>((select(_e133, 0u, ((_e133 & 2139095040u) < 226492416u)) ^ _e35));
+    let _e140 = bitcast<u32>((_e59 * gusting));
+    let u_1 = bitcast<f32>((select(_e140, 0u, ((_e140 & 2139095040u) < 226492416u)) ^ _e35));
+    let _e147 = bitcast<u32>((0.065f * u_1));
+    let _e154 = bitcast<u32>((0.8f + bitcast<f32>((select(_e147, 0u, ((_e147 & 2139095040u) < 226492416u)) ^ _e35))));
+    let _e161 = bitcast<u32>((bitcast<f32>((select(_e154, 0u, ((_e154 & 2139095040u) < 226492416u)) ^ _e35)) * 0.001f));
+    let cd = bitcast<f32>((select(_e161, 0u, ((_e161 & 2139095040u) < 226492416u)) ^ _e35));
+    let _e168 = bitcast<u32>((AIR_PER_WATER * cd));
+    let _e175 = bitcast<u32>((bitcast<f32>((select(_e168, 0u, ((_e168 & 2139095040u) < 226492416u)) ^ _e35)) * u_1));
+    let _e183 = p.wind[axis_1];
+    let _e185 = bitcast<u32>((bitcast<f32>((select(_e175, 0u, ((_e175 & 2139095040u) < 226492416u)) ^ _e35)) * _e183));
+    let _e192 = bitcast<u32>((bitcast<f32>((select(_e185, 0u, ((_e185 & 2139095040u) < 226492416u)) ^ _e35)) * gusting));
+    let _e199 = det_div(bitcast<f32>((select(_e192, 0u, ((_e192 & 2139095040u) < 226492416u)) ^ _e35)), max(h_1, WIND_DEPTH));
+    return _e199;
+}
+
+fn pressure_heads(v0_: f32, a_3: u32, b_4: u32, oa: f32, ob: f32, climb: bool) -> f32 {
     var local_17: bool;
     var delta: f32;
     var local_18: bool;
@@ -260,8 +385,8 @@ fn pressure_heads(v0_: f32, a_2: u32, b_3: u32, oa: f32, ob: f32, climb: bool) -
     var local_23: bool;
 
     let _e67 = det_z;
-    let ha = src[a_2].y;
-    let hb = src[b_3].y;
+    let ha = src[a_3].y;
+    let hb = src[b_4].y;
     if (ha <= 0.0001f) {
         local_17 = (hb <= 0.0001f);
     } else {
@@ -271,11 +396,11 @@ fn pressure_heads(v0_: f32, a_2: u32, b_3: u32, oa: f32, ob: f32, climb: bool) -
     if _e76 {
         return 0f;
     }
-    let _e79 = src[a_2].x;
+    let _e79 = src[a_3].x;
     let _e81 = bitcast<u32>((_e79 + ha));
     let _e88 = bitcast<u32>((bitcast<f32>((select(_e81, 0u, ((_e81 & 2139095040u) < 226492416u)) ^ _e67)) + oa));
     let ea = bitcast<f32>((select(_e88, 0u, ((_e88 & 2139095040u) < 226492416u)) ^ _e67));
-    let _e96 = src[b_3].x;
+    let _e96 = src[b_4].x;
     let _e98 = bitcast<u32>((_e96 + hb));
     let _e105 = bitcast<u32>((bitcast<f32>((select(_e98, 0u, ((_e98 & 2139095040u) < 226492416u)) ^ _e67)) + ob));
     let eb = bitcast<f32>((select(_e105, 0u, ((_e105 & 2139095040u) < 226492416u)) ^ _e67));
@@ -285,8 +410,8 @@ fn pressure_heads(v0_: f32, a_2: u32, b_3: u32, oa: f32, ob: f32, climb: bool) -
     let _e133 = bitcast<u32>((hb + ob));
     delta = clamp(bitcast<f32>((select(_e112, 0u, ((_e112 & 2139095040u) < 226492416u)) ^ _e67)), bitcast<f32>((select(_e126, 0u, ((_e126 & 2139095040u) < 226492416u)) ^ _e67)), bitcast<f32>((select(_e133, 0u, ((_e133 & 2139095040u) < 226492416u)) ^ _e67)));
     if climb {
-        let _e142 = src[b_3].x;
-        let _e145 = src[a_2].x;
+        let _e142 = src[b_4].x;
+        let _e145 = src[a_3].x;
         let _e147 = bitcast<u32>((_e142 - _e145));
         let _e155 = p.cell;
         let _e157 = bitcast<u32>((0.5f * _e155));
@@ -329,7 +454,7 @@ fn pressure_heads(v0_: f32, a_2: u32, b_3: u32, oa: f32, ob: f32, climb: bool) -
     let _e254 = v_2;
     if (_e254 > 0f) {
         if !((ha <= 0.0001f)) {
-            let _e260 = src[b_3].x;
+            let _e260 = src[b_4].x;
             let _e262 = bitcast<u32>((ea + head));
             local_20 = (_e260 >= bitcast<f32>((select(_e262, 0u, ((_e262 & 2139095040u) < 226492416u)) ^ _e67)));
         } else {
@@ -345,7 +470,7 @@ fn pressure_heads(v0_: f32, a_2: u32, b_3: u32, oa: f32, ob: f32, climb: bool) -
         let _e272 = v_2;
         if (_e272 < 0f) {
             if !((hb <= 0.0001f)) {
-                let _e278 = src[a_2].x;
+                let _e278 = src[a_3].x;
                 let _e280 = bitcast<u32>((eb + head));
                 local_23 = (_e278 >= bitcast<f32>((select(_e280, 0u, ((_e280 & 2139095040u) < 226492416u)) ^ _e67)));
             } else {
@@ -374,51 +499,51 @@ fn pressure_heads(v0_: f32, a_2: u32, b_3: u32, oa: f32, ob: f32, climb: bool) -
     return clamp(_e302, bitcast<f32>((select(_e304, 0u, ((_e304 & 2139095040u) < 226492416u)) ^ _e67)), _e301);
 }
 
-fn pressure(v0_1: f32, a_3: u32, b_4: u32) -> f32 {
-    let _e6 = pressure_heads(v0_1, a_3, b_4, 0f, 0f, false);
+fn pressure(v0_1: f32, a_4: u32, b_5: u32) -> f32 {
+    let _e6 = pressure_heads(v0_1, a_4, b_5, 0f, 0f, false);
     return _e6;
 }
 
-fn vx(i_3: u32, k_3: u32) -> f32 {
+fn vx(i_4: u32, k_4: u32) -> f32 {
     let _e12 = p.size.x;
-    if (i_3 >= _e12) {
+    if (i_4 >= _e12) {
         let _e16 = p.edge_kind.y;
         if (_e16 == 0u) {
             return 0f;
         }
         let _e20 = p.size.y;
-        let _e24 = edge_flux[(_e20 + k_3)].w;
+        let _e24 = edge_flux[(_e20 + k_4)].w;
         return _e24;
     }
-    let _e25 = at(i_3, k_3);
+    let _e25 = at(i_4, k_4);
     let _e28 = velocity_1[(_e25 * 2u)];
     return _e28;
 }
 
-fn vz(i_4: u32, k_4: u32) -> f32 {
+fn vz(i_5: u32, k_5: u32) -> f32 {
     let _e15 = p.size.y;
-    if (k_4 >= _e15) {
+    if (k_5 >= _e15) {
         let _e19 = p.edge_kind.w;
         if (_e19 == 0u) {
             return 0f;
         }
         let _e23 = p.size.y;
         let _e27 = p.size.x;
-        let _e32 = edge_flux[(((_e23 * 2u) + _e27) + i_4)].w;
+        let _e32 = edge_flux[(((_e23 * 2u) + _e27) + i_5)].w;
         return _e32;
     }
-    let _e33 = at(i_4, k_4);
+    let _e33 = at(i_5, k_5);
     let _e37 = velocity_1[((_e33 * 2u) + 1u)];
     return _e37;
 }
 
-fn depth_minmod(a_4: f32, b_5: f32) -> f32 {
+fn depth_minmod(a_5: f32, b_6: f32) -> f32 {
     let _e8 = det_z;
-    let _e10 = bitcast<u32>((a_4 * b_5));
+    let _e10 = bitcast<u32>((a_5 * b_6));
     if (bitcast<f32>((select(_e10, 0u, ((_e10 & 2139095040u) < 226492416u)) ^ _e8)) <= 0f) {
         return 0f;
     }
-    let _e22 = bitcast<u32>((sign(a_4) * min(abs(a_4), abs(b_5))));
+    let _e22 = bitcast<u32>((sign(a_5) * min(abs(a_5), abs(b_6))));
     return bitcast<f32>((select(_e22, 0u, ((_e22 & 2139095040u) < 226492416u)) ^ _e8));
 }
 
@@ -430,28 +555,28 @@ fn depth_states(n_1: u32) -> vec4<f32> {
 
     let _e37 = det_z;
     let _e40 = p.size.x;
-    let i_5 = (n_1 % _e40);
+    let i_6 = (n_1 % _e40);
     let _e44 = p.size.x;
-    let k_5 = (n_1 / _e44);
-    let h_1 = src[n_1].y;
-    if (i_5 > 0u) {
+    let k_7 = (n_1 / _e44);
+    let h_2 = src[n_1].y;
+    if (i_6 > 0u) {
         let _e53 = p.size.x;
-        local_24 = ((i_5 + 1u) < _e53);
+        local_24 = ((i_6 + 1u) < _e53);
     } else {
         local_24 = false;
     }
     let _e55 = local_24;
     if _e55 {
         let _e59 = src[(n_1 - 1u)].y;
-        let _e61 = bitcast<u32>((h_1 - _e59));
+        let _e61 = bitcast<u32>((h_2 - _e59));
         let _e70 = src[(n_1 + 1u)].y;
-        let _e72 = bitcast<u32>((_e70 - h_1));
+        let _e72 = bitcast<u32>((_e70 - h_2));
         let _e78 = depth_minmod(bitcast<f32>((select(_e61, 0u, ((_e61 & 2139095040u) < 226492416u)) ^ _e37)), bitcast<f32>((select(_e72, 0u, ((_e72 & 2139095040u) < 226492416u)) ^ _e37)));
         dx = _e78;
     }
-    if (k_5 > 0u) {
+    if (k_7 > 0u) {
         let _e83 = p.size.y;
-        local_25 = ((k_5 + 1u) < _e83);
+        local_25 = ((k_7 + 1u) < _e83);
     } else {
         local_25 = false;
     }
@@ -459,40 +584,40 @@ fn depth_states(n_1: u32) -> vec4<f32> {
     if _e85 {
         let _e88 = p.size.x;
         let _e92 = src[(n_1 - _e88)].y;
-        let _e94 = bitcast<u32>((h_1 - _e92));
+        let _e94 = bitcast<u32>((h_2 - _e92));
         let _e102 = p.size.x;
         let _e106 = src[(n_1 + _e102)].y;
-        let _e108 = bitcast<u32>((_e106 - h_1));
+        let _e108 = bitcast<u32>((_e106 - h_2));
         let _e114 = depth_minmod(bitcast<f32>((select(_e94, 0u, ((_e94 & 2139095040u) < 226492416u)) ^ _e37)), bitcast<f32>((select(_e108, 0u, ((_e108 & 2139095040u) < 226492416u)) ^ _e37)));
         dz = _e114;
     }
     let _e115 = dx;
     let _e117 = bitcast<u32>((0.5f * _e115));
-    let _e124 = bitcast<u32>((h_1 - bitcast<f32>((select(_e117, 0u, ((_e117 & 2139095040u) < 226492416u)) ^ _e37))));
+    let _e124 = bitcast<u32>((h_2 - bitcast<f32>((select(_e117, 0u, ((_e117 & 2139095040u) < 226492416u)) ^ _e37))));
     let _e130 = dx;
     let _e132 = bitcast<u32>((0.5f * _e130));
-    let _e139 = bitcast<u32>((h_1 + bitcast<f32>((select(_e132, 0u, ((_e132 & 2139095040u) < 226492416u)) ^ _e37))));
+    let _e139 = bitcast<u32>((h_2 + bitcast<f32>((select(_e132, 0u, ((_e132 & 2139095040u) < 226492416u)) ^ _e37))));
     let _e145 = dz;
     let _e147 = bitcast<u32>((0.5f * _e145));
-    let _e154 = bitcast<u32>((h_1 - bitcast<f32>((select(_e147, 0u, ((_e147 & 2139095040u) < 226492416u)) ^ _e37))));
+    let _e154 = bitcast<u32>((h_2 - bitcast<f32>((select(_e147, 0u, ((_e147 & 2139095040u) < 226492416u)) ^ _e37))));
     let _e160 = dz;
     let _e162 = bitcast<u32>((0.5f * _e160));
-    let _e169 = bitcast<u32>((h_1 + bitcast<f32>((select(_e162, 0u, ((_e162 & 2139095040u) < 226492416u)) ^ _e37))));
+    let _e169 = bitcast<u32>((h_2 + bitcast<f32>((select(_e162, 0u, ((_e162 & 2139095040u) < 226492416u)) ^ _e37))));
     return max(vec4<f32>(bitcast<f32>((select(_e124, 0u, ((_e124 & 2139095040u) < 226492416u)) ^ _e37)), bitcast<f32>((select(_e139, 0u, ((_e139 & 2139095040u) < 226492416u)) ^ _e37)), bitcast<f32>((select(_e154, 0u, ((_e154 & 2139095040u) < 226492416u)) ^ _e37)), bitcast<f32>((select(_e169, 0u, ((_e169 & 2139095040u) < 226492416u)) ^ _e37))), vec4(0f));
 }
 
-fn depth_flow(v_3: f32, a_5: u32, b_6: u32, axis_1: u32) -> f32 {
+fn depth_flow(v_3: f32, a_6: u32, b_7: u32, axis_2: u32) -> f32 {
     let _e14 = det_z;
     if (v_3 > 0f) {
-        let _e16 = depth_states(a_5);
-        let _e21 = bitcast<u32>((v_3 * _e16[((axis_1 * 2u) + 1u)]));
-        let _e28 = scale[a_5];
+        let _e16 = depth_states(a_6);
+        let _e21 = bitcast<u32>((v_3 * _e16[((axis_2 * 2u) + 1u)]));
+        let _e28 = scale[a_6];
         let _e30 = bitcast<u32>((bitcast<f32>((select(_e21, 0u, ((_e21 & 2139095040u) < 226492416u)) ^ _e14)) * _e28));
         return bitcast<f32>((select(_e30, 0u, ((_e30 & 2139095040u) < 226492416u)) ^ _e14));
     }
-    let _e36 = depth_states(b_6);
-    let _e40 = bitcast<u32>((v_3 * _e36[(axis_1 * 2u)]));
-    let _e47 = scale[b_6];
+    let _e36 = depth_states(b_7);
+    let _e40 = bitcast<u32>((v_3 * _e36[(axis_2 * 2u)]));
+    let _e47 = scale[b_7];
     let _e49 = bitcast<u32>((bitcast<f32>((select(_e40, 0u, ((_e40 & 2139095040u) < 226492416u)) ^ _e14)) * _e47));
     return bitcast<f32>((select(_e49, 0u, ((_e49 & 2139095040u) < 226492416u)) ^ _e14));
 }
@@ -533,7 +658,7 @@ fn fall_depth(units: i32) -> f32 {
     return _e3;
 }
 
-fn fall_landing(donor_1: u32, receiver_1: u32, axis_2: u32, v_4: f32, y0_: f32) -> u32 {
+fn fall_landing(donor_1: u32, receiver_1: u32, axis_3: u32, v_4: f32, y0_: f32) -> u32 {
     var cross_: f32 = 0f;
     var landing: u32;
     var s: u32 = 0u;
@@ -551,23 +676,23 @@ fn fall_landing(donor_1: u32, receiver_1: u32, axis_2: u32, v_4: f32, y0_: f32) 
     let lip = bitcast<vec2<f32>>((select(_e97, vec2(0u), ((_e97 & vec2(2139095040u)) < vec2(226492416u))) ^ vec2(_e46)));
     let _e108 = bitcast<vec2<u32>>((ri - di));
     let along = bitcast<vec2<f32>>((select(_e108, vec2(0u), ((_e108 & vec2(2139095040u)) < vec2(226492416u))) ^ vec2(_e46)));
-    if (axis_2 == 0u) {
+    if (axis_3 == 0u) {
         let _e117 = p.size.x;
-        let k_6 = (donor_1 / _e117);
+        let k_8 = (donor_1 / _e117);
         let _e121 = p.size.x;
-        let i_6 = (donor_1 % _e121);
-        let _e123 = w(i_6, k_6);
-        let _e125 = w(i_6, (k_6 + 1u));
+        let i_7 = (donor_1 % _e121);
+        let _e123 = w(i_7, k_8);
+        let _e125 = w(i_7, (k_8 + 1u));
         let _e127 = bitcast<u32>((_e123 + _e125));
         let _e134 = bitcast<u32>((bitcast<f32>((select(_e127, 0u, ((_e127 & 2139095040u) < 226492416u)) ^ _e46)) * 0.5f));
         cross_ = bitcast<f32>((select(_e134, 0u, ((_e134 & 2139095040u) < 226492416u)) ^ _e46));
     } else {
         let _e142 = p.size.x;
-        let k_7 = (donor_1 / _e142);
+        let k_9 = (donor_1 / _e142);
         let _e146 = p.size.x;
-        let i_7 = (donor_1 % _e146);
-        let _e148 = u(i_7, k_7);
-        let _e150 = u((i_7 + 1u), k_7);
+        let i_8 = (donor_1 % _e146);
+        let _e148 = u(i_8, k_9);
+        let _e150 = u((i_8 + 1u), k_9);
         let _e152 = bitcast<u32>((_e148 + _e150));
         let _e159 = bitcast<u32>((bitcast<f32>((select(_e152, 0u, ((_e152 & 2139095040u) < 226492416u)) ^ _e46)) * 0.5f));
         cross_ = bitcast<f32>((select(_e159, 0u, ((_e159 & 2139095040u) < 226492416u)) ^ _e46));
@@ -575,7 +700,7 @@ fn fall_landing(donor_1: u32, receiver_1: u32, axis_2: u32, v_4: f32, y0_: f32) 
     let _e171 = bitcast<vec2<u32>>((along * abs(v_4)));
     let _e177 = cross_;
     let _e179 = cross_;
-    let _e188 = bitcast<vec2<u32>>((bitcast<vec2<f32>>((select(_e171, vec2(0u), ((_e171 & vec2(2139095040u)) < vec2(226492416u))) ^ vec2(_e46))) + select(vec2<f32>(_e177, 0f), vec2<f32>(0f, _e179), (axis_2 == 0u))));
+    let _e188 = bitcast<vec2<u32>>((bitcast<vec2<f32>>((select(_e171, vec2(0u), ((_e171 & vec2(2139095040u)) < vec2(226492416u))) ^ vec2(_e46))) + select(vec2<f32>(_e177, 0f), vec2<f32>(0f, _e179), (axis_3 == 0u))));
     let vel = bitcast<vec2<f32>>((select(_e188, vec2(0u), ((_e188 & vec2(2139095040u)) < vec2(226492416u))) ^ vec2(_e46)));
     let _e194 = det_length2_(vel);
     let speed = max(_e194, 0.0001f);
@@ -602,9 +727,9 @@ fn fall_landing(donor_1: u32, receiver_1: u32, axis_2: u32, v_4: f32, y0_: f32) 
             let _e258 = bitcast<vec2<u32>>((lip + bitcast<vec2<f32>>((select(_e247, vec2(0u), ((_e247 & vec2(2139095040u)) < vec2(226492416u))) ^ vec2(_e46)))));
             let at_1 = clamp(bitcast<vec2<f32>>((select(_e258, vec2(0u), ((_e258 & vec2(2139095040u)) < vec2(226492416u))) ^ vec2(_e46))), vec2(0f), limit);
             let _e271 = bitcast<vec2<u32>>(floor(at_1));
-            let c_2 = vec2<u32>(bitcast<vec2<f32>>((select(_e271, vec2(0u), ((_e271 & vec2(2139095040u)) < vec2(226492416u))) ^ vec2(_e46))));
+            let c_3 = vec2<u32>(bitcast<vec2<f32>>((select(_e271, vec2(0u), ((_e271 & vec2(2139095040u)) < vec2(226492416u))) ^ vec2(_e46))));
             let _e281 = p.size.x;
-            let n_3 = (c_2.x + (_e281 * c_2.y));
+            let n_3 = (c_3.x + (_e281 * c_3.y));
             landing = n_3;
             let _e286 = bitcast<u32>((4.905f * _e238));
             let _e293 = bitcast<u32>((bitcast<f32>((select(_e286, 0u, ((_e286 & 2139095040u) < 226492416u)) ^ _e46)) * _e238));
@@ -644,10 +769,10 @@ fn plunge_share(donor_2: u32, receiver_2: u32, v_5: f32) -> f32 {
     var local_27: bool;
 
     let _e29 = det_z;
-    let h_2 = src[donor_2].y;
+    let h_3 = src[donor_2].y;
     let _e34 = p.plunge;
     if !((_e34 == 0f)) {
-        local_27 = (h_2 < PLUNGE_DEPTH);
+        local_27 = (h_3 < PLUNGE_DEPTH);
     } else {
         local_27 = true;
     }
@@ -656,14 +781,14 @@ fn plunge_share(donor_2: u32, receiver_2: u32, v_5: f32) -> f32 {
         return 0f;
     }
     let _e41 = src[donor_2].x;
-    let _e43 = bitcast<u32>((_e41 + h_2));
+    let _e43 = bitcast<u32>((_e41 + h_3));
     let _e51 = src[receiver_2].x;
     let _e53 = bitcast<u32>((bitcast<f32>((select(_e43, 0u, ((_e43 & 2139095040u) < 226492416u)) ^ _e29)) - _e51));
     let _e61 = src[receiver_2].y;
     let _e63 = bitcast<u32>((bitcast<f32>((select(_e53, 0u, ((_e53 & 2139095040u) < 226492416u)) ^ _e29)) - _e61));
     let _e70 = p.cell;
     let _e71 = det_div(bitcast<f32>((select(_e63, 0u, ((_e63 & 2139095040u) < 226492416u)) ^ _e29)), _e70);
-    let _e74 = bitcast<u32>((9.81f * h_2));
+    let _e74 = bitcast<u32>((9.81f * h_3));
     let _e80 = det_sqrt(bitcast<f32>((select(_e74, 0u, ((_e74 & 2139095040u) < 226492416u)) ^ _e29)));
     let _e81 = det_div(abs(v_5), _e80);
     let _e82 = det_div(_e71, PLUNGE_SLOPE);
@@ -675,12 +800,12 @@ fn plunge_share(donor_2: u32, receiver_2: u32, v_5: f32) -> f32 {
     return bitcast<f32>((select(_e108, 0u, ((_e108 & 2139095040u) < 226492416u)) ^ _e29));
 }
 
-fn face_net(v_6: f32, a_6: u32, b_7: u32, axis_3: u32, n_2: u32) -> f32 {
+fn face_net(v_6: f32, a_7: u32, b_8: u32, axis_4: u32, n_2: u32) -> f32 {
     var local_28: bool;
     var local_29: bool;
 
     let _e48 = det_z;
-    let _e49 = depth_flow(v_6, a_6, b_7, axis_3);
+    let _e49 = depth_flow(v_6, a_7, b_8, axis_4);
     if !((_e49 == 0f)) {
         let _e53 = p.fall_min;
         if (_e53 <= 0f) {
@@ -697,12 +822,12 @@ fn face_net(v_6: f32, a_6: u32, b_7: u32, axis_3: u32, n_2: u32) -> f32 {
     let _e59 = local_28;
     if _e59 {
         let _e61 = bitcast<u32>(-(_e49));
-        return select(bitcast<f32>((select(_e61, 0u, ((_e61 & 2139095040u) < 226492416u)) ^ _e48)), _e49, (n_2 == b_7));
+        return select(bitcast<f32>((select(_e61, 0u, ((_e61 & 2139095040u) < 226492416u)) ^ _e48)), _e49, (n_2 == b_8));
     }
-    let donor_3 = select(b_7, a_6, (_e49 > 0f));
-    let receiver_3 = select(a_6, b_7, (_e49 > 0f));
+    let donor_3 = select(b_8, a_7, (_e49 > 0f));
+    let receiver_3 = select(a_7, b_8, (_e49 > 0f));
     let direction = select(-1f, 1f, (_e49 > 0f));
-    let along_1 = select(vec2<f32>(0f, direction), vec2<f32>(direction, 0f), (axis_3 == 0u));
+    let along_1 = select(vec2<f32>(0f, direction), vec2<f32>(direction, 0f), (axis_4 == 0u));
     let _e79 = fall_face(donor_3, receiver_3);
     if _e79 {
         let _e82 = p.dt;
@@ -725,7 +850,7 @@ fn face_net(v_6: f32, a_6: u32, b_7: u32, axis_3: u32, n_2: u32) -> f32 {
         let _e129 = bitcast<u32>((_e117 + bitcast<f32>((select(_e122, 0u, ((_e122 & 2139095040u) < 226492416u)) ^ _e48))));
         let y0_1 = bitcast<f32>((select(_e129, 0u, ((_e129 & 2139095040u) < 226492416u)) ^ _e48));
         let _e138 = bitcast<u32>((direction * max(abs(v_6), 0f)));
-        let _e144 = fall_landing(donor_3, receiver_3, axis_3, bitcast<f32>((select(_e138, 0u, ((_e138 & 2139095040u) < 226492416u)) ^ _e48)), y0_1);
+        let _e144 = fall_landing(donor_3, receiver_3, axis_4, bitcast<f32>((select(_e138, 0u, ((_e138 & 2139095040u) < 226492416u)) ^ _e48)), y0_1);
         let _e151 = bitcast<vec2<u32>>((along_1 * abs(v_6)));
         fall_deposit(_e144, _e93, bitcast<vec2<f32>>((select(_e151, vec2(0u), ((_e151 & vec2(2139095040u)) < vec2(226492416u))) ^ vec2(_e48))));
         return 0f;
@@ -733,7 +858,7 @@ fn face_net(v_6: f32, a_6: u32, b_7: u32, axis_3: u32, n_2: u32) -> f32 {
     let _e157 = plunge_share(donor_3, receiver_3, v_6);
     if (_e157 <= 0f) {
         let _e160 = bitcast<u32>(-(_e49));
-        return select(bitcast<f32>((select(_e160, 0u, ((_e160 & 2139095040u) < 226492416u)) ^ _e48)), _e49, (n_2 == b_7));
+        return select(bitcast<f32>((select(_e160, 0u, ((_e160 & 2139095040u) < 226492416u)) ^ _e48)), _e49, (n_2 == b_8));
     }
     if (n_2 == donor_3) {
         let _e171 = bitcast<u32>(-(abs(_e49)));
@@ -762,18 +887,18 @@ fn face_net(v_6: f32, a_6: u32, b_7: u32, axis_3: u32, n_2: u32) -> f32 {
     let _e252 = bitcast<u32>((_e226 + bitcast<f32>((select(_e245, 0u, ((_e245 & 2139095040u) < 226492416u)) ^ _e48))));
     let y0_2 = bitcast<f32>((select(_e252, 0u, ((_e252 & 2139095040u) < 226492416u)) ^ _e48));
     let _e259 = bitcast<u32>((direction * speed_1));
-    let _e265 = fall_landing(donor_3, receiver_3, axis_3, bitcast<f32>((select(_e259, 0u, ((_e259 & 2139095040u) < 226492416u)) ^ _e48)), y0_2);
+    let _e265 = fall_landing(donor_3, receiver_3, axis_4, bitcast<f32>((select(_e259, 0u, ((_e259 & 2139095040u) < 226492416u)) ^ _e48)), y0_2);
     let _e271 = bitcast<vec2<u32>>((along_1 * speed_1));
     fall_deposit(_e265, _e197, bitcast<vec2<f32>>((select(_e271, vec2(0u), ((_e271 & vec2(2139095040u)) < vec2(226492416u))) ^ vec2(_e48))));
     let _e279 = bitcast<u32>((abs(_e49) - _e210));
     return bitcast<f32>((select(_e279, 0u, ((_e279 & 2139095040u) < 226492416u)) ^ _e48));
 }
 
-fn fall_face_velocity(v_7: f32, a_7: u32, b_8: u32, component: u32) -> f32 {
+fn fall_face_velocity(v_7: f32, a_8: u32, b_9: u32, component: u32) -> f32 {
     let _e25 = det_z;
-    let _e28 = atomicLoad((&falls[(a_7 * 3u)]));
+    let _e28 = atomicLoad((&falls[(a_8 * 3u)]));
     let _e29 = fall_depth(_e28);
-    let _e32 = atomicLoad((&falls[(b_8 * 3u)]));
+    let _e32 = atomicLoad((&falls[(b_9 * 3u)]));
     let _e33 = fall_depth(_e32);
     let _e35 = bitcast<u32>((_e29 + _e33));
     let _e42 = bitcast<u32>((0.5f * bitcast<f32>((select(_e35, 0u, ((_e35 & 2139095040u) < 226492416u)) ^ _e25))));
@@ -781,13 +906,13 @@ fn fall_face_velocity(v_7: f32, a_7: u32, b_8: u32, component: u32) -> f32 {
     if (volume <= 0f) {
         return v_7;
     }
-    let _e52 = atomicLoad((&falls[((a_7 * 3u) + component)]));
-    let _e57 = atomicLoad((&falls[((b_8 * 3u) + component)]));
+    let _e52 = atomicLoad((&falls[((a_8 * 3u) + component)]));
+    let _e57 = atomicLoad((&falls[((b_9 * 3u) + component)]));
     let _e60 = bitcast<u32>((f32(_e52) + f32(_e57)));
     let _e67 = bitcast<u32>((0.5f * bitcast<f32>((select(_e60, 0u, ((_e60 & 2139095040u) < 226492416u)) ^ _e25))));
     let _e73 = det_div(bitcast<f32>((select(_e67, 0u, ((_e67 & 2139095040u) < 226492416u)) ^ _e25)), FALL_SCALE);
-    let _e75 = scale[a_7];
-    let _e77 = scale[b_8];
+    let _e75 = scale[a_8];
+    let _e77 = scale[b_9];
     let _e79 = bitcast<u32>((_e75 + _e77));
     let _e86 = bitcast<u32>((0.5f * bitcast<f32>((select(_e79, 0u, ((_e79 & 2139095040u) < 226492416u)) ^ _e25))));
     let depth_1 = bitcast<f32>((select(_e86, 0u, ((_e86 & 2139095040u) < 226492416u)) ^ _e25));
@@ -801,18 +926,18 @@ fn fall_face_velocity(v_7: f32, a_7: u32, b_8: u32, component: u32) -> f32 {
     return _e115;
 }
 
-fn depth_first_flow(v_8: f32, a_8: u32, b_9: u32) -> f32 {
+fn depth_first_flow(v_8: f32, a_9: u32, b_10: u32) -> f32 {
     let _e12 = det_z;
     if (v_8 > 0f) {
-        let _e16 = src[a_8].y;
+        let _e16 = src[a_9].y;
         let _e18 = bitcast<u32>((v_8 * _e16));
-        let _e25 = scale[a_8];
+        let _e25 = scale[a_9];
         let _e27 = bitcast<u32>((bitcast<f32>((select(_e18, 0u, ((_e18 & 2139095040u) < 226492416u)) ^ _e12)) * _e25));
         return bitcast<f32>((select(_e27, 0u, ((_e27 & 2139095040u) < 226492416u)) ^ _e12));
     }
-    let _e35 = src[b_9].y;
+    let _e35 = src[b_10].y;
     let _e37 = bitcast<u32>((v_8 * _e35));
-    let _e44 = scale[b_9];
+    let _e44 = scale[b_10];
     let _e46 = bitcast<u32>((bitcast<f32>((select(_e37, 0u, ((_e37 & 2139095040u) < 226492416u)) ^ _e12)) * _e44));
     return bitcast<f32>((select(_e46, 0u, ((_e46 & 2139095040u) < 226492416u)) ^ _e12));
 }
@@ -824,94 +949,102 @@ fn faces(@builtin(global_invocation_id) id: vec3<u32>) {
     var local_1: bool;
     var local_2: bool;
 
-    let _e261 = det_zero();
-    det_z = _e261;
-    let _e56 = det_z;
-    let i_8 = id.x;
-    let k_8 = id.y;
-    let _e61 = p.size.x;
-    if !((i_8 >= _e61)) {
-        let _e66 = p.size.y;
-        local = (k_8 >= _e66);
+    let _e299 = det_zero();
+    det_z = _e299;
+    let _e60 = det_z;
+    let i_9 = id.x;
+    let k_10 = id.y;
+    let _e65 = p.size.x;
+    if !((i_9 >= _e65)) {
+        let _e70 = p.size.y;
+        local = (k_10 >= _e70);
     } else {
         local = true;
     }
-    let _e68 = local;
-    if _e68 {
+    let _e72 = local;
+    if _e72 {
         return;
     }
-    let _e69 = at(i_8, k_8);
-    let _e72 = awake[_e69];
-    if (_e72 == 0u) {
-        let _e78 = src[_e69].z;
-        velocity_1[(_e69 * 2u)] = _e78;
-        let _e84 = src[_e69].w;
-        velocity_1[((_e69 * 2u) + 1u)] = _e84;
+    let _e73 = at(i_9, k_10);
+    let _e76 = awake[_e73];
+    if (_e76 == 0u) {
+        let _e82 = src[_e73].z;
+        velocity_1[(_e73 * 2u)] = _e82;
+        let _e88 = src[_e73].w;
+        velocity_1[((_e73 * 2u) + 1u)] = _e88;
         return;
     }
-    let _e86 = p.dt;
-    let _e88 = p.cell;
-    let _e89 = det_div(_e86, _e88);
-    if (i_8 > 0u) {
-        let _e93 = awake[(_e69 - 1u)];
-        local_1 = (_e93 != 0u);
+    let _e90 = p.dt;
+    let _e92 = p.cell;
+    let _e93 = det_div(_e90, _e92);
+    if (i_9 > 0u) {
+        let _e97 = awake[(_e73 - 1u)];
+        local_1 = (_e97 != 0u);
     } else {
         local_1 = false;
     }
-    let _e95 = local_1;
-    if _e95 {
-        let _e97 = w((i_8 - 1u), k_8);
-        let _e98 = w(i_8, k_8);
-        let _e100 = bitcast<u32>((_e97 + _e98));
-        let _e108 = w((i_8 - 1u), (k_8 + 1u));
-        let _e110 = bitcast<u32>((bitcast<f32>((select(_e100, 0u, ((_e100 & 2139095040u) < 226492416u)) ^ _e56)) + _e108));
-        let _e117 = w(i_8, (k_8 + 1u));
-        let _e119 = bitcast<u32>((bitcast<f32>((select(_e110, 0u, ((_e110 & 2139095040u) < 226492416u)) ^ _e56)) + _e117));
-        let _e126 = bitcast<u32>((bitcast<f32>((select(_e119, 0u, ((_e119 & 2139095040u) < 226492416u)) ^ _e56)) * 0.25f));
-        let cross_1 = bitcast<f32>((select(_e126, 0u, ((_e126 & 2139095040u) < 226492416u)) ^ _e56));
-        let _e133 = u(i_8, k_8);
-        let _e135 = bitcast<u32>((_e133 * _e89));
-        let _e142 = bitcast<u32>((f32(i_8) - bitcast<f32>((select(_e135, 0u, ((_e135 & 2139095040u) < 226492416u)) ^ _e56))));
-        let _e150 = bitcast<u32>((cross_1 * _e89));
-        let _e157 = bitcast<u32>((f32(k_8) - bitcast<f32>((select(_e150, 0u, ((_e150 & 2139095040u) < 226492416u)) ^ _e56))));
-        let pos_1 = vec2<f32>(bitcast<f32>((select(_e142, 0u, ((_e142 & 2139095040u) < 226492416u)) ^ _e56)), bitcast<f32>((select(_e157, 0u, ((_e157 & 2139095040u) < 226492416u)) ^ _e56)));
-        let _e165 = sample_face(pos_1, 0u);
-        let _e167 = pressure(_e165, (_e69 - 1u), _e69);
-        v.x = _e167;
+    let _e99 = local_1;
+    if _e99 {
+        let _e101 = w((i_9 - 1u), k_10);
+        let _e102 = w(i_9, k_10);
+        let _e104 = bitcast<u32>((_e101 + _e102));
+        let _e112 = w((i_9 - 1u), (k_10 + 1u));
+        let _e114 = bitcast<u32>((bitcast<f32>((select(_e104, 0u, ((_e104 & 2139095040u) < 226492416u)) ^ _e60)) + _e112));
+        let _e121 = w(i_9, (k_10 + 1u));
+        let _e123 = bitcast<u32>((bitcast<f32>((select(_e114, 0u, ((_e114 & 2139095040u) < 226492416u)) ^ _e60)) + _e121));
+        let _e130 = bitcast<u32>((bitcast<f32>((select(_e123, 0u, ((_e123 & 2139095040u) < 226492416u)) ^ _e60)) * 0.25f));
+        let cross_1 = bitcast<f32>((select(_e130, 0u, ((_e130 & 2139095040u) < 226492416u)) ^ _e60));
+        let _e137 = u(i_9, k_10);
+        let _e139 = bitcast<u32>((_e137 * _e93));
+        let _e146 = bitcast<u32>((f32(i_9) - bitcast<f32>((select(_e139, 0u, ((_e139 & 2139095040u) < 226492416u)) ^ _e60))));
+        let _e154 = bitcast<u32>((cross_1 * _e93));
+        let _e161 = bitcast<u32>((f32(k_10) - bitcast<f32>((select(_e154, 0u, ((_e154 & 2139095040u) < 226492416u)) ^ _e60))));
+        let pos_1 = vec2<f32>(bitcast<f32>((select(_e146, 0u, ((_e146 & 2139095040u) < 226492416u)) ^ _e60)), bitcast<f32>((select(_e161, 0u, ((_e161 & 2139095040u) < 226492416u)) ^ _e60)));
+        let _e169 = sample_face(pos_1, 0u);
+        let _e171 = p.dt;
+        let _e172 = wind_accel(i_9, k_10, 0u);
+        let _e174 = bitcast<u32>((_e171 * _e172));
+        let _e181 = bitcast<u32>((_e169 + bitcast<f32>((select(_e174, 0u, ((_e174 & 2139095040u) < 226492416u)) ^ _e60))));
+        let _e188 = pressure(bitcast<f32>((select(_e181, 0u, ((_e181 & 2139095040u) < 226492416u)) ^ _e60)), (_e73 - 1u), _e73);
+        v.x = _e188;
     }
-    if (k_8 > 0u) {
-        let _e171 = p.size.x;
-        let _e174 = awake[(_e69 - _e171)];
-        local_2 = (_e174 != 0u);
+    if (k_10 > 0u) {
+        let _e192 = p.size.x;
+        let _e195 = awake[(_e73 - _e192)];
+        local_2 = (_e195 != 0u);
     } else {
         local_2 = false;
     }
-    let _e176 = local_2;
-    if _e176 {
-        let _e178 = u(i_8, (k_8 - 1u));
-        let _e181 = u((i_8 + 1u), (k_8 - 1u));
-        let _e183 = bitcast<u32>((_e178 + _e181));
-        let _e189 = u(i_8, k_8);
-        let _e191 = bitcast<u32>((bitcast<f32>((select(_e183, 0u, ((_e183 & 2139095040u) < 226492416u)) ^ _e56)) + _e189));
-        let _e198 = u((i_8 + 1u), k_8);
-        let _e200 = bitcast<u32>((bitcast<f32>((select(_e191, 0u, ((_e191 & 2139095040u) < 226492416u)) ^ _e56)) + _e198));
-        let _e207 = bitcast<u32>((bitcast<f32>((select(_e200, 0u, ((_e200 & 2139095040u) < 226492416u)) ^ _e56)) * 0.25f));
-        let cross_2 = bitcast<f32>((select(_e207, 0u, ((_e207 & 2139095040u) < 226492416u)) ^ _e56));
-        let _e215 = bitcast<u32>((cross_2 * _e89));
-        let _e222 = bitcast<u32>((f32(i_8) - bitcast<f32>((select(_e215, 0u, ((_e215 & 2139095040u) < 226492416u)) ^ _e56))));
-        let _e229 = w(i_8, k_8);
-        let _e231 = bitcast<u32>((_e229 * _e89));
-        let _e238 = bitcast<u32>((f32(k_8) - bitcast<f32>((select(_e231, 0u, ((_e231 & 2139095040u) < 226492416u)) ^ _e56))));
-        let pos_2 = vec2<f32>(bitcast<f32>((select(_e222, 0u, ((_e222 & 2139095040u) < 226492416u)) ^ _e56)), bitcast<f32>((select(_e238, 0u, ((_e238 & 2139095040u) < 226492416u)) ^ _e56)));
-        let _e246 = sample_face(pos_2, 1u);
-        let _e249 = p.size.x;
-        let _e251 = pressure(_e246, (_e69 - _e249), _e69);
-        v.y = _e251;
+    let _e197 = local_2;
+    if _e197 {
+        let _e199 = u(i_9, (k_10 - 1u));
+        let _e202 = u((i_9 + 1u), (k_10 - 1u));
+        let _e204 = bitcast<u32>((_e199 + _e202));
+        let _e210 = u(i_9, k_10);
+        let _e212 = bitcast<u32>((bitcast<f32>((select(_e204, 0u, ((_e204 & 2139095040u) < 226492416u)) ^ _e60)) + _e210));
+        let _e219 = u((i_9 + 1u), k_10);
+        let _e221 = bitcast<u32>((bitcast<f32>((select(_e212, 0u, ((_e212 & 2139095040u) < 226492416u)) ^ _e60)) + _e219));
+        let _e228 = bitcast<u32>((bitcast<f32>((select(_e221, 0u, ((_e221 & 2139095040u) < 226492416u)) ^ _e60)) * 0.25f));
+        let cross_2 = bitcast<f32>((select(_e228, 0u, ((_e228 & 2139095040u) < 226492416u)) ^ _e60));
+        let _e236 = bitcast<u32>((cross_2 * _e93));
+        let _e243 = bitcast<u32>((f32(i_9) - bitcast<f32>((select(_e236, 0u, ((_e236 & 2139095040u) < 226492416u)) ^ _e60))));
+        let _e250 = w(i_9, k_10);
+        let _e252 = bitcast<u32>((_e250 * _e93));
+        let _e259 = bitcast<u32>((f32(k_10) - bitcast<f32>((select(_e252, 0u, ((_e252 & 2139095040u) < 226492416u)) ^ _e60))));
+        let pos_2 = vec2<f32>(bitcast<f32>((select(_e243, 0u, ((_e243 & 2139095040u) < 226492416u)) ^ _e60)), bitcast<f32>((select(_e259, 0u, ((_e259 & 2139095040u) < 226492416u)) ^ _e60)));
+        let _e267 = sample_face(pos_2, 1u);
+        let _e269 = p.dt;
+        let _e270 = wind_accel(i_9, k_10, 1u);
+        let _e272 = bitcast<u32>((_e269 * _e270));
+        let _e279 = bitcast<u32>((_e267 + bitcast<f32>((select(_e272, 0u, ((_e272 & 2139095040u) < 226492416u)) ^ _e60))));
+        let _e287 = p.size.x;
+        let _e289 = pressure(bitcast<f32>((select(_e279, 0u, ((_e279 & 2139095040u) < 226492416u)) ^ _e60)), (_e73 - _e287), _e73);
+        v.y = _e289;
     }
-    let _e255 = v.x;
-    velocity_1[(_e69 * 2u)] = _e255;
-    let _e260 = v.y;
-    velocity_1[((_e69 * 2u) + 1u)] = _e260;
+    let _e293 = v.x;
+    velocity_1[(_e73 * 2u)] = _e293;
+    let _e298 = v.y;
+    velocity_1[((_e73 * 2u) + 1u)] = _e298;
     return;
 }
 
@@ -930,19 +1063,19 @@ fn donors(@builtin(global_invocation_id) id_1: vec3<u32>) {
     if any((id_1.xy >= _e63)) {
         return;
     }
-    let i_9 = id_1.x;
-    let k_9 = id_1.y;
-    let _e68 = at(i_9, k_9);
+    let i_10 = id_1.x;
+    let k_11 = id_1.y;
+    let _e68 = at(i_10, k_11);
     let _e69 = depth_states(_e68);
-    let _e70 = vx(i_9, k_9);
+    let _e70 = vx(i_10, k_11);
     let _e72 = bitcast<u32>(-(_e70));
-    let _e80 = vx((i_9 + 1u), k_9);
-    let _e82 = vz(i_9, k_9);
+    let _e80 = vx((i_10 + 1u), k_11);
+    let _e82 = vz(i_10, k_11);
     let _e84 = bitcast<u32>(-(_e82));
-    let _e92 = vz(i_9, (k_9 + 1u));
+    let _e92 = vz(i_10, (k_11 + 1u));
     let _e100 = bitcast<vec4<u32>>((vec4<f32>(max(bitcast<f32>((select(_e72, 0u, ((_e72 & 2139095040u) < 226492416u)) ^ _e60)), 0f), max(_e80, 0f), max(bitcast<f32>((select(_e84, 0u, ((_e84 & 2139095040u) < 226492416u)) ^ _e60)), 0f), max(_e92, 0f)) * _e69));
     rates = bitcast<vec4<f32>>((select(_e100, vec4(0u), ((_e100 & vec4(2139095040u)) < vec4(226492416u))) ^ vec4(_e60)));
-    if (i_9 == 0u) {
+    if (i_10 == 0u) {
         let _e109 = p.edge_kind.x;
         local_3 = (_e109 != 0u);
     } else {
@@ -950,12 +1083,12 @@ fn donors(@builtin(global_invocation_id) id_1: vec3<u32>) {
     }
     let _e111 = local_3;
     if _e111 {
-        let _e115 = edge_flux[k_9].x;
+        let _e115 = edge_flux[k_11].x;
         let _e117 = bitcast<u32>(-(_e115));
         rates.x = max(bitcast<f32>((select(_e117, 0u, ((_e117 & 2139095040u) < 226492416u)) ^ _e60)), 0f);
     }
     let _e127 = p.size.x;
-    if ((i_9 + 1u) == _e127) {
+    if ((i_10 + 1u) == _e127) {
         let _e131 = p.edge_kind.y;
         local_4 = (_e131 != 0u);
     } else {
@@ -964,10 +1097,10 @@ fn donors(@builtin(global_invocation_id) id_1: vec3<u32>) {
     let _e133 = local_4;
     if _e133 {
         let _e137 = p.size.y;
-        let _e141 = edge_flux[(_e137 + k_9)].x;
+        let _e141 = edge_flux[(_e137 + k_11)].x;
         rates.y = max(_e141, 0f);
     }
-    if (k_9 == 0u) {
+    if (k_11 == 0u) {
         let _e146 = p.edge_kind.z;
         local_5 = (_e146 != 0u);
     } else {
@@ -976,12 +1109,12 @@ fn donors(@builtin(global_invocation_id) id_1: vec3<u32>) {
     let _e148 = local_5;
     if _e148 {
         let _e152 = p.size.y;
-        let _e157 = edge_flux[((2u * _e152) + i_9)].x;
+        let _e157 = edge_flux[((2u * _e152) + i_10)].x;
         let _e159 = bitcast<u32>(-(_e157));
         rates.z = max(bitcast<f32>((select(_e159, 0u, ((_e159 & 2139095040u) < 226492416u)) ^ _e60)), 0f);
     }
     let _e169 = p.size.y;
-    if ((k_9 + 1u) == _e169) {
+    if ((k_11 + 1u) == _e169) {
         let _e173 = p.edge_kind.w;
         local_6 = (_e173 != 0u);
     } else {
@@ -991,7 +1124,7 @@ fn donors(@builtin(global_invocation_id) id_1: vec3<u32>) {
     if _e175 {
         let _e179 = p.size.y;
         let _e183 = p.size.x;
-        let _e188 = edge_flux[(((2u * _e179) + _e183) + i_9)].x;
+        let _e188 = edge_flux[(((2u * _e179) + _e183) + i_10)].x;
         rates.w = max(_e188, 0f);
     }
     let _e191 = rates.x;
@@ -1021,101 +1154,103 @@ fn donors(@builtin(global_invocation_id) id_1: vec3<u32>) {
 fn transport(@builtin(global_invocation_id) id_2: vec3<u32>) {
     var net: f32 = 0f;
 
-    let _e251 = det_zero();
-    det_z = _e251;
-    let _e57 = det_z;
-    let _e60 = p.size;
-    if any((id_2.xy >= _e60)) {
+    let _e262 = det_zero();
+    det_z = _e262;
+    let _e58 = det_z;
+    let _e61 = p.size;
+    if any((id_2.xy >= _e61)) {
         return;
     }
-    let i_10 = id_2.x;
-    let k_10 = id_2.y;
-    let _e65 = at(i_10, k_10);
-    let _e67 = awake[_e65];
-    if (_e67 == 0u) {
-        let _e71 = src[_e65];
-        dst[_e65] = _e71;
+    let i_11 = id_2.x;
+    let k_12 = id_2.y;
+    let _e66 = at(i_11, k_12);
+    let _e68 = awake[_e66];
+    if (_e68 == 0u) {
+        let _e72 = src[_e66];
+        dst[_e66] = _e72;
         return;
     }
-    if (i_10 > 0u) {
-        let _e73 = net;
-        let _e74 = vx(i_10, k_10);
-        let _e76 = face_net(_e74, (_e65 - 1u), _e65, 0u, _e65);
-        let _e78 = bitcast<u32>((_e73 + _e76));
-        net = bitcast<f32>((select(_e78, 0u, ((_e78 & 2139095040u) < 226492416u)) ^ _e57));
+    if (i_11 > 0u) {
+        let _e74 = net;
+        let _e75 = vx(i_11, k_12);
+        let _e77 = face_net(_e75, (_e66 - 1u), _e66, 0u, _e66);
+        let _e79 = bitcast<u32>((_e74 + _e77));
+        net = bitcast<f32>((select(_e79, 0u, ((_e79 & 2139095040u) < 226492416u)) ^ _e58));
     } else {
-        let _e86 = p.edge_kind.x;
-        if (_e86 != 0u) {
-            let _e88 = net;
-            let _e91 = edge_flux[k_10].x;
-            let _e93 = bitcast<u32>((_e88 + _e91));
-            net = bitcast<f32>((select(_e93, 0u, ((_e93 & 2139095040u) < 226492416u)) ^ _e57));
+        let _e87 = p.edge_kind.x;
+        if (_e87 != 0u) {
+            let _e89 = net;
+            let _e92 = edge_flux[k_12].x;
+            let _e94 = bitcast<u32>((_e89 + _e92));
+            net = bitcast<f32>((select(_e94, 0u, ((_e94 & 2139095040u) < 226492416u)) ^ _e58));
         }
     }
-    let _e102 = p.size.x;
-    if ((i_10 + 1u) < _e102) {
-        let _e104 = net;
-        let _e106 = vx((i_10 + 1u), k_10);
-        let _e108 = face_net(_e106, _e65, (_e65 + 1u), 0u, _e65);
-        let _e110 = bitcast<u32>((_e104 + _e108));
-        net = bitcast<f32>((select(_e110, 0u, ((_e110 & 2139095040u) < 226492416u)) ^ _e57));
+    let _e103 = p.size.x;
+    if ((i_11 + 1u) < _e103) {
+        let _e105 = net;
+        let _e107 = vx((i_11 + 1u), k_12);
+        let _e109 = face_net(_e107, _e66, (_e66 + 1u), 0u, _e66);
+        let _e111 = bitcast<u32>((_e105 + _e109));
+        net = bitcast<f32>((select(_e111, 0u, ((_e111 & 2139095040u) < 226492416u)) ^ _e58));
     } else {
-        let _e118 = p.edge_kind.y;
-        if (_e118 != 0u) {
-            let _e120 = net;
-            let _e123 = p.size.y;
-            let _e127 = edge_flux[(_e123 + k_10)].x;
-            let _e129 = bitcast<u32>((_e120 - _e127));
-            net = bitcast<f32>((select(_e129, 0u, ((_e129 & 2139095040u) < 226492416u)) ^ _e57));
+        let _e119 = p.edge_kind.y;
+        if (_e119 != 0u) {
+            let _e121 = net;
+            let _e124 = p.size.y;
+            let _e128 = edge_flux[(_e124 + k_12)].x;
+            let _e130 = bitcast<u32>((_e121 - _e128));
+            net = bitcast<f32>((select(_e130, 0u, ((_e130 & 2139095040u) < 226492416u)) ^ _e58));
         }
     }
-    if (k_10 > 0u) {
-        let _e136 = net;
-        let _e137 = vz(i_10, k_10);
-        let _e140 = p.size.x;
-        let _e142 = face_net(_e137, (_e65 - _e140), _e65, 1u, _e65);
-        let _e144 = bitcast<u32>((_e136 + _e142));
-        net = bitcast<f32>((select(_e144, 0u, ((_e144 & 2139095040u) < 226492416u)) ^ _e57));
+    if (k_12 > 0u) {
+        let _e137 = net;
+        let _e138 = vz(i_11, k_12);
+        let _e141 = p.size.x;
+        let _e143 = face_net(_e138, (_e66 - _e141), _e66, 1u, _e66);
+        let _e145 = bitcast<u32>((_e137 + _e143));
+        net = bitcast<f32>((select(_e145, 0u, ((_e145 & 2139095040u) < 226492416u)) ^ _e58));
     } else {
-        let _e152 = p.edge_kind.z;
-        if (_e152 != 0u) {
-            let _e154 = net;
-            let _e157 = p.size.y;
-            let _e162 = edge_flux[((2u * _e157) + i_10)].x;
-            let _e164 = bitcast<u32>((_e154 + _e162));
-            net = bitcast<f32>((select(_e164, 0u, ((_e164 & 2139095040u) < 226492416u)) ^ _e57));
+        let _e153 = p.edge_kind.z;
+        if (_e153 != 0u) {
+            let _e155 = net;
+            let _e158 = p.size.y;
+            let _e163 = edge_flux[((2u * _e158) + i_11)].x;
+            let _e165 = bitcast<u32>((_e155 + _e163));
+            net = bitcast<f32>((select(_e165, 0u, ((_e165 & 2139095040u) < 226492416u)) ^ _e58));
         }
     }
-    let _e173 = p.size.y;
-    if ((k_10 + 1u) < _e173) {
-        let _e175 = net;
-        let _e177 = vz(i_10, (k_10 + 1u));
-        let _e180 = p.size.x;
-        let _e182 = face_net(_e177, _e65, (_e65 + _e180), 1u, _e65);
-        let _e184 = bitcast<u32>((_e175 + _e182));
-        net = bitcast<f32>((select(_e184, 0u, ((_e184 & 2139095040u) < 226492416u)) ^ _e57));
+    let _e174 = p.size.y;
+    if ((k_12 + 1u) < _e174) {
+        let _e176 = net;
+        let _e178 = vz(i_11, (k_12 + 1u));
+        let _e181 = p.size.x;
+        let _e183 = face_net(_e178, _e66, (_e66 + _e181), 1u, _e66);
+        let _e185 = bitcast<u32>((_e176 + _e183));
+        net = bitcast<f32>((select(_e185, 0u, ((_e185 & 2139095040u) < 226492416u)) ^ _e58));
     } else {
-        let _e192 = p.edge_kind.w;
-        if (_e192 != 0u) {
-            let _e194 = net;
-            let _e197 = p.size.y;
-            let _e201 = p.size.x;
-            let _e206 = edge_flux[(((2u * _e197) + _e201) + i_10)].x;
-            let _e208 = bitcast<u32>((_e194 - _e206));
-            net = bitcast<f32>((select(_e208, 0u, ((_e208 & 2139095040u) < 226492416u)) ^ _e57));
+        let _e193 = p.edge_kind.w;
+        if (_e193 != 0u) {
+            let _e195 = net;
+            let _e198 = p.size.y;
+            let _e202 = p.size.x;
+            let _e207 = edge_flux[(((2u * _e198) + _e202) + i_11)].x;
+            let _e209 = bitcast<u32>((_e195 - _e207));
+            net = bitcast<f32>((select(_e209, 0u, ((_e209 & 2139095040u) < 226492416u)) ^ _e58));
         }
     }
-    let _e217 = src[_e65].x;
-    let _e220 = src[_e65].y;
-    let _e221 = net;
-    let _e223 = p.dt;
-    let _e225 = bitcast<u32>((_e221 * _e223));
-    let _e232 = p.cell;
-    let _e233 = det_div(bitcast<f32>((select(_e225, 0u, ((_e225 & 2139095040u) < 226492416u)) ^ _e57)), _e232);
-    let _e235 = bitcast<u32>((_e220 + _e233));
-    let _e244 = velocity_1[(_e65 * 2u)];
-    let _e248 = velocity_1[((_e65 * 2u) + 1u)];
-    dst[_e65] = vec4<f32>(_e217, max(bitcast<f32>((select(_e235, 0u, ((_e235 & 2139095040u) < 226492416u)) ^ _e57)), 0f), vec2<f32>(_e244, _e248));
+    let _e218 = src[_e66].x;
+    let _e221 = src[_e66].y;
+    let _e222 = net;
+    let _e224 = p.dt;
+    let _e226 = bitcast<u32>((_e222 * _e224));
+    let _e233 = p.cell;
+    let _e234 = det_div(bitcast<f32>((select(_e226, 0u, ((_e226 & 2139095040u) < 226492416u)) ^ _e58)), _e233);
+    let _e236 = bitcast<u32>((_e221 + _e234));
+    let _e245 = p.rain.x;
+    let _e247 = bitcast<u32>((max(bitcast<f32>((select(_e236, 0u, ((_e236 & 2139095040u) < 226492416u)) ^ _e58)), 0f) + _e245));
+    let _e255 = velocity_1[(_e66 * 2u)];
+    let _e259 = velocity_1[((_e66 * 2u) + 1u)];
+    dst[_e66] = vec4<f32>(_e218, bitcast<f32>((select(_e247, 0u, ((_e247 & 2139095040u) < 226492416u)) ^ _e58)), vec2<f32>(_e255, _e259));
     return;
 }
 
@@ -1152,9 +1287,9 @@ fn fall_land_faces(@builtin(global_invocation_id) id_4: vec3<u32>) {
     if any((id_4.xy >= _e44)) {
         return;
     }
-    let i_11 = id_4.x;
-    let k_11 = id_4.y;
-    let _e49 = at(i_11, k_11);
+    let i_12 = id_4.x;
+    let k_13 = id_4.y;
+    let _e49 = at(i_12, k_13);
     let _e51 = dst[_e49];
     c = _e51;
     let _e54 = scale[_e49];
@@ -1163,7 +1298,7 @@ fn fall_land_faces(@builtin(global_invocation_id) id_4: vec3<u32>) {
     let _e58 = bitcast<u32>((0.5f * _e56));
     let _e65 = p.dt;
     let _e66 = det_div(bitcast<f32>((select(_e58, 0u, ((_e58 & 2139095040u) < 226492416u)) ^ _e41)), _e65);
-    if (i_11 > 0u) {
+    if (i_12 > 0u) {
         let _e70 = awake[(_e49 - 1u)];
         local_7 = (_e70 != 0u);
     } else {
@@ -1182,7 +1317,7 @@ fn fall_land_faces(@builtin(global_invocation_id) id_4: vec3<u32>) {
         let _e81 = fall_face_velocity(_e79, (_e49 - 1u), _e49, 1u);
         c.z = _e81;
     }
-    if (k_11 > 0u) {
+    if (k_13 > 0u) {
         let _e85 = p.size.x;
         let _e88 = awake[(_e49 - _e85)];
         local_9 = (_e88 != 0u);
@@ -1225,12 +1360,12 @@ fn depth_first_donors(@builtin(global_invocation_id) id_5: vec3<u32>) {
     let _e239 = det_zero();
     det_z = _e239;
     let _e64 = det_z;
-    let i_12 = id_5.x;
-    let k_12 = id_5.y;
+    let i_13 = id_5.x;
+    let k_14 = id_5.y;
     let _e69 = p.size.x;
-    if !((i_12 >= _e69)) {
+    if !((i_13 >= _e69)) {
         let _e74 = p.size.y;
-        local_11 = (k_12 >= _e74);
+        local_11 = (k_14 >= _e74);
     } else {
         local_11 = true;
     }
@@ -1238,17 +1373,17 @@ fn depth_first_donors(@builtin(global_invocation_id) id_5: vec3<u32>) {
     if _e76 {
         return;
     }
-    let _e77 = at(i_12, k_12);
-    let _e78 = vx(i_12, k_12);
+    let _e77 = at(i_13, k_14);
+    let _e78 = vx(i_13, k_14);
     let _e80 = bitcast<u32>(-(_e78));
-    let _e88 = vx((i_12 + 1u), k_12);
-    let _e90 = vz(i_12, k_12);
+    let _e88 = vx((i_13 + 1u), k_14);
+    let _e90 = vz(i_13, k_14);
     let _e92 = bitcast<u32>(-(_e90));
-    let _e100 = vz(i_12, (k_12 + 1u));
+    let _e100 = vz(i_13, (k_14 + 1u));
     rates_1 = vec4<f32>(max(bitcast<f32>((select(_e80, 0u, ((_e80 & 2139095040u) < 226492416u)) ^ _e64)), 0f), max(_e88, 0f), max(bitcast<f32>((select(_e92, 0u, ((_e92 & 2139095040u) < 226492416u)) ^ _e64)), 0f), max(_e100, 0f));
     let _e105 = src[_e77].y;
-    let h_3 = max(_e105, 0.00000000000000000001f);
-    if (i_12 == 0u) {
+    let h_4 = max(_e105, 0.00000000000000000001f);
+    if (i_13 == 0u) {
         let _e110 = p.edge_kind.x;
         local_12 = (_e110 >= 4u);
     } else {
@@ -1256,13 +1391,13 @@ fn depth_first_donors(@builtin(global_invocation_id) id_5: vec3<u32>) {
     }
     let _e112 = local_12;
     if _e112 {
-        let _e116 = edge_flux[k_12].x;
+        let _e116 = edge_flux[k_14].x;
         let _e118 = bitcast<u32>(-(_e116));
-        let _e125 = det_div(max(bitcast<f32>((select(_e118, 0u, ((_e118 & 2139095040u) < 226492416u)) ^ _e64)), 0f), h_3);
+        let _e125 = det_div(max(bitcast<f32>((select(_e118, 0u, ((_e118 & 2139095040u) < 226492416u)) ^ _e64)), 0f), h_4);
         rates_1.x = _e125;
     }
     let _e129 = p.size.x;
-    if ((i_12 + 1u) == _e129) {
+    if ((i_13 + 1u) == _e129) {
         let _e133 = p.edge_kind.y;
         local_13 = (_e133 >= 4u);
     } else {
@@ -1271,11 +1406,11 @@ fn depth_first_donors(@builtin(global_invocation_id) id_5: vec3<u32>) {
     let _e135 = local_13;
     if _e135 {
         let _e139 = p.size.y;
-        let _e143 = edge_flux[(_e139 + k_12)].x;
-        let _e145 = det_div(max(_e143, 0f), h_3);
+        let _e143 = edge_flux[(_e139 + k_14)].x;
+        let _e145 = det_div(max(_e143, 0f), h_4);
         rates_1.y = _e145;
     }
-    if (k_12 == 0u) {
+    if (k_14 == 0u) {
         let _e149 = p.edge_kind.z;
         local_14 = (_e149 >= 4u);
     } else {
@@ -1284,13 +1419,13 @@ fn depth_first_donors(@builtin(global_invocation_id) id_5: vec3<u32>) {
     let _e151 = local_14;
     if _e151 {
         let _e155 = p.size.y;
-        let _e160 = edge_flux[((2u * _e155) + i_12)].x;
+        let _e160 = edge_flux[((2u * _e155) + i_13)].x;
         let _e162 = bitcast<u32>(-(_e160));
-        let _e169 = det_div(max(bitcast<f32>((select(_e162, 0u, ((_e162 & 2139095040u) < 226492416u)) ^ _e64)), 0f), h_3);
+        let _e169 = det_div(max(bitcast<f32>((select(_e162, 0u, ((_e162 & 2139095040u) < 226492416u)) ^ _e64)), 0f), h_4);
         rates_1.z = _e169;
     }
     let _e173 = p.size.y;
-    if ((k_12 + 1u) == _e173) {
+    if ((k_14 + 1u) == _e173) {
         let _e177 = p.edge_kind.w;
         local_15 = (_e177 >= 4u);
     } else {
@@ -1300,8 +1435,8 @@ fn depth_first_donors(@builtin(global_invocation_id) id_5: vec3<u32>) {
     if _e179 {
         let _e183 = p.size.y;
         let _e187 = p.size.x;
-        let _e192 = edge_flux[(((2u * _e183) + _e187) + i_12)].x;
-        let _e194 = det_div(max(_e192, 0f), h_3);
+        let _e192 = edge_flux[(((2u * _e183) + _e187) + i_13)].x;
+        let _e194 = det_div(max(_e192, 0f), h_4);
         rates_1.w = _e194;
     }
     let _e196 = rates_1.x;
@@ -1328,12 +1463,12 @@ fn depth_first_transport(@builtin(global_invocation_id) id_6: vec3<u32>) {
     let _e256 = det_zero();
     det_z = _e256;
     let _e57 = det_z;
-    let i_13 = id_6.x;
-    let k_13 = id_6.y;
+    let i_14 = id_6.x;
+    let k_15 = id_6.y;
     let _e62 = p.size.x;
-    if !((i_13 >= _e62)) {
+    if !((i_14 >= _e62)) {
         let _e67 = p.size.y;
-        local_16 = (k_13 >= _e67);
+        local_16 = (k_15 >= _e67);
     } else {
         local_16 = true;
     }
@@ -1341,16 +1476,16 @@ fn depth_first_transport(@builtin(global_invocation_id) id_6: vec3<u32>) {
     if _e69 {
         return;
     }
-    let _e70 = at(i_13, k_13);
+    let _e70 = at(i_14, k_15);
     let _e72 = awake[_e70];
     if (_e72 == 0u) {
         let _e76 = src[_e70];
         dst[_e70] = _e76;
         return;
     }
-    if (i_13 > 0u) {
+    if (i_14 > 0u) {
         let _e78 = net_1;
-        let _e79 = vx(i_13, k_13);
+        let _e79 = vx(i_14, k_15);
         let _e81 = depth_first_flow(_e79, (_e70 - 1u), _e70);
         let _e83 = bitcast<u32>((_e78 + _e81));
         net_1 = bitcast<f32>((select(_e83, 0u, ((_e83 & 2139095040u) < 226492416u)) ^ _e57));
@@ -1358,15 +1493,15 @@ fn depth_first_transport(@builtin(global_invocation_id) id_6: vec3<u32>) {
         let _e91 = p.edge_kind.x;
         if (_e91 != 0u) {
             let _e93 = net_1;
-            let _e96 = edge_flux[k_13].x;
+            let _e96 = edge_flux[k_15].x;
             let _e98 = bitcast<u32>((_e93 + _e96));
             net_1 = bitcast<f32>((select(_e98, 0u, ((_e98 & 2139095040u) < 226492416u)) ^ _e57));
         }
     }
     let _e107 = p.size.x;
-    if ((i_13 + 1u) < _e107) {
+    if ((i_14 + 1u) < _e107) {
         let _e109 = net_1;
-        let _e111 = vx((i_13 + 1u), k_13);
+        let _e111 = vx((i_14 + 1u), k_15);
         let _e113 = depth_first_flow(_e111, _e70, (_e70 + 1u));
         let _e115 = bitcast<u32>((_e109 - _e113));
         net_1 = bitcast<f32>((select(_e115, 0u, ((_e115 & 2139095040u) < 226492416u)) ^ _e57));
@@ -1375,14 +1510,14 @@ fn depth_first_transport(@builtin(global_invocation_id) id_6: vec3<u32>) {
         if (_e123 != 0u) {
             let _e125 = net_1;
             let _e128 = p.size.y;
-            let _e132 = edge_flux[(_e128 + k_13)].x;
+            let _e132 = edge_flux[(_e128 + k_15)].x;
             let _e134 = bitcast<u32>((_e125 - _e132));
             net_1 = bitcast<f32>((select(_e134, 0u, ((_e134 & 2139095040u) < 226492416u)) ^ _e57));
         }
     }
-    if (k_13 > 0u) {
+    if (k_15 > 0u) {
         let _e141 = net_1;
-        let _e142 = vz(i_13, k_13);
+        let _e142 = vz(i_14, k_15);
         let _e145 = p.size.x;
         let _e147 = depth_first_flow(_e142, (_e70 - _e145), _e70);
         let _e149 = bitcast<u32>((_e141 + _e147));
@@ -1392,15 +1527,15 @@ fn depth_first_transport(@builtin(global_invocation_id) id_6: vec3<u32>) {
         if (_e157 != 0u) {
             let _e159 = net_1;
             let _e162 = p.size.y;
-            let _e167 = edge_flux[((_e162 * 2u) + i_13)].x;
+            let _e167 = edge_flux[((_e162 * 2u) + i_14)].x;
             let _e169 = bitcast<u32>((_e159 + _e167));
             net_1 = bitcast<f32>((select(_e169, 0u, ((_e169 & 2139095040u) < 226492416u)) ^ _e57));
         }
     }
     let _e178 = p.size.y;
-    if ((k_13 + 1u) < _e178) {
+    if ((k_15 + 1u) < _e178) {
         let _e180 = net_1;
-        let _e182 = vz(i_13, (k_13 + 1u));
+        let _e182 = vz(i_14, (k_15 + 1u));
         let _e185 = p.size.x;
         let _e187 = depth_first_flow(_e182, _e70, (_e70 + _e185));
         let _e189 = bitcast<u32>((_e180 - _e187));
@@ -1411,7 +1546,7 @@ fn depth_first_transport(@builtin(global_invocation_id) id_6: vec3<u32>) {
             let _e199 = net_1;
             let _e202 = p.size.y;
             let _e206 = p.size.x;
-            let _e211 = edge_flux[(((_e202 * 2u) + _e206) + i_13)].x;
+            let _e211 = edge_flux[(((_e202 * 2u) + _e206) + i_14)].x;
             let _e213 = bitcast<u32>((_e199 - _e211));
             net_1 = bitcast<f32>((select(_e213, 0u, ((_e213 & 2139095040u) < 226492416u)) ^ _e57));
         }

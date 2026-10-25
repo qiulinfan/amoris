@@ -7,6 +7,7 @@ import {
   BrainCircuit,
   Camera,
   CircleDot,
+  CloudRain,
   Component,
   Cuboid,
   File,
@@ -41,6 +42,7 @@ const COMPONENT_ICONS: Record<string, LucideIcon> = {
   Sail: Sailboat,
   Sea: WavesHorizontal,
   Wind: Wind,
+  Rain: CloudRain,
   Model: Box,
   Light: Lightbulb,
   Camera: Camera,
@@ -58,7 +60,7 @@ export function componentIcon(name: string): LucideIcon {
 }
 
 /** The component that best says what an entity is, in priority order. */
-const PRIORITY = ["Camera", "Light", "Boat", "Sea", "Wind", "Splat", "Cargo", "Model", "Collider", "RigidBody"];
+const PRIORITY = ["Camera", "Light", "Boat", "Sea", "Wind", "Rain", "Splat", "Cargo", "Model", "Collider", "RigidBody"];
 
 export function entityKind(components: string[], lightKind?: string): { icon: LucideIcon; tone: string } {
   const c = PRIORITY.find((p) => components.includes(p));
@@ -73,6 +75,8 @@ export function entityKind(components: string[], lightKind?: string): { icon: Lu
       return { icon: WavesHorizontal, tone: "tone-env" };
     case "Wind":
       return { icon: Wind, tone: "tone-env" };
+    case "Rain":
+      return { icon: CloudRain, tone: "tone-env" };
     case "Splat":
       return { icon: Sparkles, tone: "tone-mesh" };
     case "Cargo":

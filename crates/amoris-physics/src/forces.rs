@@ -78,6 +78,7 @@ pub(crate) fn point_water(
     regions: &[(crate::water::buoyancy::Cover, &crate::water::WaterRegion)],
     samples: &crate::water::buoyancy::Samples,
     field: &Option<WaveField>,
+    wind: Option<&crate::Wind>,
     t: f64,
     tick: u64,
 ) -> Result<Option<PointWater>, amoris_contract::Problem> {
@@ -97,10 +98,19 @@ pub(crate) fn point_water(
         }
         let lift = column[6] + column[2] * column[4] + column[3] * column[5];
         let height = clamp((at[1] - (column[0] - column[1])) / column[1], 0.0, 1.0);
+        let mut velocity = [column[2], lift * height, column[3]];
+        // The wind drifts the water's top layer (water.md 67).
+        if region.physics.wind
+            && let Some(w) = wind
+        {
+            let drift = crate::water::weather::surface_drift(w, at, t, column[0] - at[1]);
+            velocity[0] += drift[0];
+            velocity[2] += drift[1];
+        }
         return Ok(Some(PointWater {
             water: crate::sea::Water {
                 height: column[0],
-                velocity: [column[2], lift * height, column[3]],
+                velocity,
             },
             density: 1000.0,
             bed: Some(column[0] - column[1]),
@@ -214,6 +224,7 @@ type FloaterItem<'a> = (
 pub(crate) fn buoyancy(
     clock: Res<SimClock>,
     seas: Query<(&EntityId, &Sea)>,
+    winds: Query<(&EntityId, &crate::Wind)>,
     regions: Query<(&EntityId, Option<&Transform>, &crate::water::WaterRegion)>,
     samples: Res<crate::water::buoyancy::Samples>,
     mut feedbacks: Query<(
@@ -247,6 +258,7 @@ pub(crate) fn buoyancy(
     }
     let t = start_time(&clock);
     let field = sea_field(&seas);
+    let wind = by_id(&winds).next().map(|(_, w)| w);
     let feedback_index: std::collections::BTreeMap<_, _> =
         by_id(&feedbacks).map(|(e, id, _)| (*id, e)).collect();
     let displacement_index: std::collections::BTreeMap<_, _> =
@@ -276,6 +288,7 @@ pub(crate) fn buoyancy(
                 &regions,
                 &samples,
                 &field,
+                wind,
                 t,
                 clock.tick.0,
             )?
@@ -481,6 +494,7 @@ pub(crate) fn buoyancy(
                 &regions,
                 &samples,
                 &field,
+                wind,
                 t,
                 clock.tick.0,
             )?);

@@ -21,10 +21,11 @@ shaded fragment (overdraw included), where the cascades cost four depth passes.
 ## What changes when it is on
 
 - **Device** (gpu.rs): `Gpu::new` requests `EXPERIMENTAL_RAY_QUERY`, the acceleration-structure
-  limits and wgpu's experimental-features opt-in only when `AMORIS_RT_SHADOWS=1` and the adapter
-  has the feature, never with `AMORIS_GPU_MINIMAL=features` and never in the browser;
-  `Capabilities::ray_query` says whether it did. `Gpu::headless_ray_query(choice, on)` asks
-  explicitly, so a test or example can hold both kinds of device in one process.
+  limits and wgpu's experimental-features opt-in only when `AMORIS_RT_SHADOWS=1` (or
+  `AMORIS_RT_REFLECTIONS=1`, below) and the adapter has the feature, never with
+  `AMORIS_GPU_MINIMAL=features` and never in the browser; `Capabilities::ray_query` says whether it
+  did. `Gpu::headless_ray_query(choice, on)` asks explicitly, so a test or example can hold both
+  kinds of device in one process.
 - **Mesh pool** (meshes.rs): on such a device the vertex and index buffers also carry `BLAS_INPUT`
   and `STORAGE`; the pool records each mesh's vertex count and whether the GPU writes its vertices
   (skinning).
@@ -32,20 +33,21 @@ shaded fragment (overdraw included), where the cascades cost four depth passes.
   when the mesh first appears; a non-opaque copy for each mesh drawn with an alpha-masked material,
   built when an instance first needs it; for each skinned mesh (vertices the skinning pass writes),
   a fast-build bottom level rebuilt in the frame's encoder after that pass, every frame it casts.
-  The top level holds the instances the cascades would draw (alive, visible, casting shadows) with
-  their drawn pose: the cull pass's interpolation between the last two ticks (lerp, nlerp), times
-  scale. It is rebuilt only when the renderer uploaded changed slots, a bottom level was added, some
-  slot is interpolating or a skinned mesh casts; a static scene keeps its build. It grows by
-  doubling; growing replaces the lighting bind group.
-- **Shader** (rt_shadows.wgsl, appended to forward.wgsl by `RtShadows::forward_source`, which
-  renames the cascaded `shadow_factor` to `csm_shadow_factor`): the forward and ocean pipelines use
-  this variant, with `enable wgpu_ray_query`. The lighting group gains bindings 11 to 14: the top
-  level, a per-instance table (material row, first index, base vertex), and the mesh pool's indices
-  and vertices. The ray starts at the surface pushed along its normal by 2 mm plus 1 mm per metre of
-  view depth, goes toward the sun with `RAY_FLAG_TERMINATE_ON_FIRST_HIT`, `t` up to 1e5. Opaque
-  geometry commits by itself; a masked caster's candidate hit is confirmed when the material's
-  alpha at the hit's interpolated UV (base color factor times texture, LOD 0) reaches its cutoff,
-  the test of the masked shadow pass.
+  The top level holds the instances the cascades would draw (alive, visible, casting shadows), with
+  the instance mask the shadow rays look for, and their drawn pose: the cull pass's interpolation
+  between the last two ticks (lerp, nlerp), times scale. It is rebuilt only when the renderer
+  uploaded changed slots, a bottom level was added, some slot is interpolating or a skinned mesh
+  casts; a static scene keeps its build. It grows by doubling; growing replaces the lighting bind
+  group.
+- **Shader** (rt_common.wgsl and rt_shadows.wgsl, appended to forward.wgsl by
+  `RtShadows::forward_source`, which renames the cascaded `shadow_factor` to `csm_shadow_factor`):
+  the forward and ocean pipelines use this variant, with `enable wgpu_ray_query`. The lighting group
+  gains bindings 11 to 14: the top level, a per-instance table (material row, first index, base
+  vertex), and the mesh pool's indices and vertices. The ray starts at the surface pushed along its
+  normal by 2 mm plus 1 mm per metre of view depth, goes toward the sun with
+  `RAY_FLAG_TERMINATE_ON_FIRST_HIT`, `t` up to 1e5. Opaque geometry commits by itself; a masked
+  caster's candidate hit is confirmed when the material's alpha at the hit's interpolated UV (base
+  color factor times texture, LOD 0) reaches its cutoff, the test of the masked shadow pass.
 - **Frame** (renderer.rs): the cascades are neither culled for nor drawn; the top level is built
   after the cull and light passes, before the opaque pass. Nothing else moves.
 
@@ -97,6 +99,27 @@ Soft shadows from the sun's angular size (a cone of directions with temporal acc
 ray-traced ambient occlusion, refitting skinned meshes' bottom levels instead of rebuilding them,
 compacting bottom levels, and a top level of only the casters near the view. Each is measured
 against this baseline.
+
+## Water reflections (2026-10-23)
+
+The second effect, off by default: `AMORIS_RT_REFLECTIONS=1` traces the water's reflected rays in
+place of the screen-space march ([water.md](water.md) 67.4). `RtEffects { shadows, reflections }`
+says what a device's ray queries serve; either effect alone or both open the device as above, and
+`Gpu::headless_ray_traced(choice, effects)` asks explicitly.
+
+- The top level holds the drawn instances either effect needs, each with a mask: 1 for the casters
+  the shadow rays meet, 2 for every opaque instance (neither blending nor transmitting) the
+  reflected rays meet. With reflections alone the cascades still draw the sun's shadows, and the top
+  level holds no caster as such.
+- The forward variant appends rt_common.wgsl (the masks, the bindings, the masked candidates' alpha
+  test) and then each effect's file, renaming what each replaces: `shadow_factor` to
+  `csm_shadow_factor`, `water_reflect` to `ssr_water_reflect`.
+- The Metal constraint below holds for any ray-traced effect: with reflections, Metal draws one
+  sample a pixel too.
+
+`tests/rt_reflections.rs` runs on every native backend with ray queries: a block above the view
+shows in the traced reflection and not in the march's, and a block in view is reflected by both in
+the same colour.
 
 ## Amoris integration: Metal (2026-10-10)
 

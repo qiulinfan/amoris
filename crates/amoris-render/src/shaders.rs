@@ -93,7 +93,7 @@ pub fn source(name: &str) -> String {
 pub fn forward_neural(
     layout: &amoris_assets::neural::NeuralLayout,
     f16: bool,
-    traced: bool,
+    traced: Option<crate::rt_shadows::RtEffects>,
 ) -> String {
     let forward = format!(
         "{}\n{}",
@@ -101,15 +101,14 @@ pub fn forward_neural(
         include_str!("../shaders/forward_neural.wgsl")
     );
     let body = crate::neural::decoder_library(layout, f16, &forward);
-    let body = if traced {
-        crate::rt_shadows::RtShadows::traced(&body)
-    } else {
-        body
+    let body = match traced {
+        Some(effects) => crate::rt_shadows::RtShadows::traced(&body, effects),
+        None => body,
     };
     format!(
         "{}{}{body}",
         if f16 { "enable f16;\n" } else { "" },
-        if traced {
+        if traced.is_some() {
             "enable wgpu_ray_query;\n"
         } else {
             ""

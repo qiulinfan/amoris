@@ -165,6 +165,7 @@ fn sunlit(instances: Vec<InstanceUpdate>, dir: Vec3, shadows: bool) -> RenderFra
             bloom: 0.1,
         }),
         sea: None,
+        weather: None,
         splats: None,
         ui: None,
         audio: None,

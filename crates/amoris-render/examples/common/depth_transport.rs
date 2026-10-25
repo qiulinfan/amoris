@@ -18,6 +18,7 @@ const BINDINGS: [&[u32]; 3] = [
     &[0, 1, 2, 3, 4, 5, 6, 10],
 ];
 const FAMILY: [usize; 5] = [0, 0, 1, 2, 2];
+const PARAMS_WORDS: usize = 168;
 impl<'a> Field<'a> {
     pub fn new(gpu: &'a Gpu, initial: &FieldCheckpoint, mode: &str) -> Self {
         let [nx, nz] = initial.size;
@@ -31,8 +32,9 @@ impl<'a> Field<'a> {
             })
         };
         let storage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST;
+        // Production's Params (water_compute.wgsl), wind and rain included.
         let params = buffer(
-            624,
+            PARAMS_WORDS as u64 * 4,
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
         let state =
@@ -198,7 +200,7 @@ impl<'a> Field<'a> {
         substeps: u32,
         mut profiler: Option<&mut amoris_render::profiler::GpuProfiler>,
     ) {
-        let mut words = [0u32; 156];
+        let mut words = [0u32; PARAMS_WORDS];
         words[0] = self.size[0];
         words[1] = self.size[1];
         words[2] = dx.to_bits();
@@ -231,7 +233,7 @@ impl<'a> Field<'a> {
         self.gpu
             .queue
             .write_buffer(&self.velocity, 0, bytemuck::cast_slice(velocity));
-        let mut words = [0u32; 156];
+        let mut words = [0u32; PARAMS_WORDS];
         words[0] = self.size[0];
         words[1] = self.size[1];
         words[2] = dx.to_bits();

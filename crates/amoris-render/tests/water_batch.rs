@@ -60,6 +60,8 @@ fn step(index: usize, tick: usize) -> FieldStep {
         }],
         displacements: vec![],
         physics: Default::default(),
+        wind: None,
+        rain_m: 0.0,
     }
 }
 fn equal(actual: &ResidentAdvance, expected: &ResidentAdvance) {

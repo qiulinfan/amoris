@@ -63,6 +63,8 @@ fn checked_complete_upload_preserves_words_faces_and_replaces_masked_state() {
             impulses: vec![],
             displacements: vec![],
             physics: Default::default(),
+            wind: None,
+            rain_m: 0.0,
         };
         for _ in 0..3 {
             let mut encoder = gpu.device.create_command_encoder(&Default::default());
