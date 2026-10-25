@@ -35,8 +35,9 @@ still on the tube, whether it is in the water and its eye's position, and the ev
   surface waves travel at their true speed for the depth.
 - The tube and the logs push the water aside and ride its slope and current; the tube's hull
   planes and grips the water through its bottom.
-- Presentation draws the falling sheet, the spray where it lands and the mist that drifts from
-  it, foam on the pool, and the sun's caustics on the beds of the pool and the lake.
+- Presentation draws the falling sheet as a curtain of water arching from the lip along the
+  water's flight, the spray where it lands and the mist that drifts from it, foam on the pool, and
+  the sun's caustics on the beds of the pool and the lake.
 
 `python3 samples/river-falls/build_scene.py` rebuilds the terrain (`terrain.glb`, also the fixed
 TriMesh the water's bed and the bodies stand on), `scene.json` and `perception.json`. It uses only

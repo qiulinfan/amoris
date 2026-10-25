@@ -139,6 +139,9 @@ pub struct WaterPhysics {
     /// disperse and a swell shoals into crests rather than bores (water.md 55). Not with
     /// `dispersion`.
     pub nonhydrostatic: bool,
+    /// Plunging breakers: where a steep front's crest outruns the water ahead, part of its flow
+    /// leaves the crest's top and lands ahead, the plunging lip (water.md 63).
+    pub plunging: bool,
 }
 impl WaterPhysics {
     pub fn field(self) -> amoris_assets::water_field::FieldPhysics {
@@ -147,6 +150,7 @@ impl WaterPhysics {
             breaking: self.breaking,
             fall_min_m: self.falls_m,
             nonhydrostatic: self.nonhydrostatic,
+            plunging: self.plunging,
         }
     }
 }

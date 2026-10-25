@@ -34,8 +34,10 @@ it stands, the board's speed, whether it is in the water and its eye's position,
   the same side.
 - Over the shoaling sand and the reef each wave slows, steepens and breaks. The shallow-water
   flow turns its front into a bore, and the breaking model (an eddy viscosity after Kennedy et al.
-  2000) turns the bore into white water. A 20 s swell is a long wave all the way in (kh under
-  0.3), where the shallow-water flow is accurate, so the region leaves dispersion off.
+  2000) turns the bore into white water. Where the reef makes a crest steep and fast, the top of
+  the crest pitches forward and lands ahead of the wave, and the lip is drawn as a sheet of water
+  curling over the face as the break peels along the reef. A 20 s swell is a long wave all the way
+  in (kh under 0.3), where the shallow-water flow is accurate, so the region leaves dispersion off.
 - The board planes on the wave's face. Its bottom is a flat plate whose lift grows with the
   speed through the water and the angle of attack, its rails and fin grip the water across it,
   and its volume pushes the water aside. These forces are solved implicitly, so a light board

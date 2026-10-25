@@ -232,6 +232,11 @@ pub struct FieldPhysics {
     /// disperse and a swell shoals into crests rather than bores. Not with `dispersion`.
     #[serde(default)]
     pub nonhydrostatic: bool,
+    /// Plunging breakers: where a steep front's crest outruns the water ahead, part of its flow
+    /// leaves the crest's top and lands where its trajectory meets the water ahead, as a fall's
+    /// does.
+    #[serde(default)]
+    pub plunging: bool,
 }
 impl FieldPhysics {
     pub fn validate(&self) -> Result<(), String> {

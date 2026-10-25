@@ -361,7 +361,7 @@ def main():
             "edges": ["Sea", "Wall", "Wall", "Wall"],
             "friction": 0.01, "calm_per_s": 0.0, "substeps": 2, "dry_below": 0,
             "physics": {"dispersion": False, "breaking": True, "falls_m": 0,
-                        "nonhydrostatic": True},
+                        "nonhydrostatic": True, "plunging": True},
             "look": {"style": "Smooth", "surround_m": 0, "wet_s": 90.0, **WATER},
             "tiles": tiles},
         "WaterDisplacement": {}})

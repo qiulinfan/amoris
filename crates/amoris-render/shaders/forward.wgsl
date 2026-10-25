@@ -1429,6 +1429,82 @@ fn fs_wet(in: WetOut) -> @location(0) vec4f {
     return vec4f(c * (1.0 - fog), dark);
 }
 
+// ---- Plunging lips and falling sheets (water.md 63.2) ------------------------------------------
+// A ribbon a face wide along the parabola of the water the kernel throws over the face
+// (water_lip.wgsl), from where it leaves to where it meets the water or the bed again, shaded as a
+// sheet of the region's water as thick as the water leaving, thinning as the jet speeds up, and
+// whitening with the air it takes in.
+const LIP_SEGMENTS: u32 = 12u;
+struct LipOut {
+    @builtin(position) clip: vec4f,
+    @location(0) world: vec3f,
+    @location(1) normal: vec3f,
+    // How far along its flight, the sheet's thickness there, and its kind (0 a lip, 1 a fall).
+    @location(2) along: vec3f,
+};
+@vertex
+fn vs_lip(@builtin(vertex_index) vi: u32, @location(0) launch: vec4f,
+    @location(1) velocity: vec4f, @location(2) side: vec4f) -> LipOut {
+    let corner = vi % 6u;
+    let s = f32(vi / 6u + array<u32, 6>(0u, 1u, 1u, 0u, 1u, 0u)[corner]) / f32(LIP_SEGMENTS);
+    let across = array<f32, 6>(-1.0, -1.0, 1.0, -1.0, 1.0, 1.0)[corner];
+    let t = s * velocity.w;
+    let g = vec3f(0.0, -9.81, 0.0);
+    let moving = velocity.xyz + g * t;
+    let world = launch.xyz + velocity.xyz * t + 0.5 * g * t * t + side.xyz * across;
+    var o: LipOut;
+    o.clip = view.view_proj * vec4f(world, 1.0);
+    o.world = world;
+    o.normal = normalize(cross(moving, side.xyz));
+    let thickness = launch.w * length(velocity.xyz) / max(length(moving), 0.1);
+    o.along = vec3f(s, thickness, side.w);
+    return o;
+}
+@fragment
+fn fs_lip(in: LipOut) -> @location(0) vec4f {
+    let v_world = view.camera_pos.xyz - in.world;
+    let v = select(vec3f(view.view[0].z, view.view[1].z, view.view[2].z),
+        v_world / max(length(v_world), 1e-6), abs(view.proj[3].w) < 0.5);
+    var n = normalize(in.normal);
+    if (dot(n, v) < 0.0) { n = -n; }
+    let nv = max(dot(n, v), 1e-3);
+    let f = shallow_fresnel(nv, 0.75);
+    let r = reflect(-v, n);
+    let levels = f32(textureNumLevels(env_cube) - 1);
+    let sky = textureSampleLevel(env_cube, env_sampler, vec3f(r.x, max(r.y, 0.02), r.z),
+        0.08 * levels).rgb * view.sun_color.w;
+    let sun = view.sun_dir.xyz;
+    let sun_lux = view.sun_dir.w * view.sun_color.rgb;
+    let body_light = sh_irradiance(vec3f(0.0, 1.0, 0.0)) * 0.08 + sun_lux * max(sun.y, 0.0) * 0.012;
+    let shadow = shadow_factor(in.world, n, dot(in.world - view.camera_pos.xyz,
+        -vec3f(view.view[0].z, view.view[1].z, view.view[2].z)));
+    var spec = vec3f(0.0);
+    if (view.sun_dir.w > 0.0) {
+        let h = normalize(sun + v);
+        let nl = max(dot(n, sun), 0.0);
+        let a = 0.01;
+        spec = d_ggx(max(dot(n, h), 0.0), a) * v_smith(nv, nl, a)
+            * f_schlick(vec3f(0.02), max(dot(v, h), 0.0)) * sun_lux * nl * shadow;
+    }
+    // The light crossing the sheet along the view, and the light it scatters toward the eye.
+    let haze = max(shallow.fog.w, 0.0);
+    let extinction = shallow.absorb.rgb + shallow.scatter.rgb + vec3f(haze);
+    let through = exp(-extinction * in.along.y / nv);
+    let source = shallow.scatter.rgb * body_light + shallow.fog.rgb * haze * view.sun_color.w;
+    let body = source / max(extinction, vec3f(1e-6)) * (1.0 - through);
+    // The air the jet takes in: a lip stays clear as it leaves the crest and whitens as it pitches
+    // over and lands; a fall whitens from its lip on.
+    let air = select(0.04 + 0.7 * smoothstep(0.45, 1.0, in.along.x), 0.35 + 0.55 * in.along.x,
+        in.along.z > 0.5);
+    let white = vec3f(0.85, 0.9, 0.92) * (body_light * 6.0 + sun_lux * max(sun.y, 0.0) * 0.25
+        * shadow);
+    let clear = (body * (1.0 - f) + sky * f + spec) * (1.0 - air) + white * air;
+    // What the sheet lets through of what is behind it, which the blend keeps.
+    let behind = dot(through, vec3f(1.0 / 3.0)) * (1.0 - f) * (1.0 - air);
+    let c = mix(clear, view.fog.rgb * view.sun_color.w * (1.0 - behind), fog_amount(in.world));
+    return vec4f(c, 1.0 - behind);
+}
+
 @fragment
 fn fs_water_depth(in: ShallowOut) -> @builtin(frag_depth) f32 {
     if(in.field_surface==1u&&ledge_at(in.world.xz)){discard;}

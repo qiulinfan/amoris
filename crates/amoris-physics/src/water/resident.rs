@@ -452,7 +452,7 @@ pub(crate) fn initial(
 
 impl amoris_sim::Persisted for WaterResident {
     const NAME: &'static str = "WaterResident";
-    const VERSION: u32 = 7;
+    const VERSION: u32 = 8;
     fn trace(
         t: &mut serde_reflection::Tracer,
         s: &serde_reflection::Samples,

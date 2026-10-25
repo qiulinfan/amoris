@@ -1,9 +1,10 @@
-//! The surf beach's shore (water.md 61): the swell breaking over the sand, its swash running up
-//! the beach face and back, and the sand it wets. The world runs on its own from the start; at the
-//! ticks given the renderer draws the shore from the dunes, from straight over the swash, along the
-//! beach low down and from the lineup. `--every N --from A --to B` draws one view (`--view`, the
-//! dunes' by default) every N ticks between A and B instead, a sequence of the swash. The captures
-//! go to `<out>/<view>-<tick>.png`, under a directory that belongs in ignored `out/`.
+//! The surf beach's shore and break (water.md 61, 63): the swell breaking over the reef and the
+//! sand, its swash running up the beach face and back, and the sand it wets. The world runs on its
+//! own from the start; at the ticks given the renderer draws the shore from the dunes, from straight
+//! over the swash, along the beach low down, from the lineup, from straight over the reef's break
+//! and along a breaking wave from its shoulder and from its face. `--every N --from A --to B` draws
+//! one view (`--view`, the dunes' by default) every N ticks between A and B instead, a sequence. The
+//! captures go to `<out>/<view>-<tick>.png`, under a directory that belongs in ignored `out/`.
 //! cargo run --release -p amoris-app --example shore_shots -- --out out/shore --at 1800,2400
 //! cargo run --release -p amoris-app --example shore_shots -- --out out/shore --view along \
 //!     --every 15 --from 1800 --to 2400
@@ -39,7 +40,7 @@ fn main() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/surf-beach");
     // The still water meets the sand at x = 236; the beach face rises 1 in 12.5 to the dunes at
     // x = 252. The bay runs along z from 0 to 128.
-    let views: [(&str, Vec3, Vec3, Vec3); 4] = [
+    let views: [(&str, Vec3, Vec3, Vec3); 7] = [
         (
             "dunes",
             Vec3::new(262.0, 5.0, 64.0),
@@ -62,6 +63,29 @@ fn main() {
             "lineup",
             Vec3::new(180.0, 3.0, 64.0),
             Vec3::new(250.0, 0.5, 64.0),
+            Vec3::Y,
+        ),
+        // The reef's break from straight above: the reef's edge runs from x = 172 at z = 0 to the
+        // beach at z = 85, so each wave breaks at its south end first and peels north.
+        (
+            "break",
+            Vec3::new(200.0, 80.0, 45.0),
+            Vec3::new(200.0, 0.0, 45.0),
+            Vec3::X,
+        ),
+        // Low on the shoulder, looking along the breaking wave toward where it first broke.
+        (
+            "barrel",
+            Vec3::new(207.0, 1.4, 44.0),
+            Vec3::new(186.0, 0.8, 14.0),
+            Vec3::Y,
+        ),
+        // In front of the face, ahead of where the wave peels at 38 s, looking back along it into
+        // the tube.
+        (
+            "tube",
+            Vec3::new(204.0, 0.6, 40.0),
+            Vec3::new(195.0, 1.4, 28.0),
             Vec3::Y,
         ),
     ];

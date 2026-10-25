@@ -3891,3 +3891,91 @@ Limits:
 - No suction behind a face leaving the water, no slamming beyond the face's pressure, no wave
   making resistance but the region's own waves where it takes the displaced volume, and no added
   mass (a Floater's `added_mass`, 56).
+
+## 63. Plunging lips and falling sheets (Pioneer, 2026-10-23)
+
+A height field holds one surface over each column: a wave breaking over a reef could steepen into a
+bore but never pitch its crest forward over its face, and a waterfall's sheet was drawn as the
+field's steep triangles and spray blobs (35). Now a steep front whose crest outruns it throws the
+top of its crest onto the water ahead, through the falls' landing (48), conserving water exactly;
+and the renderer draws each face over which the kernel throws water, a plunging lip or a fall, as a
+sheet of water along its trajectory.
+
+### 63.1 Plunging
+
+- `WaterPhysics.plunging` (and `FieldPhysics.plunging`), for `gpu_resident` regions. `WaterRegion`
+  is version 7 and `WaterResident` version 8; the kernel's WGSL is part of the numerical identity
+  (26).
+- At a face whose flow runs from a column at least 0.3 m deep to one whose surface stands lower by
+  more than half a column, a slope s over 0.5, and runs faster than half the giving column's
+  long-wave speed sqrt(g h), a Froude number F over 0.5, the share 0.5 min(s / 0.5 - 1, 1)
+  min(F / 0.5 - 1, 1) of its discharge leaves the top of the crest: from the height bed + h (1 -
+  share / 2), the middle of the layer leaving, at the larger of the face's speed and the crest's
+  long-wave speed, it lands where its parabola meets the water ahead, as a fall's jet does (48),
+  with its horizontal momentum. The rest flows on. Both sides quantize the share as falls do, so
+  water is conserved exactly. Swash and thin fronts (under 0.3 m) spill.
+- A crest breaks when its water outruns the wave: X. Barthelemy et al. ("On a unified breaking
+  onset threshold for gravity waves in deep and intermediate depth water", JFM 841, 2018) find
+  breaking once the crest surface's speed passes 0.85 of the crest's own; a height field's flow is
+  depth-averaged, slower than its surface, and is taken at half the crest's long-wave speed. Adding
+  an overturning lip where a shallow-water front grows steep follows N. Thürey, M. Müller-Fischer,
+  S. Schirm and M. Gross ("Real-time Breaking Waves for Shallow Water Simulations", Pacific
+  Graphics 2007); here the lip is ballistic and lands within the substep, as the falls do.
+
+### 63.2 Lips and sheets drawn
+
+- Each frame a compute pass (`water_lip.wgsl`) applies the kernel's rules to the displayed columns
+  of a resident region whose kernel throws water (falls or plunging; the renderer keeps the physics
+  of the last step it received, which a compacted recipe no longer holds). The columns carry centred
+  velocities, whose mean over a front halves the face's speed: a face takes the larger of that mean
+  and the arriving water's speed. Each face throwing water becomes a ribbon a face wide from the
+  face's centre at the jet's leaving height, along its parabola to where it meets the water or the
+  bed, marched half a column at a time as the kernel does; at most 8192 a region.
+- The ribbons draw indirectly, 12 segments each (forward.wgsl `vs_lip`, `fs_lip`), two-sided, after
+  the region's water, tested against its depth without writing it. A ribbon is a sheet of the
+  region's water as thick as the water leaving, all of a fall's depth or the crest's share, thinning
+  as the jet speeds up. The light through it falls off with the region's absorption and scattering
+  over its thickness along the view; it scatters the region's colour, reflects the sky and the sun
+  at the water's Fresnel, and whitens with the air it takes in: a lip clear as it leaves the crest
+  and white as it lands, a fall white from its lip on. It blends over what is behind it, src + dst
+  (1 - src_alpha).
+
+### 63.3 Checks, cost and limits
+
+`cargo test -p amoris-render --test water_frontier plunging_crests_land_ahead_of_the_front_and_conserve_water`:
+2 m of water released onto 0.5 m in a channel of quarter-metre columns; after a second the water has
+risen 52 rows along with plunging against 49 without, and both keep their volume within 1e-4.
+
+`cargo test -p amoris-render --test water_lip`: over a crest 2 m deep running at 4 m/s onto 0.6 m,
+each of the 16 rows throws one lip from the front's face, 0.79 m thick (the share 0.39 of 2 m) at
+4.43 m/s, flying as long as it takes to fall to the water ahead; still water and plunging off throw
+none.
+
+`cargo run --release -p amoris-app --example shore_shots -- --view break --every 60 --from 1800
+--to 2400` (the lips drawn in one colour): as each wave reaches the reef, lips line its edge from
+33 s, peeling north at about 7 m/s as the wave breaks along it. Seen along the wave (`--view tube`),
+the crest pitches forward over its face as a white-edged sheet. `cargo run --release -p amoris-app
+--example scene_shots -- samples/river-falls --eye 46,2.5,8 --at 34.6,3.5,14.7 --ticks 600,1200`:
+the river's falls leave their lip as an arching curtain of streaked water into the pool's mist,
+where the field's steep triangles and spray blobs showed before.
+
+The renderer's water tests pass on Metal, on MoltenVK and as the WebGPU baseline, and
+`gpu_frontier_scenes` plays the three frontier samples through. In Chrome 155, with the viewport
+rebuilt, the surf beach's (also on the baseline device), the pool party's and the river's exports
+play at 16.7 ms a frame with no WebGPU validation error or script exception, and
+`water_pool_check.mjs` passes its twelve checks.
+
+The cost is in [liquids.md](../bench/liquids.md) 15.
+
+Limits:
+
+- The thrown water flies as a ribbon a face wide, not as a resolved flow in three dimensions, and
+  the face under a lip stays the height field's single surface: a surfer rides the field's face
+  under the drawn lip. No air pocket is simulated, and the lip meets no body: a board passes through
+  it.
+- The breaking threshold's slope and speed are fixed. A spilling front on a gentle beach that grows
+  steep enough throws a lip too.
+- At most half of a crest's water leaves, at the crest's long-wave speed, not a resolved crest
+  velocity.
+- The face under a breaking lip carries the field's foam, so the barrel it encloses reads as white
+  water rather than a clear green tube.

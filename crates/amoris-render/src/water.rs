@@ -114,6 +114,8 @@ struct ResidentRegion {
     recipe: FieldRecipe,
     edge_level: Option<f32>,
     cache: Option<crate::water_replica::WaterReplica>,
+    /// The physics of the last step the recipe held: a compacted recipe holds none.
+    physics: Option<amoris_assets::water_field::FieldPhysics>,
 }
 
 struct RegionGpu {
@@ -128,6 +130,9 @@ struct RegionGpu {
     foam_dt: f32,
     clear_foam: bool,
     spray: Option<crate::water_spray::Pool>,
+    /// This frame's lips and falling sheets, while the region's kernel throws water.
+    lips: Option<crate::water_lip::Pool>,
+    lips_on: bool,
     spray_dt: f32,
     clear_spray: bool,
     /// The column counts the buffers were made for.
@@ -293,6 +298,64 @@ fn wet_pipeline(
     })
 }
 
+/// The lips' and falling sheets' ribbons (forward.wgsl `vs_lip`, `fs_lip`; water.md 63.2): a
+/// ribbon an instance, drawn two-sided over what is behind it, `src + dst (1 - src_alpha)`.
+fn lip_pipeline(
+    device: &wgpu::Device,
+    module: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    format: SceneFormat,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("water lips"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module,
+            entry_point: Some("vs_lip"),
+            compilation_options: Default::default(),
+            buffers: &[Some(wgpu::VertexBufferLayout {
+                array_stride: crate::water_lip::STRIDE,
+                step_mode: wgpu::VertexStepMode::Instance,
+                attributes: &wgpu::vertex_attr_array![
+                    0 => Float32x4,
+                    1 => Float32x4,
+                    2 => Float32x4
+                ],
+            })],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module,
+            entry_point: Some("fs_lip"),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &format.constants(),
+                ..Default::default()
+            },
+            targets: &format.targets(
+                Some(wgpu::BlendState {
+                    color: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::One,
+                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                    alpha: wgpu::BlendComponent::OVER,
+                }),
+                false,
+            ),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Greater),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: format.multisample(),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
 /// The water regions and their drawing.
 pub struct Water {
     cull_on: bool,
@@ -321,6 +384,9 @@ pub struct Water {
     stitch: wgpu::RenderPipeline,
     /// The wet bed: its darkening, its film and the foam left on it.
     wet: wgpu::RenderPipeline,
+    /// The plunging lips' and falls' sheets (water.md 63.2): found on the GPU, then drawn.
+    lip: wgpu::RenderPipeline,
+    lips: Option<crate::water_lip::Pipelines>,
     layout: wgpu::PipelineLayout,
     group_layout: wgpu::BindGroupLayout,
     regions: BTreeMap<u64, Region>,
@@ -487,6 +553,8 @@ impl Water {
             surround: pipeline(device, module, &layout, format, "vs_shallow_surround"),
             stitch: pipeline(device, module, &layout, format, "vs_shallow_stitch"),
             wet: wet_pipeline(device, module, &layout, format),
+            lip: lip_pipeline(device, module, &layout, format),
+            lips: None,
             layout,
             group_layout,
             regions: BTreeMap::new(),
@@ -555,6 +623,7 @@ impl Water {
         self.surround = pipeline(device, module, &self.layout, format, "vs_shallow_surround");
         self.stitch = pipeline(device, module, &self.layout, format, "vs_shallow_stitch");
         self.wet = wet_pipeline(device, module, &self.layout, format);
+        self.lip = lip_pipeline(device, module, &self.layout, format);
     }
 
     /// The rectangles the sea leaves to the regions. On a side open on the sea the sea runs a
@@ -988,6 +1057,7 @@ impl Water {
                         resident: Some(ResidentRegion {
                             checkpoint: u.checkpoint.as_ref().expect("prepared seed").clone(),
                             checkpoint_digest: seed_digest,
+                            physics: recipe.steps().last().map(|s| s.physics),
                             recipe,
                             edge_level: u.edge_level,
                             cache: None,
@@ -1016,6 +1086,9 @@ impl Water {
             r.origin = u.origin;
             r.cell_m = u.cell_m;
             r.look = u.look.clone();
+            if let Some(step) = recipe.steps().last() {
+                resident.physics = Some(step.physics);
+            }
             resident.recipe = recipe;
             resident.edge_level = u.edge_level;
         }
@@ -1207,6 +1280,8 @@ impl Water {
                     spray: None,
                     spray_dt: 0.0,
                     clear_spray: true,
+                    lips: None,
+                    lips_on: false,
                     size: r.size,
                 });
                 r.all_dirty = true;
@@ -1418,6 +1493,33 @@ impl Water {
                 heard = Some(g.spray_dt);
             }
             g.clear_spray = false;
+            // A resident kernel throwing water over falls or plunging crests (water.md 63.2).
+            let physics = r.resident.as_ref().and_then(|resident| resident.physics);
+            g.lips_on = physics.is_some_and(|p| p.fall_min_m > 0.0 || p.plunging);
+            if g.lips_on
+                && let Some(physics) = physics
+            {
+                let pipes = self
+                    .lips
+                    .get_or_insert_with(|| crate::water_lip::Pipelines::new(device));
+                let pool = g.lips.get_or_insert_with(|| {
+                    crate::water_lip::Pool::new(device, queue, pipes, &g.columns)
+                });
+                pool.encode(
+                    queue,
+                    encoder,
+                    pipes,
+                    crate::water_lip::FieldSpec {
+                        origin: r.origin,
+                        size: r.size,
+                        cell: r.cell_m,
+                        tiled: r.tiled,
+                        falls_m: physics.fall_min_m as f32,
+                        plunging: physics.plunging,
+                    },
+                    profiler,
+                );
+            }
             g.columns_changed = false;
             if g.foam_dt > 0.0 || g.clear_foam {
                 let timestamps = profiler.compute_scope("water foam");
@@ -1866,6 +1968,21 @@ impl Water {
             })
             .collect()
     }
+    /// Draws the regions' plunging lips and falling sheets (water.md 63.2), groups 0 to 2 bound as
+    /// for the lit forward pipelines, after the regions' water.
+    pub fn draw_lips(&self, pass: &mut wgpu::RenderPass<'_>) {
+        for r in self.regions.values() {
+            let Some(g) = &r.gpu else { continue };
+            let Some(pool) = g.lips.as_ref().filter(|_| g.lips_on) else {
+                continue;
+            };
+            pass.set_bind_group(3, &g.group, &[]);
+            pass.set_pipeline(&self.lip);
+            pass.set_vertex_buffer(0, pool.lips.slice(..));
+            pass.draw_indirect(&pool.args, 0);
+        }
+    }
+
     pub fn draw_spray(&self, pass: &mut wgpu::RenderPass<'_>) {
         if !self.spray_on {
             return;

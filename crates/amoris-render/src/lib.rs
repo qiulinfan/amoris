@@ -58,6 +58,7 @@ mod water_compact;
 pub mod water_compute;
 mod water_edits;
 pub mod water_foam;
+pub mod water_lip;
 mod water_medium;
 pub mod water_mesh;
 pub mod water_nh;

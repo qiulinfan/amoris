@@ -1163,3 +1163,44 @@ fn the_blocked_non_hydrostatic_solve_matches_one_dispatch_an_iteration() {
         }
     }
 }
+
+#[test]
+fn plunging_crests_land_ahead_of_the_front_and_conserve_water() {
+    for backend in BackendChoice::under_test() {
+        let gpu = Gpu::headless(backend).expect("plunging requires a GPU");
+        gpu.device
+            .on_uncaptured_error(Arc::new(|e| panic!("plunging validation: {e}")));
+        // A channel 4 x 32 m of 0.25 m columns: 2 m of water behind a gate at 8 m, 0.5 m beyond.
+        // The bore it releases stands about 1.1 m over a flat bed with its water at about 2.3 m/s,
+        // a steep front whose crest the flow over it outruns (water.md 63.1).
+        let size = [16, 128];
+        let cell = 0.25;
+        let start = field(size, |_, k| (0.0, if k < 32 { 2.0 } else { 0.5 }));
+        let before = volume(&start);
+        let mut reach = [0u32; 2];
+        for (mode, plunging) in [false, true].into_iter().enumerate() {
+            let mut run = Run::new(&gpu, start.clone());
+            let mut s = step(cell, 4, 0.0);
+            s.physics.plunging = plunging;
+            for _ in 0..60 {
+                run.step(&s, &[]);
+            }
+            let after = run.read(&s);
+            assert!(
+                (volume(&after) - before).abs() < 1e-4 * before,
+                "plunging {plunging}: volume changed by {}",
+                volume(&after) - before
+            );
+            // The farthest row the water has risen in by a centimetre.
+            reach[mode] = (32..128)
+                .filter(|&k| (0..16).map(|i| depth(&after, i, k)).sum::<f64>() / 16.0 > 0.51)
+                .max()
+                .unwrap_or(0);
+        }
+        eprintln!(
+            "plunging: the water rose to row {} with the lips against {} without",
+            reach[1], reach[0]
+        );
+        assert!(reach[1] > reach[0], "{reach:?}");
+    }
+}

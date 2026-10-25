@@ -3464,6 +3464,7 @@ impl Renderer {
                 pass.set_bind_group(1, &binds.lighting, &[]);
                 pass.set_bind_group(2, &binds.textures, &[]);
                 self.water.draw(&mut pass);
+                self.water.draw_lips(&mut pass);
                 // Foreground fragments use the independent mask and test against the just-written
                 // surface depth. Keeping them in this pass avoids another full MSAA load/resolve.
                 self.transparent.draw_layer(
@@ -3690,6 +3691,7 @@ impl Renderer {
         pass.set_bind_group(1, &binds.lighting, &[]);
         pass.set_bind_group(2, &binds.textures, &[]);
         self.water.draw(pass);
+        self.water.draw_lips(pass);
         self.draw_particles_and_grid(device, pass);
     }
 

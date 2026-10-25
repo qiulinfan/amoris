@@ -11,6 +11,7 @@ struct Params {
     occupancy_on: f32,  // 1: bodies' displaced volume adds a pressure head
     calm: f32,          // calm damping of slow faces, per second (water.md 4)
     advection: f32,     // 0: MacCormack, 1: momentum-conserving, 2: conserving where rapid (61.1)
+    plunge: f32,        // 1: plunging breakers (63.1)
     edge_kind:vec4u,
     edge_rate:vec4f,
     edge_normal:vec4f,
@@ -152,13 +153,12 @@ fn fall_face(donor:u32,receiver:u32)->bool {
 }
 fn fall_units(depth:f32)->i32 {return i32(round(clamp(depth,0.0,64.0)*FALL_SCALE));}
 fn fall_depth(units:i32)->f32 {return f32(units)/FALL_SCALE;}
-// The landing column: march the jet's parabola over the columns beyond the lip.
-fn fall_landing(donor:u32,receiver:u32,axis:u32,v:f32)->u32 {
+// The landing column: march the jet's parabola, from height y0 over the shared face's centre, over
+// the columns beyond the lip.
+fn fall_landing(donor:u32,receiver:u32,axis:u32,v:f32,y0:f32)->u32 {
     let di=vec2f(f32(donor%p.size.x),f32(donor/p.size.x));
     let ri=vec2f(f32(receiver%p.size.x),f32(receiver/p.size.x));
-    // The lip: the shared face's centre, at mid-depth of the leaving water.
     let lip=(di+ri)*0.5+vec2f(0.5);
-    let y0=src[donor].x+0.5*src[donor].y;
     let along=ri-di;
     var cross=0.0;
     let d=donor;
@@ -191,21 +191,52 @@ fn fall_deposit(landing:u32,units:i32,velocity:vec2f){
     atomicAdd(&falls[landing*3u+1u],i32(round(clamp(m.x,-1.0e9,1.0e9))));
     atomicAdd(&falls[landing*3u+2u],i32(round(clamp(m.y,-1.0e9,1.0e9))));
 }
+// Plunging breakers (water.md 63.1). Where a front stands steeper than PLUNGE_SLOPE and the flow
+// over it runs faster than PLUNGE_FROUDE of the crest's long-wave speed, the crest's top outruns
+// the water ahead and pitches forward: a share of the face's discharge, growing with both to
+// PLUNGE_MAX, leaves the top of the crest at the crest's long-wave speed and lands where its
+// trajectory meets the water ahead, as a fall's does. Fronts under PLUNGE_DEPTH (swash) spill.
+const PLUNGE_SLOPE: f32 = 0.5;
+const PLUNGE_FROUDE: f32 = 0.5;
+const PLUNGE_MAX: f32 = 0.5;
+const PLUNGE_DEPTH: f32 = 0.3;
+fn plunge_share(donor:u32,receiver:u32,v:f32)->f32 {
+    let h=src[donor].y;
+    if(p.plunge==0.0||h<PLUNGE_DEPTH){return 0.0;}
+    let slope=(src[donor].x+h-src[receiver].x-src[receiver].y)/p.cell;
+    let froude=abs(v)/sqrt(9.81*h);
+    return PLUNGE_MAX*clamp(slope/PLUNGE_SLOPE-1.0,0.0,1.0)*clamp(froude/PLUNGE_FROUDE-1.0,0.0,1.0);
+}
 // Net inflow through one face: positive enters column n. A fall face moves its quantized
-// discharge to the landing column instead of the receiving neighbour.
+// discharge to the landing column instead of the receiving neighbour; a plunging face, its
+// quantized share.
 fn face_net(v:f32,a:u32,b:u32,axis:u32,n:u32)->f32 {
     let flow=depth_flow(v,a,b,axis);
-    if(flow==0.0||p.fall_min<=0.0){return select(-flow,flow,n==b);}
+    if(flow==0.0||(p.fall_min<=0.0&&p.plunge==0.0)){return select(-flow,flow,n==b);}
     let donor=select(b,a,flow>0.0);let receiver=select(a,b,flow>0.0);
-    if(!fall_face(donor,receiver)){return select(-flow,flow,n==b);}
-    let units=fall_units(abs(flow)*p.dt/p.cell);
-    let moved=fall_depth(units)*p.cell/p.dt;
-    if(n==donor){return -moved;}
     let direction=select(-1.0,1.0,flow>0.0);
-    let landing=fall_landing(donor,receiver,axis,direction*max(abs(v),0.0));
-    let along=select(vec2f(0.0,direction*abs(v)),vec2f(direction*abs(v),0.0),axis==0u);
-    fall_deposit(landing,units,along);
-    return 0.0;
+    let along=select(vec2f(0.0,direction),vec2f(direction,0.0),axis==0u);
+    if(fall_face(donor,receiver)){
+        let units=fall_units(abs(flow)*p.dt/p.cell);
+        let moved=fall_depth(units)*p.cell/p.dt;
+        if(n==donor){return -moved;}
+        // The jet leaves at mid-depth of the leaving water.
+        let y0=src[donor].x+0.5*src[donor].y;
+        let landing=fall_landing(donor,receiver,axis,direction*max(abs(v),0.0),y0);
+        fall_deposit(landing,units,along*abs(v));
+        return 0.0;
+    }
+    let share=plunge_share(donor,receiver,v);
+    if(share<=0.0){return select(-flow,flow,n==b);}
+    if(n==donor){return -abs(flow);}
+    let units=fall_units(share*abs(flow)*p.dt/p.cell);
+    let moved=fall_depth(units)*p.cell/p.dt;
+    // The lip leaves from the middle of the crest's top layer, the share of its depth that goes.
+    let speed=max(abs(v),sqrt(9.81*src[donor].y));
+    let y0=src[donor].x+src[donor].y*(1.0-0.5*share);
+    let landing=fall_landing(donor,receiver,axis,direction*speed,y0);
+    fall_deposit(landing,units,along*speed);
+    return abs(flow)-moved;
 }
 @compute @workgroup_size(8,8)
 fn transport(@builtin(global_invocation_id) id:vec3u){

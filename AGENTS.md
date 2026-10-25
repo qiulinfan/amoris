@@ -325,7 +325,9 @@ gpu_energy/gpu_frontier_scenes. The non-hydrostatic solve runs two identical Che
 never one (water.md 55.2); its blocked dispatches must match one dispatch an iteration bit for bit
 (water_frontier `the_blocked_non_hydrostatic_solve_matches_one_dispatch_an_iteration`). A change
 to the kernel's velocity transport or its wet/dry faces also runs the `water_swash` example
-against the table in water.md 61.3. Rebuild
+against the table in water.md 61.3. The plunging lip's rules live twice, in water_compute.wgsl
+(`plunge_share`) and in the renderer's water_lip.wgsl, which must stay the same (render tests
+water_lip and water_frontier `plunging_crests_land_ahead_of_the_front_and_conserve_water`). Rebuild
 paired web game/viewport and run
 actual Chrome worker/resident/probe/floater and water_pool_check.mjs checks. samples/water-pool
 uses real player input and only scores poses/contact; scripts never move the swimmer.

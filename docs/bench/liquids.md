@@ -595,3 +595,30 @@ the water inside levelled by 40 bisections over every triangle and the hull's vo
 water computed again for coupling the region did not ask for, a dinghy took 0.515 ms a tick.
 
 Not measured: a resident region, whose nodes add to its samples (water.md 47), and R1.
+
+## 15. Plunging lips and falling sheets (Pioneer, 2026-10-23)
+
+The lips of [water.md](../spec/water.md) 63 on the M5, macOS, Metal, release builds, 2026-10-23.
+The machine was not checked for other load.
+
+`AMORIS_TRACE=frames=300,skip=2000,out=PATH cargo run --release -p amoris-app --example shore_shots
+-- --out DIR --at 2310`, then `python tools/frame_trace.py diff OFF ON`: the surf beach at 1280 x
+720 with MSAA from the player's camera at the lineup while the break peels, `plunging` off against
+on, two runs of each, alternated; medians over 300 frames:
+
+| | Plunging off | Plunging on |
+|---|---|---|
+| frame interval | 14.25, 14.22 ms | 14.74, 14.66 ms |
+| `water lips` (the finding pass) | none | 0.016, 0.018 ms |
+| `water+foreground` | 4.82, 4.85 ms | 4.53, 4.55 ms |
+
+The pass that finds the lips costs under 0.02 ms over the bay's 512 x 256 columns. The ribbons draw
+within `water+foreground`, whose time does not separate them from the different sea plunging makes:
+its breaking leaves other foam and shallows, and the pass took less time with it. A frame took about
+0.5 ms longer.
+
+The river falls (`scene_shots samples/river-falls --eye 46,2.5,8 --at 34.6,3.5,14.7`, 300 frames
+from tick 300, facing the falls): `water lips` 0.006 ms, `water+foreground` 5.48 and 5.49 ms, a
+frame 14.38 and 14.29 ms.
+
+Not measured: the ribbons' draw alone, R1, and the browser.

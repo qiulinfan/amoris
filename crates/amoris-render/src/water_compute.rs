@@ -29,8 +29,10 @@ struct Params {
     calm: f32,
     /// How the resident kernel transports its face velocities (water.md 61.1).
     advection: f32,
+    /// 1: plunging breakers (water.md 63.1).
+    plunge: f32,
     /// WGSL aligns `edge_kind` to 16 bytes.
-    _pad: [f32; 2],
+    _pad: [f32; 1],
     edge_kind: [u32; 4],
     edge_rate: [f32; 4],
     edge_normal: [f32; 4],
@@ -649,7 +651,8 @@ impl GpuWater {
             displacements,
             profiler.as_deref_mut(),
         )?;
-        let falls = physics.fall_min_m > 0.0;
+        // A plunging crest lands as a fall does.
+        let falls = physics.fall_min_m > 0.0 || physics.plunging;
         let open = edges.iter().any(|e| *e != FieldBoundary::Wall);
         let sea_clock = sea.is_some_and(|s| !s.waves.is_empty());
         self.has_boundary_report = open;
@@ -715,7 +718,8 @@ impl GpuWater {
                     Advection::Conservative => 1.0,
                     Advection::Hybrid => 2.0,
                 },
-                _pad: [0.0; 2],
+                plunge: if physics.plunging { 1.0 } else { 0.0 },
+                _pad: [0.0; 1],
                 edge_kind: kinds,
                 edge_rate: rates,
                 edge_normal: normals,
