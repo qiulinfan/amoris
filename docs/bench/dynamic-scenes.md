@@ -384,6 +384,16 @@ commit; replace `HEAD` with it. Every one of these commits is from before the 20
 commit), so its examples read the `AMORIS_*` variables the tools set, and cargo then sorts its lock
 again, so the builds go without `--locked`. The recorded runs built the trees as they were.
 
+Since 2026-10-25 Pioneer is deleted and none of these commits resolves. On Amoris main the work is
+`20c9c8fd` (linear updates, with the compact entries and the hashed look-ahead of builds e and g),
+`ecf0495a` (the scatter uploads, c), `2111b058` (one skinning dispatch, d), `c154c5fe` (the moving
+and sparse workloads in many_cubes) and `27901075` (these measurements); `after` is `27901075` or a
+later commit. Main's commits do not reproduce the separate builds a to g (`20c9c8fd` already holds
+(a), (e), (f) and (g), and (c) and (d) follow it), and its workload arrived after the changes, so a
+`before` has to be assembled: `8fc5b5ef` (the parent of `20c9c8fd`) with
+`c154c5fe`'s `examples/many_cubes.rs` copied in (untried). Such a re-run measures main's trees, not
+the recorded ones.
+
 ```sh
 build() {  # NAME COMMIT: the commit's examples into out/dynscene/NAME
   rm -rf target/src-$1 && mkdir -p target/src-$1 && git archive $2 | tar -x -m -C target/src-$1

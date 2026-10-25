@@ -3,7 +3,6 @@ binary and non-UTF-8 files, path mapping, collisions and idempotency. No checkou
 import contextlib
 import importlib.util
 import io
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -169,7 +168,7 @@ class Files(unittest.TestCase):
     def test_binary_files_keep_their_bytes_and_move(self):
         blob = b"\0\1" + OLD.encode() + b"\0"
         d = self.tree({f"web/{OLD}_bg.wasm": blob, f"a/{OLD}.txt": f"{OLD}\r\n".encode()})
-        quiet(r.apply, d, "tree", True)
+        quiet(r.apply, d)
         self.assertEqual((d / "web/amoris_bg.wasm").read_bytes(), blob)
         self.assertEqual((d / "a/amoris.txt").read_bytes(), b"amoris\r\n")  # no newline change
         self.assertFalse((d / f"web/{OLD}_bg.wasm").exists())
@@ -206,7 +205,7 @@ class Files(unittest.TestCase):
         self.assertIn((f"crates/amoris-script/src/prelude/{OLD}.ts",
                        "crates/amoris-script/src/prelude/amoris.ts"), moves)
         d = self.tree({f: b"x" for f in files})
-        quiet(r.apply, d, "tree", True)
+        quiet(r.apply, d)
         self.assertEqual(sorted(r.tree_files(d)), sorted(r.rename_path(f) for f in files))
 
     def test_collisions_are_refused(self):
@@ -214,16 +213,6 @@ class Files(unittest.TestCase):
             r.plan_paths([f"web/{OLD}.js", "web/amoris.js"])
         with self.assertRaises(ValueError):
             r.plan_paths([f"crates/{OLD}-sim/a.rs", "crates/amoris-sim/b.rs"])
-
-    def test_git_mode_refuses_a_dirty_checkout(self):
-        d = self.tree({"a.txt": OLD.encode()})
-        git = ["git", "-C", str(d), "-c", "user.name=t", "-c", "user.email=t@t"]
-        subprocess.run([*git, "init", "-q"], check=True)
-        subprocess.run([*git, "add", "."], check=True)
-        subprocess.run([*git, "commit", "-q", "-m", "a"], check=True)
-        (d / "b.txt").write_bytes(b"x")
-        with self.assertRaises(SystemExit):
-            quiet(r.apply, d, "git", False)
 
 
 class Idempotency(unittest.TestCase):
@@ -243,7 +232,7 @@ class Idempotency(unittest.TestCase):
         d = Path(tempfile.mkdtemp())
         (d / f"{OLD}-x").mkdir()
         (d / f"{OLD}-x" / "a.md").write_text(self.SAMPLE, "utf-8", newline="\n")
-        quiet(r.apply, d, "tree", True)
+        quiet(r.apply, d)
         self.assertEqual(quiet(r.check, d, "tree"), 0)
 
 

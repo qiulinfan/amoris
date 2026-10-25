@@ -1,7 +1,8 @@
 # Transparency
 
-Status: Draft, implemented on branch `explore/transparency` (the charter note is dated 2026-10-16;
-built and measured 2026-10-15 and, after review, 2026-10-16, machine dates)
+Status: Draft. Implemented (Pioneer `explore/transparency`; the charter note is dated 2026-10-16,
+built and measured 2026-10-15 and, after review, 2026-10-16, machine dates); on Amoris main since
+2026-10-16 (docs/imports/pioneer-2026-10-16.md).
 
 Charter: 4.4 (the Pioneer note of 2026-10-16 on the transparent stage; the opaque pass, two-phase
 Hi-Z, the depth prepass and TAA notes before it), 4.1 (one renderer for Metal, Vulkan, Direct3D 12

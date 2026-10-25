@@ -1,7 +1,8 @@
 # TAA and GTAO
 
-Status: Draft, implemented on branch `explore/aa` (2026-10-09); upscaling (4.1) on branch
-`explore/taau` (2026-10-15)
+Status: Draft. Implemented (Pioneer `explore/aa`, 2026-10-09); on Amoris main since 2026-10-10
+(charter 4.4's adoption of that date). Upscaling (4.1): Pioneer `explore/taau`, 2026-10-15; on
+Amoris main since 2026-10-16 (docs/imports/pioneer-2026-10-16.md).
 
 Charter: 4.4 ("HDR, bloom, TAA, AgX"; the Pioneer note of 2026-10-09 fixes where TAA and GTAO sit
 in the frame and that the defaults are measured; that of 2026-10-15 the render scale TAA upscales

@@ -5,7 +5,8 @@ GTAO at that share of the output's width and height, and TAA reconstructs the ou
 (`AMORIS_RENDER_SCALE`, `Renderer::set_render_scale`, the viewport's `?scale=`; charter 4.4,
 Pioneer 2026-10-15). Design: [TAA and GTAO](../spec/taa-gtao.md) 4.1. Related: the TAA and GTAO
 measurements ([taa-gtao.md](taa-gtao.md)), the UE 5.7 comparison on branch `explore/ue5`
-(`docs/bench/ue5-dense.md` there).
+(`docs/bench/ue5-dense.md` there, never published and deleted with Pioneer on 2026-10-25; section 4
+keeps the figures it quoted).
 
 Status: the cost (section 3, native and Chrome) is a **quiet re-measurement**, taken on
 2026-10-15 from 14:01 to 14:46 at commit c8128f1c (after review, so with the output-pixel filtering
@@ -359,7 +360,9 @@ What it buys:
 
 Branch `explore/ue5` measured Unreal Engine 5.7.4 on the dense grid at 2560x1440 on this RTX 5060
 (2026-10-10, quiet, `docs/bench/ue5-dense.md` there; a different engine and frame, so context, not
-a match). A new project's defaults render 1552x873 (61%) and reconstruct with TSR: TSR alone took
+a match; the document was never published and was deleted with Pioneer on 2026-10-25, and the
+figures here are as quoted then). A new project's defaults render 1552x873 (61%) and reconstruct
+with TSR: TSR alone took
 3.55 ms with Direct3D 12 and 3.95 ms with Vulkan of a 16.40 and 21.23 ms frame (Lumen, virtual
 shadow maps, the ray-tracing scene). With Nanite at 100% TSR took 5.17 and 6.58 ms of 9.21 and
 12.09 ms; with UE's TAA instead the Nanite frame was 4.23 and 5.88 ms. The matched forward
@@ -422,7 +425,9 @@ an invocation, 42 minutes in all, the RTX 5060 below 70 C before each; raw outpu
    `python tools/render/build_compare.py --before <checkout with master's release examples> --adapters nvidia,780m --backends dx12,vulkan`
    (120 pairs, 9 minutes). A master from before the 2026-10-16 rename, as `b7be59a2` was, is built
    from its exported tree after `python tools/amoris_rename.py --tree <dir>` (AGENTS.md), or its
-   examples ignore the `AMORIS_*` variables the tool sets.
+   examples ignore the `AMORIS_*` variables the tool sets. Since 2026-10-25 Pioneer is deleted and
+   `b7be59a2` no longer resolves; on Amoris main the nearest is `9a9097bb`, the parent of `1e5aa36b`
+   (the first upscaling commit), also from before the rename.
 5. The depth prepass below scale 1, for each adapter and API: `AMORIS_AA=msaa+taa
    AMORIS_RENDER_SCALE=0.5 python tools/render/prepass_compare.py --backend <dx12|vulkan> --adapter
    <nvidia|780m> --cases cubes-sphere,cubes-dense,cubes-shadows,splats,gi-room-static,pt-lab-static

@@ -5,7 +5,8 @@ opaque pass and the sky, and with GTAO on after GTAO (charter 4.4, Pioneer note 
 [transparency spec](../spec/transparency.md)). Related: [path tracing](path-tracing-nrc.md) (the
 reference), [TAA and GTAO](taa-gtao.md), [depth prepass](prepass.md), [occlusion](occlusion.md).
 
-Status: on branch `explore/transparency`. The charter note is dated 2026-10-16 (the wave's date);
+Status: measured on Pioneer's `explore/transparency`; on Amoris main since 2026-10-16
+(docs/imports/pioneer-2026-10-16.md). The charter note is dated 2026-10-16 (the wave's date);
 the machine's clock read 2026-10-15 for the first round (17:30 to 23:10), 2026-10-15 to 2026-10-16
 for the review round (23:35 to 00:40) and 2026-10-16 for the quiet re-measurement (00:57 to 01:42),
 and the times below are the machine's. Sections 1, 3 and 4 are deterministic image comparisons,
@@ -464,3 +465,10 @@ way for a re-run (from `src-before` and from `05716664`). Section 1 alone:
 `python tools/render/transparency_pt.py --build before=$T/before --build after=. --out $Q/pt-lab --adapter 5060`
 (with and without `--pt-args "--emission-scale 0"`, and with `--build prefix=$T/build-05716664` and
 `--gtao depth`) reproduces its figures; another `--out` without the references traces them again.
+
+Since 2026-10-25 Pioneer is deleted, and `3fdc5b83`, `440dd7f8`, `b9eea658` and `05716664` no
+longer resolve. On Amoris main the stage arrived as `6f821c13` to `a540c65d`: `after` is
+`a540c65d` or a later commit; a `before` is `b6c6bef5` (the parent of `6f821c13`) with the `--hdr`
+and `--ids` options of `0c090e01`'s `showcase_bench.rs` added to the example only, as `src-before`
+did (untried). Main has no commits for the intermediate builds (two draws, one draw, the stage
+before GTAO), which `60499a93` folds together. These are main's trees, not the recorded ones.

@@ -322,8 +322,9 @@ scout the course. The bounds are counted, not trusted: the model's statistics ca
 branch ticks and the most branch ticks of one decision, and the test holds them to 4 and 600.
 
 **The course's seeded variants** (the bench's `examples/lookahead_bench/course.rs`, which
-`tests/lookahead.rs` includes) are Pioneer's own, not the shared benchmark's seeds: a developer's
-`world.edit` at tick 0 (not the benchmark's `new --params` and setup step, tasks.md 6.1) sets the
+`tests/lookahead.rs` includes) are the engine's own (first written on Pioneer), not the shared
+benchmark's seeds: a developer's `world.edit` at tick 0 (not the benchmark's `new --params` and
+setup step, tasks.md 6.1) sets the
 wind from `270 + 40 (r - 0.5)` degrees at `5 + 2 r` m/s (tasks.md 6.2's formula, but SplitMix64
 draws from the seed rather than Python's `random.Random`) and places each crate, by this bench's own
 rule, at a point a fraction `r` of the course's length from the start through the marks,

@@ -24,17 +24,19 @@
 服务。常驻状态由精确检查点、GPU 摘要和有界程序重建；每 tick 只回读所需观察与汇总，
 初始化后不读取旧 CPU 瓦片。等待不是边界，不能重复系统、发布半个 tick 或执行排队命令。
 
-渲染器直接消费相同检查点和程序，保留已验证的水场绘制、光学及泡沫等基础功能。
-这些功能不代表海滩视觉质量、破浪或密集落水已完成。游泳样例用于验证输入、相机和
-当前水场接触；排水体积、垂直冲击和完整双向能量耦合不在本轮完成范围。
+渲染器直接消费相同检查点和程序，保留已验证的水场绘制、光学及泡沫等基础功能。这些功能不代表海滩视觉质
+量、破浪或密集落水已完成。游泳样例用于验证输入、相机和当前水场接触；排水体积、垂直冲击和完整双向能量
+耦合不在本轮完成范围（2026-10-25 的采用交付了排水体积与 von Kármán 的入水冲击，见下文 Pioneer
+2026-10-22 一段；H. Wagner 的冲击压力分布、整体隐式耦合与三维自由液面仍不纳入，见下文已知局限）。
 
 当前契约和检查命令见 [water.md](spec/water.md)；保留范围见
-[GPU 水集成状态](spikes/water-modernization.md)。
+[GPU 水集成状态](spikes/water-modernization.md)（2026-10-25 起的范围见下文 Pioneer
+2026-10-22 一段与 water.md 46–70）。
 
 **Pioneer 2026-10-22（`explore/water`、`explore/water-nh`；2026-10-25 由 Amoris 采用）。** 所有者要
 求在 Amoris Pioneer 上把水物理继续做到前沿水准，并以三个游戏场景验收：河流汇入瀑布、泳池派对、强浪海
 滩冲浪。为此 Pioneer 越过上文 2026-10-21 的交付范围，在 `gpu_resident` 区域上加入以下能力，契约见
-[water.md](spec/water.md) 46–67，测量见 [liquids.md](bench/liquids.md) 7–19：
+[water.md](spec/water.md) 46–70，测量见 [liquids.md](bench/liquids.md) 7–23：
 
 - 物体排水的竖直双向耦合：浮体点和游泳者把水面下的体积作为压力水头加到水柱上，水量严格守恒（思路来自
   M. Müller, GDC 2008）。浮力按步末位置线性隐式求值（D. Baraff 与 A. Witkin, SIGGRAPH 1998），阻力隐
@@ -194,7 +196,7 @@ von Kármán 的合力，H. Wagner（1932）的水面堆高与局部冲击压力
 
 所有者在 2026-10-03 决定将前序实验统一到 Rust 宿主与 TypeScript 脚本栈：Lua 暂时搁置，
 放弃 C++ 宿主。本轮实现已迁入 Amoris；本仓库承载完整引擎及其技术栈，继续按可运行的
-端到端成果推进。Amoris Pioneer 保留前序实验与测量历史。
+端到端成果推进。
 
 本文固定 `Amoris` 的定位、技术栈及理由、架构、证明目标与来源。子系统的细节规格在 `docs/spec/`
 （多数来自 `Amoris Pioneer` rebuild 线，随代码一起导入），实施排期在 [schedule.md](schedule.md)。
@@ -210,10 +212,20 @@ von Kármán 的合力，H. Wagner（1932）的水面堆高与局部冲击压力
 路。来源为 `qiulinfan/amoris-pioneer` 的 `ed1a1bd84325dfbb3df0f2b4802a394e0ec8e804`，基线为第四次同
 步 `308acb4a`（树与 Amoris `160defe9` 相同）。每个集成提交取 Pioneer 主线上一段连续提交的末端树，不
 合并探索分支的历史；在同一提交内被取代的中间做法不进入 Amoris 历史，跨越多个提交的按水柱上涨抛出的入
-水水冠在取代它的提交中停用、随后删除。本次采用扩展了下文“GPU 水本轮交付范围（2026-10-21）”：冲浪、瀑
+水水冠在取代它的提交中停用、随后删除。本次采用扩展了上文“GPU 水本轮交付范围（2026-10-21）”：冲浪、瀑
 布以及物体与水的双向耦合进入交付，以泳池派对、河流瀑布和海滩冲浪三个游戏验收；三维自由液面仍不纳入，
 溅起的水只作表现。神经纹理的测试按所有者 2026-10-23 的决定移除。选取、折叠、删除与本机验证见 [集成说
 明](imports/pioneer-2026-10-25.md)；Windows/R1 的测量保留原平台与日期。
+
+2026-10-25，所有者让 Amoris Pioneer（`qiulinfan/amoris-pioneer`）与 `qiulinfan/amoris-samples` 退
+役：此后不再在 Pioneer 上工作，引擎只有 Amoris 这一条线；两个仓库都从 GitHub 删除，不归档。Pioneer
+的成果经 2026-10-05 的合并（`37fd91dd`，即本节开头所说的本轮实现迁入）与 2026-10-10（4.4、5.1 的采用
+注记）、2026-10-16、2026-10-25（上文与 [docs/imports/](imports/)）的精选集成进入
+Amoris；amoris-samples 唯一的游戏 blockcraft 已迁入 `samples/`（5.4）。记录里引用的 Pioneer 提交、分
+支与链接从此不能再解析，按原文保留；未采用的分支不再导入。已清理的运行输出公开在
+[amoris-benchmarks-results](https://github.com/qiulinfan/amoris-benchmarks-results) 的
+`sources/pioneer-*`；从未公开的内容（4.7 的 PhysX 同机计时、4.4 引用的 UE 5.7 对照等）随 Pioneer 删
+除，引用处各有注明。
 
 ## 2. 定位
 
@@ -246,6 +258,10 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
 5. **断点调试与 agent 原生调试的流畅性**：TypeScript 源码级断点（含条件断点、单步、局部变量、帧上
    求值）在真实的 Chrome DevTools 与 VS Code 中可用；同一调试核心以 MCP 工具暴露给 agent，并有
    引擎级的数据断点、因果追溯与时间回溯。
+
+2026-10-25 的状态（以上目标不变）：第 2 项中 LLM agent 经 MCP 玩游戏还没有做，绑定 seat 的 MCP 会话
+已实测，但没有跑过模型（[bench/player.md](bench/player.md) 3）；第 3 项的神经纹理自 2026-10-23 起是
+beta 功能，测试已移除（4.4）。
 
 ## 3. 原则
 
@@ -293,7 +309,7 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
 | Web 图形 | WebGPU（wgpu 的浏览器后端，同一份代码） | — | 证明 web 渲染；不做 WebGL 回退 |
 | 窗口与输入 | winit；gilrs（手柄） | 0.30 | 事实标准 |
 | 资源 | glTF 2.0（`gltf`）、PNG/JPEG（`image`）、网格处理（`meshopt`：LOD、顶点缓存）；导入在工作线程异步进行；内容哈希作为 ID | gltf 1.4、meshopt 0.6 | Amoris Pioneer 的 OBJ 导入冻结 14–27 秒，本线只走 glTF 且异步 |
-| 神经渲染 | 3D Gaussian Splatting（GPU 排序、与网格深度混合）；神经纹理压缩（潜变量网格 + 小型 MLP，在片元着色器里解码） | 自研 | 见 4.4 |
+| 神经渲染 | 3D Gaussian Splatting（GPU 排序、与网格深度混合）；神经纹理压缩（潜变量网格 + 小型 MLP，在片元着色器里解码；2026-10-23 起为 beta 功能） | 自研 | 见 4.4 |
 | 音频 | kira（cpal；web 上为 WebAudio） | 0.12 | 混音、空间音频、补间 |
 | agent 接口 | **CLI 优先**：一张命令目录 → `amoris` CLI（连接运行中的宿主，紧凑文本输出，`--json` 精确输出，帮助文本来自目录）、编辑器 WebSocket、脚本 API、测试；MCP（`rmcp`）是同一目录的薄投影 | rmcp 3.5 | agent 在 shell 里最顺手、最省 token；目录唯一，所有前端不漂移 |
 | 服务端 | axum + tokio（只在 presenter 一侧） | axum 0.8 | 游戏侧 crate 禁止依赖 tokio |
@@ -335,7 +351,8 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
 - 预算：每系统 100 万步、每 tick 200 万步、64 MiB 内存；步数不进入世界哈希。
 - 性能定位：解释执行比同等 Rust 规则慢 21–27 倍（Amoris Pioneer 的 script-native spike）。对策是让脚
   本做编排、让引擎做重活：物理、动画、寻路、感知、渲染都在 Rust 里，脚本经批量列接口调用。与 Godot
-  的 GDScript 处在同一量级，与 Unity C# 有差距；JIT 后端作为测量实验列入排期，不进入本轮默认路径。
+  的 GDScript 处在同一量级，与 Unity C# 有差距；JIT 后端作为测量实验列入待决事项（第 8 节第 1
+  项），不进入本轮默认路径。
   2026-10-14（Pioneer；数字为 2026-10-15 的安静复测：其他代理已结束，整次测量持机器的测量锁，各轮前
   CPU 负载 3–7%，五轮交错，共跑两次）：首次在引擎内测同一负载。`bench/rules` 经真实宿主
   （`install`、`swap`、`Sim::step`）运行，对照同引擎内逐 tick 世界摘要完全一致的 Rust 孪生实现：原生
@@ -447,7 +464,8 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
   静环境重测（分支 `explore/quiet`，`docs/bench/quiet-2026-10-09.md`）：两种后端画面一致；RTX 5060
   上 Direct3D 12 在 GPU 密集的 dense 场景慢约 24%，渲染器启动多约 0.9 s （DXC 编译管线），其余场景持
   平；Radeon 780M 上 Direct3D 12 快 12%–30%。这些代价由 Pioneer 继续优化（启动、dense 场景的 GPU 时
-  间、每帧 CPU 编码），测量记入 [bench/dx12.md](bench/dx12.md)。同日进展
+  间、每帧 CPU 编码；2026-10-25 Pioneer 退役后，下文 2026-10-10 重测时仍有的代价由 Amoris 跟进），
+  测量记入 [bench/dx12.md](bench/dx12.md)。同日进展
   （Pioneer，`explore/d3d12perf`，单代理测量）：渲染器的管线改为多线程并发创建（浏览器中仍按顺
   序），RTX 5060 上 Direct3D 12 的 `Renderer::new` 从约 0.93 s 降到约 0.18 s（Vulkan 从约 0.10 s 降
   到约 0.05 s）；前向着色器只在管线拥有运动与法线目标时才计算这两项（间接光占比始终计算：省去它时
@@ -580,7 +598,8 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
   定；auto 按测量的代价决定：用 GPU 时间戳逐帧交替测量有无预通道时不透明通道（含预通道）的耗时，另一
   种便宜 5% 以上才切换，之后定期复测（结论不变则间隔加倍），单阶段与两阶段的帧分别决定；没有时间戳时
   不开。默认模式由测量决定，记入 [bench/prepass.md](bench/prepass.md)。理由：与 UE 5.7 的对照（分支
-  `explore/ue5`）中，dense 场景关闭遮挡剔除时我们的帧时间是 UE 的 2 到 3 倍，差别正是 UE 前向渲染器
+  `explore/ue5` 的 `docs/bench/ue5-dense.md`；该文从未公开，2026-10-25 随 Pioneer 删除，已引用的数字
+  照旧）中，dense 场景关闭遮挡剔除时我们的帧时间是 UE 的 2 到 3 倍，差别正是 UE 前向渲染器
   的深度预通道（只画深度约 12 ms，着色约 2.7 ms）：我们按绘制顺序着色，为视锥内约 48 万个立方体（可
   见的只有 443 个）的过度绘制付费。遮挡剔除按实例剔除，覆盖不到 auto 关闭、首帧、去遮挡以及可见物体
   之间的过度绘制；预通道补上这些情形，代价是多一遍几何与深度的读写，所以何时开启由测量决定。规格见
@@ -772,7 +791,8 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
   taa，msaa 变 msaa+taa，采样数不变），`FrameStats` 报告实际模式。理由：UE 5.7 新项目的默认配置以约
   61% 的屏幕百分比渲染、再用 TSR 重建到输出分辨率（单 TSR 在 RTX 5060 上 3.55 与 3.95 ms，Direct3D
   12 与 Vulkan；5.2 到 6.6 ms 是 Nanite 配置下 100% 分辨率的 TSR；见 explore/ue5 的
-  `docs/bench/ue5-dense.md` 5.3），要在相同开销下与之比较，引擎也须能降低内部分辨率；以现有 TAA 为基
+  `docs/bench/ue5-dense.md` 5.3，该文从未公开，2026-10-25 随 Pioneer 删除），要在相同开销下与之
+  比较，引擎也须能降低内部分辨率；以现有 TAA 为基
   础只增加一条重建路径而不增加通道，比例 1.0 时完全不变。同日补充（Pioneer，测量之后；复审后更新；开
   销为同日空闲机器上的复测）：比例 1.0 时与 master `b7be59a2` 的构建逐像素相同
   （`tools/render/build_compare.py`，两块 GPU、Direct3D 12 与 Vulkan、四种抗锯齿与 GTAO 组合，共 120
@@ -938,7 +958,7 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
   运行环境；原生菜单、目录选择器和宿主生命周期由桌面主进程负责。此项替换此前待实施的 Tauri
   包装计划，不更改模拟、渲染器或命令接口。实现与验证见 [desktop.md](spec/desktop.md)。
 - 视口：引擎渲染器编译到 wasm，在页面里用 WebGPU 绘制；场景由宿主经 WebSocket 推送快照与差量，
-  资源经 HTTP 获取。原生窗口（Metal/Vulkan）用于独立运行与 Play。
+  资源经 HTTP 获取。原生窗口（Metal/Vulkan/Direct3D 12）用于独立运行与 Play。
 - 权威：唯一权威是宿主进程里的世界。编辑器的每次修改都是一条命令，进入可撤销的事务历史；agent
   经 MCP 的修改进入同一历史。
 - 面板：层级树、检视器（由 JSON Schema 生成）、视口（拾取、平移/旋转/缩放 Gizmo、吸附）、资源
@@ -1004,6 +1024,10 @@ Rapier（确定性配置、SIMD+并行配置）与 Jolt（原生 C++ 构建，�
 PhysX 的结果仍在 Pioneer 私有记录中，未获公开许可的数值不进入本仓库；工具、方法和适用边界见
 [physics-r1.md](bench/physics-r1.md)。这次集成不据此宣称已达到 PhysX/Chaos 的性能目标。
 
+2026-10-25：Unity/PhysX 一侧的同机计时从未公开，随 Pioneer 删除；同批运行中 Rapier 一侧的输出公开在
+amoris-benchmarks-results 的 `sources/pioneer-physx-20261015`。要与 PhysX 对照，须用
+`bench/physics/scripts/r1_bench.py` 重测。
+
 2026-10-15（Pioneer）：物理缓存改用第 2 版布局（`layout 2`），固定刚体碰撞体的形状不再写进缓存的字
 节。第 1 版把 Rapier 的整个 `PhysicsWorld` 写成缓存，关卡级的三角网格因此在每个快照、每 tick 的哈希
 与每次 fork 里都再写一遍，而它本来就在持久化的 `Collider` 组件里：999,698 个三角形的地形使缓存达到
@@ -1038,7 +1062,7 @@ wgpu 通过本机冷启动、移动、蒙皮与多采样回归后移除这些约
 ### 4.9 方块体积与第一人称身体（2026-10-17）
 
 2026-10-17，所有者决定引擎与游戏一起开发：开发游戏时发现的需求由引擎原生支持，不在游戏里绕开。游戏起
-初放在独立的公开仓库 [amoris-samples](https://github.com/qiulinfan/amoris-samples)，2026-10-25 起放
+初放在独立的公开仓库 `qiulinfan/amoris-samples`（2026-10-25 迁入后删除），2026-10-25 起放
 在引擎仓库的 `samples/`（5.4）。第一个这样的需求来自其中的 blockcraft（方块沙盒）：玩家能在静态世界
 里走，却不能挖方块、放方块。原因有四个：行走相机是 presenter 一侧的状态，不在世界里；脚本收不到指针
 输入；脚本既不能改几何，也不能发射线；行走碰撞只在加载时从场景文件建一次。
@@ -1206,7 +1230,8 @@ ns，WebAssembly 23 到 30 ns，比 M5 慢 1.3 到 1.9 倍；blockcraft 的 256�
 7. **先在 R1 跑 `tools/water/shallow_check.py`**，与 M5 的哈希链一致后才开始切片 A。
 8. **元胞自动机这几个切片里保留**（熔岩与旧场景用它），blockcraft 迁完后再定去留。
 9. **`Blocky` 风格**：每个方块上的水面画成平的（取其各列水面的平均），相邻方块之间画竖直的侧面，只改
-   绘制。blockcraft 用哪种风格由切片 A 的截图决定。
+   绘制。blockcraft 用哪种风格由切片 A 的截图决定（所有者 2026-10-18 看过截图后选 `Smooth`，
+   water.md 16.9）。
 
 审阅同时改正了草案的几处错误：开着水花时，只有在水花区域内才不画陡坡，否则 48 m 外的瀑布会消失；区域
 由场景或脚本创建，外观取区域自己的 `look`，不读 `field` 液体调色板的 `fog` 与 `splash`；一格液体的水
@@ -1251,7 +1276,9 @@ BLAKE3 上下文 `Amoris 2026-10-15 pocket-physics fixed shape v1`（带日期�
 进制素材 `samples/anim/models/hero.glb` 里记录生成工具的元数据。另有三处有界的旧名保留，各有移除的条
 件：`tools/eval/debug_eval.py` 解析运行记录时也认旧名，直到不再重新汇总改名前的运行；`.gitignore` 为
 改名前构建的宿主状态保留旧项目目录一行，直到本检出不再运行改名前的构建；`tools/amoris_rename.py` 及
-其测试写着规则本身，直到 Amoris 采用这次改名且不再构建改名前的树。P3D 魔数与哈希种子本不含这个名字，
+其测试写着规则本身，直到不再构建改名前的树（Amoris 已于 2026-10-16 采用这次改名；2026-10-25 Pioneer
+退役后，工具去掉了同步检出用的 `--git`，只留下改名前的树所用的 `--tree`、`--check` 与
+`--residual`）。P3D 魔数与哈希种子本不含这个名字，
 保持不变。与 2026-10-05 的命名清理一样不留兼容：引擎不再读取旧场景格式、旧模块名、旧环境变量与旧项目
 目录；改名前编译的脚本模块重新编译；存档照常加载，物理缓存的形状键不变；每个项目的世界哈希链与改名前
 逐字节相同。共享契约的 JSON 形状、语义、文本投影与错误码不变，版本仍为 0.2；Courier 开发基准的夹具随
@@ -1323,9 +1350,9 @@ Python：`tools/neural/`（神经资源训练）、`tools/eval/`（评测）。
   或新依赖边同时改 `crate-graph.toml`、architecture.md 5 与 5.1 的表。
 - `samples/` 放游戏与演示，每个游戏是一个自足的文件夹，带自己的 README。所有者决定把 amoris-samples
   的游戏“作为引擎用例搬到引擎里面”，不再放在独立仓库（取代 4.9 开头的安排）；Unreal 的 `Samples/` 与
-  Bevy 的 `examples/` 也把示例放在引擎仓库里（Godot 的示例另放仓库）。第一个迁入的是
-  `qiulinfan/amoris-samples` 的 blockcraft（`samples/blockcraft/`），引擎里用到它的示例与基准因此不
-  再依赖旁边的另一个检出。
+  Bevy 的 `examples/` 也把示例放在引擎仓库里（Godot 的示例另放仓库）。`qiulinfan/amoris-samples`
+  唯一的游戏 blockcraft 已迁入 `samples/blockcraft/`（d5e17f64），该仓库随后删除（第 1 节）；引擎里
+  用到它的示例与基准因此不再依赖旁边的另一个检出，新游戏直接在 `samples/` 里开始。
 - `tests/fixtures/` 放只有测试与检查读的项目：`controls/` 是检查的负对照，`sdk/` 是 SDK 的类型测
   试，`scenes/` 是测试、检查与测量工具读的场景（八个 `water-*`、`gi-room`、`pt-lab`）。
 - 生成的文件（场景、网格、纹理、方块数据、`.d.ts`、提交的 wasm 包）与写它们的生成器一起提交，改动靠
@@ -1354,6 +1381,10 @@ Python：`tools/neural/`（神经资源训练）、`tools/eval/`（评测）。
 基线（2026-10-04，Apple M5，Bevy 0.19.0 `many_cubes --benchmark`，160 万立方体，release）：sphere
 布局约 10.4 ms/帧，dense 布局约 13.0 ms/帧。
 
+2026-10-25 的状态（以上目标不变）：竞技场示例从未建成，Amoris 里没有这个样例；agent 玩家的实测用
+`samples/sailing-course`（[bench/player.md](bench/player.md)），LLM 经 MCP 的实玩还没有做；神经纹理
+自 2026-10-23 起是 beta 功能（4.4）。
+
 ## 7. 来源与取舍
 
 | 来源 | 取用 | 不取 |
@@ -1373,3 +1404,9 @@ Python：`tools/neural/`（神经资源训练）、`tools/eval/`（评测）。
    接受，后端迁移仍需以完整引擎的相同场景验证。方块体积（4.9）在原生一侧避开了组件规格哈希；浏览器
    worker 每 tick 不经缓存的完整快照连同 blockcraft 的整个体积只要 0.075 ms（M5，
    [bench/voxels.md](bench/voxels.md)），worker 维持现状。
+4. `check.full` 的 900 秒预算是否调整：完整检查不含 `gpus` 步骤已用时 15 分 16 秒（4.6；
+   [budgets.md](spec/budgets.md) 5.5）。
+5. 给 AMD 的驱动报告草稿是否提交、在哪里提交（4.4 的 2026-10-16 注记；
+   [bench/gpu-matrix.md](bench/gpu-matrix.md) 10）。
+6. 神经纹理：所有者 2026-10-23 定为 beta 功能，“之后再说”（4.4）；何时恢复测试、接入游戏或去掉，由所
+   有者决定。

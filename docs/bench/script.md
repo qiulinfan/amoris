@@ -602,7 +602,10 @@ took a second revision's sources as unchanged and kept the first one's binaries;
 runs used builds of the checkout, and one export, which were not affected.) The revisions are
 `explore/qjs`'s commits: 82cbde44 (b7be59a2 with the probes), 2f0d999c (P12) and 40e6f948 (the
 `Math` change). A merge that keeps the branch's history keeps them; after a squash, use the commits
-that carry the same three states.
+that carry the same three states. (2026-10-25: Pioneer is deleted, so these three no longer
+resolve. On Amoris main the nearest are the adjacent `a07e3a12` (base, with the probes), `25fffdcd`
+(P12) and `dfb75082` (the `Math` change), all from before the 2026-10-16 rename, which `build --rev`
+applies; they are main's trees, not the recorded ones, so a re-run measures them afresh.)
 
 ```sh
 python tools/runtime/qjs_bench.py build base --rev 82cbde44

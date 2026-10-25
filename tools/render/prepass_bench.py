@@ -6,11 +6,12 @@ Each run is one process: `many_cubes [--dense] --headless-bench FRAMES --size Wx
 (offscreen, submit to GPU idle per frame, timestamped passes) or `--bench FRAMES` (a window, no
 vsync, wall time between presented frames), with AMORIS_PREPASS and AMORIS_OCCLUSION set and the
 anti-aliasing fixed (AMORIS_AA=msaa, AMORIS_GTAO=off: the UE5 comparison's settings,
-docs/bench/ue5-dense.md on branch explore/ue5). A round runs every configuration once, in reverse
-order every other round, so drift spreads over all of them; nvidia-smi's temperature, clocks and
-power are recorded before and after every run. Every run is appended as one JSON line to `--out`
-(raw results stay in ignored `out/`); `--table FILE...` prints the minimum and median over the
-rounds per configuration, `--table FILE... --tails` the frame time's tail (p99, max) and the
+docs/bench/ue5-dense.md on branch explore/ue5, never published and deleted with Pioneer on
+2026-10-25; docs/bench/prepass.md 4 keeps its figures). A round runs every configuration once, in
+reverse order every other round, so drift spreads over all of them; nvidia-smi's temperature,
+clocks and power are recorded before and after every run. Every run is appended as one JSON line to
+`--out` (raw results stay in ignored `out/`); `--table FILE...` prints the minimum and median over
+the rounds per configuration, `--table FILE... --tails` the frame time's tail (p99, max) and the
 auto mode's probe frames: the frames it drew the way it drew less often, and (headless) their own
 frame time.
 
@@ -21,8 +22,8 @@ Build first: `cargo build --release -p amoris-render --examples`. Then, from the
     python tools/render/prepass_bench.py --table out/prepass/bench/headless.jsonl
 
 `--build NAME=DIR` adds another checkout's examples (built in DIR/target) as a configuration
-whose prepass is whatever that build does (for example master's, before the prepass existed), or
-with `--modes` the modes it names (AMORIS_PREPASS set as for this build).
+whose prepass is whatever that build does (for example an older main commit's, before the prepass
+existed), or with `--modes` the modes it names (AMORIS_PREPASS set as for this build).
 """
 import argparse
 import json

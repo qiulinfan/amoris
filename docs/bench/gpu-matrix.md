@@ -438,6 +438,13 @@ Each calibration hold takes 1 to 5 minutes and each whole-binary hold of 15 runs
 (9 while the other tracks ran); the loaded ones keep 16 busy loops running, so make them while no
 other work is timed. Then remove the probe again (`git checkout crates/amoris-render/src/trace.rs`).
 
+Since 2026-10-25 Pioneer is deleted: `3fdc5b83` no longer resolves, and `P` named the ignored
+`out/` of its checkout on R1. On Amoris main the old test is `bb7f6bdc`'s
+(`bb7f6bdc:crates/pocket-render/src/trace.rs`, the parent of `de153f20`, which brought the drift
+allowance; the path is from before the rename). The probe source and scripts (`probe_test.rs.txt`,
+`calib_runs.py`, `lib_runs.py`, `analyze.py`) are archived in amoris-benchmarks-results,
+`sources/pioneer-robust-20261016/probes/`.
+
 ## 8. The 780M's Vulkan timestamps: a driver fault (2026-10-16, `explore/vkvalid`)
 
 Branch `explore/vkvalid` from master `6af291db`; the machine and drivers of the table above (AMD's

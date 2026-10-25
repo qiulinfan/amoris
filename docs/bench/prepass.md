@@ -4,7 +4,8 @@ The opaque pass draws a depth prepass in `auto` mode by default: GPU timestamps 
 passes with and without it and the cheaper way is kept (docs/spec/prepass.md 5).
 `AMORIS_PREPASS=off|on|auto` overrides it; the browser uses `?prepass=`. Design and correctness
 contract: [prepass](../spec/prepass.md). Related: [occlusion](occlusion.md), [backend
-cost](dx12.md), the UE5 comparison on branch `explore/ue5` (`docs/bench/ue5-dense.md` there).
+cost](dx12.md), the UE5 comparison on branch `explore/ue5` (`docs/bench/ue5-dense.md` there, never
+published and deleted with Pioneer on 2026-10-25; section 4 keeps the figures it quoted).
 
 Status: **provisional**. Measured on 2026-10-10 while another agent shared the machine: every
 timing run held the shared GPU lock (no other GPU timing at the same time), but the other agent's
@@ -204,7 +205,8 @@ Sphere, headless (the prepass about a third dearer, so auto keeps it off and its
 
 ## 4. Against Unreal Engine 5.7
 
-The UE5 comparison (branch `explore/ue5`, `docs/bench/ue5-dense.md` 5.1 and 5.2) ran the same dense
+The UE5 comparison (branch `explore/ue5`, `docs/bench/ue5-dense.md` 5.1 and 5.2; never published,
+deleted with Pioneer on 2026-10-25; the figures below are as quoted then) ran the same dense
 grid in a 2560x1440 window on the same RTX 5060, forward shading with 4x MSAA. Frame and GPU time,
 medians of three rounds; Unreal's GPU time includes its post chain, as ours did on that branch
 (`AMORIS_TIME_POST=1`, 0.3 to 0.4 ms); this build's (section 3, window) does not:
@@ -453,4 +455,7 @@ held the GPU lock for 1 to 10 minutes, and `table` prints the tables above:
 a commit before the 2026-10-16 rename, as `bfdef38e` is, takes its whole exported tree, renamed with
 `python tools/amoris_rename.py --tree <dir>` and its viewport rebuilt there
 (`tools/build_viewport.sh`): only then does its page publish the `window.amorisSamples` that
-`tools/render/web_auto.py` reads.
+`tools/render/web_auto.py` reads. Since 2026-10-25 Pioneer is deleted, so `bfdef38e` no longer
+resolves and Amoris has no `master`: in place of `git archive master web`, export the whole tree of
+`929230ac`, the parent of `54b82df0` (the first browser auto-mode commit on main) and the last
+viewport before `auto_stats`, and rename it and rebuild its viewport as above.

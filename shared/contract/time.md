@@ -338,7 +338,7 @@ pub struct ContinueRequest {
   is waiting for. The commitment stands after a `waiting` answer; the seat then calls `wait`.
 - **`wait`** (real time and lockstep): answers when `until` holds (by default, when the seat has a
   decision point), at the episode's end, or at `max_wall_ms`. It is the long poll by which an agent
-  in real time learns of its decisions (perception.md, Push). As built on Pioneer (0.2), in stepped
+  in real time learns of its decisions (perception.md, Push). As built (0.2), in stepped
   pacing a player that holds the clock may `wait` too: it is a `step` of at most `ticks` (default
   and largest 36000) with `until: "decision"` unless the request names another condition, so an
   agent lets time pass the same way in either pacing (`docs/spec/player.md` 6); anyone else's is
@@ -467,7 +467,7 @@ system's effects were discarded and the tick completed (`docs/spec/simulation.md
 decides only when ticks run, never what they compute; whether a run halts is run configuration,
 recorded with its replay (`docs/spec/versions.md`, 3.7). Master found that a stopped game with the
 error in its state let agents find script bugs, which is spec-script's reason for the policy.
-As built on Pioneer (0.2): a failing script system reaches a tick's report as `sim.system_failed`
+As built (0.2): a failing script system reaches a tick's report as `sim.system_failed`
 whose `cause` is the script's problem, which halts like a `script.*` one; a developer's `resume`
 is the game thread's `time.control {pause: false}`, a hot update is any `scripts.swap` that lands,
 and a restore ends a halt too (mcp.md 7.1) (`docs/spec/player.md` 6).

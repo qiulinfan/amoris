@@ -16,11 +16,11 @@ Build first: `cargo build --release -p amoris-render --examples`. Then, from the
         --summary out/bench-runs/dx12/bench.json
 
 `--build NAME=DIR` (repeatable) times the examples of other checkouts too, each built with its
-own `target/` (for example master's next to a branch's), interleaved with the rest; without it the
-one build is this checkout's. `--cool C` waits before every round until the NVIDIA GPU is at C
-degrees or below (nvidia-smi). The summary keeps every run's numbers; the table printed at the end
-gives the median over the rounds of each configuration's medians (p50) and means, and the CPU's
-encoding time where the benchmark reports it.
+own `target/` (for example an older main commit's next to a branch's), interleaved with the rest;
+without it the one build is this checkout's. `--cool C` waits before every round until the NVIDIA
+GPU is at C degrees or below (nvidia-smi). The summary keeps every run's numbers; the table printed
+at the end gives the median over the rounds of each configuration's medians (p50) and means, and
+the CPU's encoding time where the benchmark reports it.
 """
 import argparse
 import json

@@ -310,7 +310,7 @@ def decision(c):
     if not c:
         return "-"
     if c.get("decided") is None:
-        # A build without the auto state (master's viewport before `auto_stats`).
+        # A build without the auto state (an older main commit's viewport before `auto_stats`).
         return "not reported"
     t = f", {c['timeouts']} timeouts" if c.get("timeouts") else ""
     if not c.get("decided"):

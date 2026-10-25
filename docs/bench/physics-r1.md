@@ -4,6 +4,10 @@ Status: benchmark tools adopted from `qiulinfan/amoris-pioneer` at
 `7cb80e0ee0d2f3f43a98330da368aaeb83c30ebe` (2026-10-16). The source's R1/Windows
 measurements remain private pending the owner's clearance to publish Unity comparisons. This
 document contains methods, not those measurements. The harness has not been run on this Mac.
+2026-10-25: the Unity/PhysX side of those measurements was never published and was deleted with
+Pioneer (charter 1, 4.7); the Rapier side of the same runs is archived in
+[amoris-benchmarks-results](https://github.com/qiulinfan/amoris-benchmarks-results)
+(`sources/pioneer-physx-20261015`). A comparison with PhysX means running the harness again.
 
 ## Workload and configurations
 

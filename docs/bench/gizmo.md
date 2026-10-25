@@ -126,7 +126,11 @@ against a real host. A phase must draw a non-flat canvas through the wasm render
 exception or renderer error; frame counters alone do not establish that anything was drawn.
 
 The superseded measurements on broken development pages are not retained as performance evidence.
-Their investigation is preserved in `qiulinfan/amoris-pioneer` at `09cea71a8`.
+Their investigation is preserved in `qiulinfan/amoris-pioneer` at `09cea71a8`. (2026-10-25: its
+write-up was never published and was deleted with Pioneer. Cleaned outputs are in
+amoris-benchmarks-results: the superseded dev-server check in
+`sources/pioneer-gizmo-20261015/review/dev-check.txt`, the dev-viewport load checks of
+`explore/robust` in `sources/pioneer-robust-20261016`.)
 
 ## 4. Correctness evidence
 
@@ -237,7 +241,8 @@ branch's `out/serveloop/bin/pocket-new.exe`. Those read the old names, while the
 `AMORIS_*` variables and the samples' scenes say `amoris-scene`, so a re-run builds its own:
 profiler.md 6.6 builds master `3fdc5b83` and this branch's `45f4c9fb`, binary and editor, each from
 its exported tree after `python tools/amoris_rename.py --tree`, into `out/serveloop/rerun/base` and
-`out/serveloop/rerun/new`.
+`out/serveloop/rerun/new`. Both commits went with Pioneer on 2026-10-25; profiler.md 6.6 names the
+main commits a re-run builds instead.
 
 ```bash
 R=out/serveloop/rerun; A=target/release/amoris.exe

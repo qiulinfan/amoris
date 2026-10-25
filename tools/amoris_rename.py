@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Renames the engine's old identifier `pocket` to `amoris` (the owner's decision of 2026-10-16,
-charter 5.1), in this checkout or in any exported tree.
+charter 5.1) in an exported tree, so that a commit from before the rename builds with the current
+identifiers (AGENTS.md, Building).
 
 The rules are fixed and idempotent: a tree they have renamed is left as it is. Benchmarks use
-this script to build historical commits with the current identifiers. `--tree` prints the
-regeneration steps for an exported tree. Amoris has adopted the rename; no Pioneer-specific
-synchronization policy is needed here.
+this script to build such commits (`tools/runtime/qjs_bench.py build --rev`,
+`tools/runtime/publish_bench.py --build-base`); it stays until no tree from before the rename is
+built (charter 5.1). `--tree` prints what a renamed tree needs before it builds. Without `--tree`,
+`--check` and `--residual` read this checkout's tracked files.
 
-    python tools/amoris_rename.py --git [--allow-dirty]    # this checkout: git mv, then rewrite
     python tools/amoris_rename.py --tree DIR               # a plain directory (export, old revision)
     python tools/amoris_rename.py --check [--tree DIR]     # dry run; exit 1 if anything would change
     python tools/amoris_rename.py --residual [--tree DIR]  # every `pocket` left, with the rule keeping it
@@ -40,14 +41,13 @@ import os
 import re
 import subprocess
 import sys
-import unicodedata
 from pathlib import Path
 
 LIT = re.escape
 
 # Step 1: protected spans, in this order. (id, pattern)
 GLOBAL = [
-    ("G1", LIT("PocketEngine")),  # another repository (AGENTS.md rule 5)
+    ("G1", LIT("PocketEngine")),  # another repository, not this engine's name (charter 5.1)
     ("G2", LIT("PocketError")),  # a superseded draft type name, recorded as such
     ("G3", r"https://github\.com/[^\s)>\]\"'`]*/(?:blob|tree|commit)/[0-9a-f]{7,40}"
            r"(?:/[^\s)>\]\"'`]*)?"),  # links pinned to a commit
@@ -106,19 +106,11 @@ KEPT_GLOBS = ["third_party/patches/*.diff", "third_party/rquickjs-sys-0.14.0/qui
 KEPT_EXCEPT = {"third_party/patches/p4-p7-build.diff"}
 SKIP_DIRS = {".git", "target", "out", "node_modules", ".claude"}
 
-REGENERATE = """\
-Regenerate, in order (AGENTS.md, Building; AMORIS_LLVM set, CARGO_NET_OFFLINE=true):
- 1. python third_party/vendor.py --offline, then python third_party/vendor.py --check --offline
- 2. cargo metadata --offline --format-version 1 >/dev/null   (Cargo.lock: package names only)
- 3. cargo fmt --all   (use order); rustfmt --edition 2024 tools/splats/web_harness/src/lib.rs
- 4. cargo xtask gen   (the clippy copies)
- 5. cargo test --release -p amoris-script --features transpile --test prelude   (no bless)
- 6. cargo test --release -p amoris-render --test neural_mlp   (no bless)
- 7. bash tools/build_viewport.sh   (the render feed's FORMAT hashes frame.rs and visual.rs)
- 8. (cd tools/neural/splatfit && uv lock --offline)
- 9. the gi-room probes' scene_signature: cargo run --release -p amoris-render --example bake_gi
-    (samples/gi-room/lighting/probes.json's recorded settings), copying only the signature
-10. python tools/wrap_docs.py on each docs file whose line widths changed (listed above)"""
+BEFORE_BUILDING = """\
+Before building the renamed tree (AGENTS.md, Building):
+- build without --locked: cargo sorts its Cargo.lock again for the renamed packages;
+- a page that loads the tree's own web/viewport/pkg needs bash tools/build_viewport.sh there
+  first (the render feed's FORMAT hashes frame.rs and visual.rs, whose text the rename changes)."""
 
 
 def is_kept_file(rel):
@@ -230,19 +222,6 @@ def rename_path(rel):
     return "/".join(GENERIC.sub(lambda m: CASES[m.group(1)], part) for part in rel.split("/"))
 
 
-def width(line):
-    return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in line)
-
-
-def width_changes(old, new):
-    """`(line, old width, new width)` for every line whose display width changed."""
-    a, b = old.split("\n"), new.split("\n")
-    if len(a) != len(b):
-        return [(0, len(a), len(b))]
-    return [(i + 1, width(x), width(y)) for i, (x, y) in enumerate(zip(a, b)) if x != y
-            and width(x) != width(y)]
-
-
 # --- trees -------------------------------------------------------------------------------------
 
 
@@ -345,35 +324,23 @@ def report(moves, nmoved, changes, total, binaries):
     print(f"kept: {kept} ({detail})")
     if binaries:
         print(f"binary files holding the name (never rewritten): {', '.join(binaries)}")
-    widths = [(rel, w) for rel, old, new, _ in changes for w in width_changes(old, new)]
-    if widths:
-        print("line widths changed:")
-        for rel, (line, a, b) in widths:
-            print(f"  {rel}:{line}: {a} -> {b}")
 
 
-def apply(root, mode, allow_dirty):
+def apply(root):
+    """Renames the plain directory `root` (an exported tree) in place."""
     root = Path(root).resolve()
-    if mode == "git":
-        if not allow_dirty and git(root, "status", "--porcelain").stdout.strip():
-            sys.exit("amoris_rename: the checkout has changes; commit them or pass --allow-dirty")
-        files = git_files(root)
-    else:
-        files = tree_files(root)
+    files = tree_files(root)
     moves, nmoved = plan_paths(files)
-    _, total, binaries = scan(root, files)  # validates every file before anything moves
+    scan(root, files)  # validates every file before anything moves
     for old, new in moves:
         Path(root, new).parent.mkdir(parents=True, exist_ok=True)
-        if mode == "git":
-            git(root, "mv", old, new)
-        else:
-            os.rename(Path(root, old), Path(root, new))
+        os.rename(Path(root, old), Path(root, new))
     files = [rename_path(f) for f in files]
     changes, total, binaries = scan(root, files)
     for rel, _, new, _ in changes:
         Path(root, rel).write_bytes(new.encode("utf-8"))
     report(moves, nmoved, changes, total, binaries)
-    print(REGENERATE)
+    print(BEFORE_BUILDING)
 
 
 def check(root, mode):
@@ -431,27 +398,21 @@ def main():
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # paths and lines hold CJK text
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     act = ap.add_mutually_exclusive_group()
-    act.add_argument("--git", action="store_true", help="rename this checkout (git mv, rewrite)")
     act.add_argument("--check", action="store_true", help="dry run; exit 1 if anything would change")
     act.add_argument("--residual", action="store_true", help="list every remaining occurrence")
     ap.add_argument("--tree", metavar="DIR", help="rename a plain directory (or check it)")
-    ap.add_argument("--allow-dirty", action="store_true", help="--git on a checkout with changes")
     args = ap.parse_args()
     repo = Path(__file__).resolve().parent.parent
     root, mode = (Path(args.tree), "tree") if args.tree else (repo, "git")
     try:
-        if args.git:
-            if args.tree:
-                ap.error("--git renames this checkout; --tree DIR alone renames a directory")
-            apply(repo, "git", args.allow_dirty)
-        elif args.check:
+        if args.check:
             sys.exit(check(root, mode))
         elif args.residual:
             residual(root, mode)
         elif args.tree:
-            apply(root, "tree", True)
+            apply(root)
         else:
-            ap.error("give --git, --tree DIR, --check or --residual")
+            ap.error("give --tree DIR, --check or --residual")
     except ValueError as e:
         sys.exit(f"amoris_rename: {e}")
 

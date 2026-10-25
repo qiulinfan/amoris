@@ -1,6 +1,7 @@
 # Occlusion culling
 
-Status: Draft, implemented on branch `explore/hiz` (2026-10-09)
+Status: Draft. Implemented (Pioneer `explore/hiz`, 2026-10-09); on Amoris main since 2026-10-10
+(charter 4.4's adoption of that date).
 
 Charter: 4.4 ("compute shaders cull against the frustum and, with a Hi-Z pyramid, against
 occlusion"; the Pioneer note of 2026-10-09 fixes the two-phase form, the auto mode and the switch),

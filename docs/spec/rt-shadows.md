@@ -1,7 +1,8 @@
 # Ray-traced sun shadows (opt-in)
 
-Status: implemented 2026-10-09 (Pioneer), branch `explore/rt`; charter 4.4, the decision of the
-same date. Measurements: [bench/rt-shadows.md](../bench/rt-shadows.md). Any project can use it:
+Status: Implemented (Pioneer `explore/rt`, 2026-10-09); on Amoris main since 2026-10-10 (charter
+4.4's adoption of that date); charter 4.4, the decision of 2026-10-09. Measurements:
+[bench/rt-shadows.md](../bench/rt-shadows.md). Any project can use it:
 `AMORIS_RT_SHADOWS=1 amoris serve samples/anim` (or `amoris play`; both read the variable when they
 open the GPU; the serve path's captures were checked).
 

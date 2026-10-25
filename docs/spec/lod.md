@@ -1,6 +1,7 @@
 # Levels of detail
 
-Status: Draft, implemented on branch `explore/lod` (2026-10-09)
+Status: Draft. Implemented (Pioneer `explore/lod`, 2026-10-09); on Amoris main since 2026-10-10
+(charter 4.4's adoption of that date).
 
 Charter: 4.4 (the Pioneer note of 2026-10-09 on mesh LOD: where levels are made, how they are
 picked and drawn, the switch), 4.1 (meshopt for LOD, vertex cache and meshlets), 3 item 7

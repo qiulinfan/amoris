@@ -82,6 +82,12 @@ runner registers the MCP server (its tools `mcp__amoris__*`). Requests, answers,
 the text projection and the error codes did not change, so the contract stays 0.2 and the runner
 protocol version 1: like the crate layout, these names are the engine's, not the contract's.
 
+On 2026-10-25 the owner retired Amoris Pioneer and deleted it (charter 1). The passages that said
+what was "As built on Pioneer" now say "As built" (here, mcp.md 14, sailing.md and time.md), and
+mcp.md 14 names the server as Amoris's own, amoris-mcp. Only the attribution changed: what was
+built, the requests, answers and codes did not, so the contract stays 0.2; the 0.2 row above keeps
+its words as recorded.
+
 ## Contract record
 
 The authoritative contract and benchmark live in this repository under `shared/contract/` and
@@ -316,7 +322,7 @@ assembles one `GameDefinition`, validates it at load (every name referenced exis
 unique, units match suffixes) and refuses to start a game whose definition fails, with the problems
 as `{code, message, detail}` objects (errors.md, code `definition.invalid`).
 
-As built on Pioneer (0.2): a project declares its players with `[player]` in `project.toml`, naming
+As built (0.2): a project declares its players with `[player]` in `project.toml`, naming
 its perception file (profiles, instruments, kinds with their facts and affordances, events) and an
 engine action catalog. That declaration is world state (`PlayerSpec`), so a snapshot, a fork and a
 replay carry it and rebuild the definition from it (`docs/spec/player.md` 2 and 3). Intents a

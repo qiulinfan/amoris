@@ -13,10 +13,12 @@ Raw JSON goes to --out (ignored) with the machine's conditions and summary.md. `
 LABEL=path/to/publish_bench.exe` times another build in the same turns (its cached mode only).
 
 `--build-base REV --into DIR` builds the base to compare with: this checkout's example compiled
-against the runtime of commit REV (one without `SnapshotCache`, such as master before the serve
-loop's changes), with the cache's lines swapped for `Game::snapshot`, so both builds run the same
-harness. It extracts REV with `git archive` into DIR/src, builds there into DIR/target (its own
-target directory) and writes DIR/publish_bench-REV.exe; then pass that to `--also`.
+against the runtime of commit REV (one without `SnapshotCache`, an older main commit such as
+`c4d33d6f`, the parent of `0b444a23` and the last before the serve loop's changes; it predates the
+2026-10-16 rename, which `--build-base` applies), with the cache's lines swapped for
+`Game::snapshot`, so both builds run the same harness. It extracts REV with `git archive` into
+DIR/src, builds there into DIR/target (its own target directory) and writes
+DIR/publish_bench-REV.exe; then pass that to `--also`.
 """
 
 import argparse

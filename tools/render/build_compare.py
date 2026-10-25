@@ -13,13 +13,13 @@ occlusion culling off.
 Build first, in both checkouts: `cargo build --release -p amoris-render --examples`. Then, from
 this repository's root:
 
-    python tools/render/build_compare.py --before ../master --adapters nvidia,780m \\
-        --summary docs/evidence/d3d12perf/old-vs-new.json
+    python tools/render/build_compare.py --before ../amoris-base --adapters nvidia,780m \\
+        --summary out/build-compare/old-vs-new.json
 
-A build from before the 2026-10-16 rename reads the old names and silently ignores the AMORIS_*
-variables set here (backend, adapter, AA, GTAO, occlusion), so its frames would come from its
-defaults: build such a `--before` from its exported tree after `tools/amoris_rename.py --tree`
-(AGENTS.md, Building).
+where ../amoris-base is a worktree or exported tree of an older main commit. A build from before
+the 2026-10-16 rename reads the old names and silently ignores the AMORIS_* variables set here
+(backend, adapter, AA, GTAO, occlusion), so its frames would come from its defaults: build such a
+`--before` from its exported tree after `tools/amoris_rename.py --tree` (AGENTS.md, Building).
 
 The summary lists every pair's RMSE and maximum difference (8-bit units) and the share of pixels
 off by more than 1; the captures stay under `--out`.

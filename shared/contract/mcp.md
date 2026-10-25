@@ -1,6 +1,6 @@
 # MCP tools
 
-Status: Draft, slice 0. Maintained in Amoris's `shared/contract/`. Section 14: what Pioneer built.
+Status: Draft, slice 0. Maintained in Amoris's `shared/contract/`. Section 14: what is built.
 Contract version 0.2 (README, Versioning).
 
 Charter: 3.1 (pull perception, token budgets, the marked omniscient view), 3.3 (fork, restore,
@@ -774,10 +774,10 @@ layer.
 8. **Idempotent retries.** A client that retries a timed-out `act` would apply it twice. Not in
    slice 2; if traces show it, an optional client `request_id` remembered per session.
 
-## 14. As built on Pioneer (0.2)
+## 14. As built (0.2)
 
-Pioneer's MCP server is a projection of the runtime's command catalog into a few grouped tools,
-each an `action` over catalog methods (`docs/spec/server.md`), rather than one typed tool per
+Amoris's MCP server (amoris-mcp) is a projection of the runtime's command catalog into a few grouped
+tools, each an `action` over catalog methods (`docs/spec/server.md`), rather than one typed tool per
 request (decision 1 above). The player-facing requests arrived on that design
 (`docs/spec/player.md` 7):
 

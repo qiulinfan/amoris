@@ -1,7 +1,8 @@
 # Neural texture compression
 
-Status: implemented 2026-10-09 (Pioneer), branch `explore/neural`; charter 4.4 and its note of the
-same date (training runs in the engine's wgpu compute, not Python/PyTorch). Measurements:
+Status: Implemented (Pioneer `explore/neural`, 2026-10-09); on Amoris main since 2026-10-10 (charter
+4.4's adoption of that date), a beta feature since 2026-10-23 (7); charter 4.4 and its note of
+2026-10-09 (training runs in the engine's wgpu compute, not Python/PyTorch). Measurements:
 [bench/neural-textures.md](../bench/neural-textures.md). The lost branch `feat/neural` (schedule
 3.3) left no code; this is a new implementation, compared with its reported numbers where they
 exist.

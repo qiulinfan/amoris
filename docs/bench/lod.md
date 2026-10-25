@@ -1,7 +1,8 @@
 # Levels of detail: measurements
 
-Status: branch `explore/lod`, 2026-10-09; native timings re-measured on a quiet machine the same
-day (section 9), which supersedes those of sections 2 and 4.
+Status: measured on Pioneer's `explore/lod`, 2026-10-09 (on Amoris main since 2026-10-10, charter
+4.4); native timings re-measured on a quiet machine the same day (section 9), which supersedes
+those of sections 2 and 4.
 
 Spec: [docs/spec/lod.md](../spec/lod.md). Evidence: `out/bench-runs/lod/`. Every timing in sections
 2 to 7 is **provisional**: three other agents built and ran GPU work on the same machine at the same
@@ -241,7 +242,9 @@ source](https://github.com/qiulinfan/amoris-pioneer/blob/9a3e4b08149596292026298
 and [recorded
 trials](https://github.com/qiulinfan/amoris-benchmarks-results/tree/main/sources/pioneer-20261010/docs/evidence/lod)
 remain in Pioneer at the fixed source commit. It made its own device; the production renderer and
-browser do not use it. The existing indexed LOD path and its defaults are unchanged.
+browser do not use it. The existing indexed LOD path and its defaults are unchanged. (2026-10-25:
+the standalone source was never published and was deleted with Pioneer; the recorded trials stay in
+amoris-benchmarks-results.)
 
 **Who exposes them** (historical
 [survey](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/lod/mesh-shader-survey.json)):

@@ -1,9 +1,11 @@
 # Gaussian splats
 
-Status: Draft, implemented on branch `feat/splat` (2026-10-04); the compute tile rasterizer, the
-anti-aliased mode, splats in the entity-id pass and stable ties on `explore/splats` (2026-10-09,
-Amoris Pioneer); the quads stay the default rasterizer on every adapter (2026-10-10, after the quiet
-re-measurement, `explore/quiet2`)
+Status: Draft. Implemented (Pioneer `feat/splat`, 2026-10-04); on Amoris main since 2026-10-05
+(the merge of Pioneer's Rust and TypeScript implementation, `37fd91dd`). The compute tile
+rasterizer, the anti-aliased mode, splats in the entity-id pass and stable ties: Pioneer
+`explore/splats`, 2026-10-09; on Amoris main since 2026-10-10 (charter 4.4's adoption of that
+date). The quads stay the default rasterizer on every adapter (2026-10-10, after the quiet
+re-measurement, `explore/quiet2`).
 
 Charter: 4.4 (neural rendering: 3D Gaussian Splatting with a preprocess compute shader for
 projection, culling and spherical harmonics, a GPU radix sort and instanced quad blending composited

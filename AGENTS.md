@@ -89,8 +89,9 @@ from `qiulinfan/amoris-samples`; its integration commit names the source commit.
    recorded (docs/bench/), never a pass condition.
 4. Testing is light and targeted: run the tests of the crate you touch; run the workspace before a
    commit that touches shared code. Research, reach and performance come first.
-5. Material brought from another repository (Amoris, aipocket, PocketEngine) names its source
-   repository and commit in the commit message.
+5. Material brought from another repository (third-party code; earlier, the now-retired Amoris
+   Pioneer and amoris-samples) names its source repository and commit in the commit message, as
+   `Source-repository:` and `Source-commit:` trailers.
 6. Owner-facing explanations are Chinese; code, identifiers, commit messages and specs are English.
    The charter and schedule are Chinese.
 7. Markdown under `docs/` is hard-wrapped at 100 display columns (CJK characters count two).
@@ -118,10 +119,10 @@ credential cleanup. File-verification records remain local, including in that ar
   variables apply to it; `tools/runtime/qjs_bench.py build --rev` and `tools/runtime/publish_bench.py
   --build-base` do this themselves. Cargo then sorts the tree's lock again, so such a build goes
   without `--locked`; a page that loads the tree's own `web/viewport/pkg` needs
-  `tools/build_viewport.sh` there first. The other regeneration steps `--tree` prints are for a
-  sync. A build made before the rename, as the binaries saved under `out/`, ignores the `AMORIS_*`
-  variables that every tool running another build sets (`--before`, `--build NAME=DIR`, `--exe`,
-  `--amoris LABEL=PATH`) and refuses the renamed scenes: a re-run builds it again this way.
+  `tools/build_viewport.sh` there first (`--tree` prints both). A build made before the rename, as
+  the binaries saved under `out/`, ignores the `AMORIS_*` variables that every tool running another
+  build sets (`--before`, `--build NAME=DIR`, `--exe`, `--amoris LABEL=PATH`) and refuses the
+  renamed scenes: a re-run builds it again this way.
 - `cargo build --release` builds the workspace; `cargo xtask check` runs the full local check.
   Its `gpus` step (after `test`, left out by `--quick`; owner, 2026-10-16) runs `amoris-render`'s
   GPU tests on every GPU adapter and native backend of the machine, `auto` on the adapters but the

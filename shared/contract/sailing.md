@@ -263,7 +263,7 @@ supersedes the holding `trim_sail`, and the sail stays trimmed because `sail_to`
 - A typical agent loop in stepped pacing is three calls a decision: `act` (start an intent),
   `step {ticks: 36000, until: "decision", observe: {}}` (which returns the next decision with an
   observation), and the agent's own reasoning. At 60 ticks a second a ten-minute leg is one `step`.
-- **As built on Pioneer (0.2)**, in `samples/sailing-course` (`docs/spec/player.md` 8): the loop
+- **As built (0.2)**, in `samples/sailing-course` (`docs/spec/player.md` 8): the loop
   is `observe`, `act`, `wait` (a `step` until the next decision point, time.md); the default
   filter adds `interact.ignored`, so a crate the crew could not take aboard is a decision too; the
   episode ends in the tick the course rule emits `course.finished` (rounding a mark is coming

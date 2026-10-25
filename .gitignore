@@ -6,11 +6,6 @@ node_modules/
 # Local state of the tools and of runs
 .cache/
 out/
-# Editor and SDK packages
-.vscode/
-editor/node_modules/
-sdk/node_modules/
-editor/dist/
 # Python
 __pycache__/
 .venv/
@@ -31,6 +26,7 @@ samples/town-walk/lighting/town-probes.json
 
 # Personal environment files (at every depth)
 .DS_Store
+.vscode/
 .obsidian/
 .idea/
 *.code-workspace
@@ -45,8 +41,6 @@ logs/
 *.log
 *.tlog
 /docs/evidence/
-/docs/imports/files.json
-/docs/imports/commits.json
 /docs/bench/physics/*.txt
 /docs/bench/physics/*.jsonl
 /bench/agent-dev/control-results.json

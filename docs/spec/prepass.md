@@ -1,7 +1,8 @@
 # Depth prepass
 
-Status: Draft, implemented on branch `explore/prepass` (2026-10-10); the auto mode's browser
-revisions (readback lag, quantized timestamps) on branch `explore/webauto` (2026-10-14)
+Status: Draft. Implemented (Pioneer `explore/prepass`, 2026-10-10); on Amoris main since
+2026-10-10. The auto mode's browser revisions (readback lag, quantized timestamps): Pioneer
+`explore/webauto`, 2026-10-14; on Amoris main since 2026-10-16 (docs/imports/pioneer-2026-10-16.md).
 
 Charter: 4.4 (the Pioneer note of 2026-10-10 on the depth prepass; the opaque pass, two-phase Hi-Z
 and TAA notes of 2026-10-09), 4.1 (one renderer for Metal, Vulkan, Direct3D 12 and WebGPU).
@@ -17,10 +18,11 @@ is `crates/amoris-render/src/prepass.rs` (the modes, the auto mode), `renderer.r
 Why: on many_cubes' dense grid (1.6M cubes, about 482,000 in the frustum, 443 visible) with
 occlusion culling off, the opaque pass shades in draw order and pays for every overdrawn sample:
 Unreal Engine 5.7's forward renderer, which always draws a depth prepass, drew the same frame in a
-third of our time on Direct3D 12 (branch `explore/ue5`, `docs/bench/ue5-dense.md`). Occlusion
-culling (occlusion.md) removes hidden instances, not hidden samples: it does nothing when its auto
-mode is off, on the first frame and after a disocclusion, and nothing for overdraw among visible
-instances.
+third of our time on Direct3D 12 (branch `explore/ue5`, `docs/bench/ue5-dense.md`, which was never
+published and was deleted with Pioneer on 2026-10-25; bench/prepass.md 4 keeps the figures).
+Occlusion culling (occlusion.md) removes hidden instances, not hidden samples: it does nothing when
+its auto mode is off, on the first frame and after a disocclusion, and nothing for overdraw among
+visible instances.
 
 ## 1. A frame
 

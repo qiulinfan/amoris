@@ -1,6 +1,7 @@
 # The WebGPU baseline
 
-Status: Draft, implemented on branch `explore/webgpu` (2026-10-09)
+Status: Draft. Implemented (Pioneer `explore/webgpu`, 2026-10-09); on Amoris main since
+2026-10-10 (charter 4.4's adoption of that date).
 
 Charter: 4.4 ("browser WebGPU and native Metal/Vulkan run the same code; only features WebGPU offers
 by default are the baseline, native optional features such as multi-draw indirect and timestamp

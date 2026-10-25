@@ -1,8 +1,9 @@
 //! The sailing course's seeded variants for the lookahead bench and `tests/lookahead.rs`
-//! (docs/spec/player.md 8.1; docs/bench/player.md 5). They are Pioneer's own, not the shared
-//! benchmark's seeds: the wind follows tasks.md 6.2's formula, drawn with SplitMix64 rather than
-//! Python's `random.Random`; the crate placement is this bench's; and a developer's `world.edit`
-//! applies the variant at tick 0 rather than the benchmark's `new --params` and setup step.
+//! (docs/spec/player.md 8.1; docs/bench/player.md 5). They are the engine's own (first written on
+//! Pioneer), not the shared benchmark's seeds: the wind follows tasks.md 6.2's formula, drawn with
+//! SplitMix64 rather than Python's `random.Random`; the crate placement is this bench's; and a
+//! developer's `world.edit` applies the variant at tick 0 rather than the benchmark's
+//! `new --params` and setup step.
 //! The course's start, marks and Isle are read from the loaded game, so the variants follow the
 //! scene.
 #![allow(dead_code)] // each including crate uses part of it

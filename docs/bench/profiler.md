@@ -363,7 +363,11 @@ The recorded runs used builds made before the 2026-10-16 rename, which read the 
 branch at `45f4c9fb`). A re-run builds its own, each commit from its exported tree after
 `python tools/amoris_rename.py --tree <dir>`, so that it reads the `AMORIS_*` variables the tools
 set and the samples' renamed scene format (`tools/runtime/publish_bench.py --build-base` does this
-itself). From the branch's root, build
+itself). Since 2026-10-25 Pioneer is deleted and neither commit resolves: on Amoris main the nearest
+are `c4d33d6f` for `base` (the parent of `0b444a23`, before the snapshot cache) and `bf79ed95` for
+`new` (the end of the series that integrates the whole merged `explore/serveloop`, later than
+`45f4c9fb`), both from before the rename; use them in place of `3fdc5b83` and `45f4c9fb` below.
+They are not the recorded trees, so a re-run measures them afresh. From the branch's root, build
 `cargo build --release -p amoris-runtime --features transpile --example publish_bench`, the base
 harness
 `python tools/runtime/publish_bench.py --build-base 3fdc5b83 --into out/serveloop/base-build`
