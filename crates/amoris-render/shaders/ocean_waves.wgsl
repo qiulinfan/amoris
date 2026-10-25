@@ -134,7 +134,16 @@ fn waves_rows(@builtin(workgroup_id) group: vec3u, @builtin(local_invocation_ind
     var h = vec2f(0.0);
     // The Nyquist wave vectors have no partner of their own: left out, the field stays real.
     let nyquist = any(m == vec2i(-i32(N / 2u)));
-    if (length_k >= cascade.y && length_k < cascade.z && !nyquist) {
+    // The band [low, high) in the lattice's own units, where wave vectors on a bound (|m| = 1 and
+    // 16 in the first cascade, 2 in the others) lie exactly on it: |m|^2 is an integer, compared
+    // with the bounds squared less 0.05, more than their f32 rounding (0.002 at the largest bound,
+    // 128^2) and far below the gap of 1 between neighbouring |m|^2, so a vector on a bound belongs
+    // to the cascade it begins, on every device. A float |k| against the bound went either way
+    // with the vendor's rounding, so such a wave was drawn in two cascades or in none.
+    let m2 = f32(m.x * m.x + m.y * m.y);
+    let low = cascade.y / dk;
+    let high = cascade.z / dk;
+    if (m2 >= low * low - 0.05 && m2 < high * high - 0.05 && !nyquist) {
         let h0 = gauss(c, m) * amplitude(k, length_k, dk);
         let minus = gauss(c, -m) * amplitude(-k, length_k, dk);
         let phase = sqrt(G * length_k) * s.shape.w;

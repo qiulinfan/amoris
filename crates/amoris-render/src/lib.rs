@@ -47,6 +47,8 @@ mod skinning;
 mod sky;
 pub mod splash;
 pub mod splat;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod stderr_log;
 pub mod taa;
 pub mod terrain;
 pub mod trace;

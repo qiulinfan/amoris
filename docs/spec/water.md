@@ -3151,7 +3151,9 @@ switch them; off, the frames are those drawn without them.
 
 ### 57.7 Checks, cost and limits
 
-`cargo test -p amoris-render --test water_ripples`, on Metal and on Vulkan through MoltenVK:
+`cargo test -p amoris-render --test water_ripples`, on Metal and on Vulkan through MoltenVK; on R1
+(2026-10-23) also on the RTX 5060 and the 780M under Direct3D 12 and Vulkan
+(docs/bench/gpu-matrix.md 13):
 
 - A duck-sized point bobbing 1 cm at 2 Hz under a one-second envelope, in 3 m of still water: its
   rings' energy moves out from 1.59 to 3.19 m in 4 s, 0.400 m/s against the dispersion relation's
@@ -3258,7 +3260,12 @@ surface's focusing.
 
 ### 58.3 Checks, cost and limits
 
-`cargo test -p amoris-render --test water`, on Metal and on Vulkan through MoltenVK:
+`cargo test -p amoris-render --test water`, on Metal and on Vulkan through MoltenVK; on R1
+(2026-10-23) also on the RTX 5060 and the 780M under Direct3D 12 and Vulkan
+(docs/bench/gpu-matrix.md 13), where at `r1/backends`' tip NVIDIA's Direct3D 12 alone fails two
+cases older than `6c1c8e42`, both by single 8-bit steps: the patch culling's on every run, and
+`temporal_foam_pauses_with_simulated_time_and_reset_discards_its_history` under the parallel binary
+(it passes alone: NVIDIA's Direct3D 12 frames are not bit-repeatable at one step). The cases:
 
 - `a_camera_at_the_surface_splits_along_the_waterline_on_its_port`: looking level over flat water,
   with the eye 1.2 cm over the surface, at it and 1.2 cm under it, the first row in the water is
@@ -3600,6 +3607,18 @@ spectrum in finite depth water: 1. Spectral form", JGR 90(C1), 1985).
 - `the_synthesized_sea_holds_its_spectrum`, on the GPU: over the three tiles the heights' variance
   is 0.0489 m^2 against m0's 0.0522, the slopes' 0.0194 against 0.0199; every texel is finite;
   levels 4 and 8 average the texels of level 0 they cover, within f16 rounding.
+
+On R1 (2026-10-23) both pass on the RTX 5060 and the 780M under Direct3D 12 and Vulkan and on the
+baseline device, as does the seam test below. Each cascade takes the wave vectors of its band [low,
+high) compared in the lattice's units: the integer |m|^2 against the bounds over dk, squared, less
+0.05, which is more than their f32 rounding (about 0.002 at the largest, 128^2) and far below the
+gap of 1 between neighbouring |m|^2. The first cascade's |m| = 1 and 16 and the others' |m| = 2 lie
+exactly on a bound, and compared as a float |k| they fell in two cascades or none with the vendor's
+rounding, so the two GPUs drew the bay differently by a cascade's tile (30% of `ocean_shots`' mouth
+view at tick 2700 off by more than one 8-bit step, 6% after; the eye's view 0.05% either way). R1
+ran a relative tolerance of 1e-4 in its place (`b6210270`), which is 1.64 at the last cascade's
+upper bound |m| = 128, more than the gap: it lost no wave only because 16383 is not a sum of two
+squares. The two select the same wave vectors.
 
 `cargo test -p amoris-render --test water a_region_open_on_a_sea_with_its_look_meets_it_without_a_seam`,
 on Metal: seen from straight above, a region 4 m deep over a sand floor, open on the sea along -x,
@@ -4271,18 +4290,26 @@ f32 state words, checkpoints, programs and every earlier section's behaviour.
   current sources (`AMORIS_BLESS=1` rewrites it after a kernel changes); and a probe of 4096 inputs,
   ties between neighbouring floats, a fused multiply-add's tell-tale, an underflow, a negative zero,
   an inexact conversion and every function of `water_det.wgsl`, gives on the GPU the CPU's bits for
-  all 18 of its results, on Metal, Vulkan and the WebGPU baseline device.
+  all 18 of its results, on Metal, Vulkan and the WebGPU baseline device; on R1 (2026-10-23) on the
+  RTX 5060 and the 780M, each under Direct3D 12 (DXC) and Vulkan and on the baseline device under
+  Direct3D 12.
 - `cargo test --release -p amoris-app --test gpu_determinism`: nine samples' GPU water (the pool,
   the party with its boats, the river and its fall, 600 ticks of the surf with its sea, dispersion
   and plunging crests, the shore, the floaters, the feedback, the valley's joined regions and the
   storm's wind and rain, 67), each region's field digest after every tick, 3000 ticks, equals
-  `golden/water-digests.txt` on Metal, on Vulkan (MoltenVK) and on the WebGPU baseline device.
+  `golden/water-digests.txt` on Metal, on Vulkan (MoltenVK) and on the WebGPU baseline device; on
+  R1 (2026-10-23, unblessed) on the RTX 5060 and the 780M under Direct3D 12 and Vulkan and on both
+  GPUs' baseline devices. FXC cannot compile the kernels' `boundary_predict` (gpu-matrix.md 14).
 - `node tools/water_determinism_check.mjs`: the same samples in Chrome's game worker (Dawn and Tint
-  compiling the WGSL, not wgpu and naga) give the record's digests on the M5; with `--adapter
+  compiling the WGSL, not wgpu and naga) give the record's digests on the M5 and, in Windows Chrome
+  (Dawn over Direct3D 12), on R1's RTX 5060 and 780M; with `--adapter
   swiftshader`, on SwiftShader, Chrome's WebGPU on the CPU, a device of another kind entirely,
   over each sample's first 120 ticks (`--ticks 120`: a CPU takes six minutes for those).
 - `amoris hashes <sample>` gives the same world hash after every tick on Metal and Vulkan; before,
-  every scene with GPU water parted at its first tick.
+  every scene with GPU water parted at its first tick. On R1 (2026-10-23), surf-beach (600 ticks),
+  pool-party, river-falls, water-valley, water-storm and water-resident (300) give byte-identical
+  hashes on the RTX 5060 and the 780M under Direct3D 12 and Vulkan, equal to the M5's on Metal:
+  every tick's hash and the script bundle's. The machines agree, x86-64 and arm64 CPUs included.
 
 The cost is in [liquids.md](../bench/liquids.md) 18.
 
@@ -4290,8 +4317,20 @@ Limits:
 
 - A device that rounds f32 arithmetic otherwise than to nearest even computes other water; the
   probe and the record find it, no run refuses it.
-- Not run yet on R1 (NVIDIA and AMD, Direct3D 12 and Vulkan): the record lets one command check it
-  there.
+- FXC does not run these kernels (`boundary_predict` fails to compile, X3500; the owner's decision
+  of 2026-10-23: GPU water on Direct3D 12 needs DXC 1.8.2502 or newer). Nor does it draw any water
+  region, solved on the CPU or the GPU: it cannot compile `fs_shallow` (X3511), the fragment stage
+  of every region surface pipeline, and a Windows machine without the SDK's DXC uses it by default
+  (gpu-matrix.md 14).
+- In the browser a new device compiles the kernels' pipelines as its first ticks need them, seconds
+  each in Windows Chrome: on the 780M the pool party's first and fifth jobs took 12.2 and 14.4 s on
+  the play page with its viewport drawing, and its first job 13.6 s in a stepped run of the
+  determinism check with no viewport (gpu-matrix.md 13). So a host's first 600 jobs take
+  `waterStartTimeoutMs` (120 s) for the per-tick watchdog, and the player page is ready once its
+  view is and the game has run 60 ticks since the view became ready and since the last such job that
+  ran over 250 ms; meanwhile the page shows "Preparing the water…" (`web/game.js`, `web/player.js`,
+  web-export.md 3). Natively the same compiles stall the first ticks too; nothing compiles them
+  ahead.
 - The research examples that compare schemes (`water_radiation`, `water_shoreline`, the
   depth-transport lab) compose the f32 sources, not the deterministic kernels.
 
@@ -4416,7 +4455,8 @@ traces the water's reflected rays:
   the feed (the wind sea toward 90 degrees over the region's 32 m, the rain); a change to the rain
   sends it again; `Rain` persists through a snapshot and a restore with the world's hash; a region
   the wind does not blow on raises no wind sea.
-- `cargo test -p amoris-render --test rt_reflections`, on Metal (MoltenVK has no ray queries):
+- `cargo test -p amoris-render --test rt_reflections`, on Metal (MoltenVK has no ray queries) and on
+  R1 (2026-10-23) on the RTX 5060 and the 780M under Direct3D 12 and Vulkan:
   - a red block above the view: the march's image holds no red pixel, the traced one 676, all in
     the water;
   - a grey block in view, lit by the sun and a blue sky: over the 651 pixels whose traced colour it
@@ -4554,7 +4594,8 @@ The cost is in [liquids.md](../bench/liquids.md) 21.
 
 ### 69.1 Checks
 
-- `cargo test -p amoris-render --test water_spray` on Metal and Vulkan (MoltenVK): the spray's nine
+- `cargo test -p amoris-render --test water_spray` on Metal and Vulkan (MoltenVK), and on R1
+  (2026-10-23) on both GPUs under Direct3D 12, Vulkan and the baseline device: the spray's nine
   tests; listening to the water changes neither the spray nor the state, and the draw's list holds
   the slots of the parcels alive and no others, in slot order.
 - The pool party's cannonball drawn every three ticks from the pool's side (`scene_shots`, ticks
@@ -4596,10 +4637,11 @@ splashes (splashes.md 5) now also draws each region's crowns where they are wide
 ### 70.1 Checks
 
 - `tests/water.rs`'s `a_body_going_in_throws_a_crown_drawn_near_as_a_sheet_and_far_as_streaks` on
-  Metal, MoltenVK and the WebGPU baseline: a body's point going in at 6 m/s, fed as the feed's
-  stirring points, changes 4.6% of the frame from 2.5 m, where the surface draws its crown, and
-  0.019% from 60 m, where its parcels are under a pixel and the streaks draw it; one passing over
-  the water changes nothing.
+  Metal, MoltenVK and the WebGPU baseline, and on R1 (2026-10-23) on both GPUs under Direct3D 12,
+  Vulkan and the baseline device: a body's point going in at 6 m/s, fed as the feed's stirring
+  points, changes 4.6% of the frame from 2.5 m, where the surface draws its crown, and 0.019% from
+  60 m, where its parcels are under a pixel and the streaks draw it; one passing over the water
+  changes nothing.
 - The pool party's cannonball (`scene_shots`, ticks 786 to 807 every three, from the pool's side):
   the crown is a clear sheet with the pool and the board bent through it and glints at its rims,
   where a fan of grey streaks rose; pulled back fourfold along the view (about 14 m) it stays,

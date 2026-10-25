@@ -46,6 +46,7 @@ fn bench_foam(gpu: &Gpu, side: u32) {
     println!("{side},{:.5}", samples[samples.len() / 2]);
 }
 fn main() {
+    amoris_render::stderr_log::init();
     let args: Vec<_> = std::env::args().collect();
     if let Some(pair) = args.windows(3).find(|a| a[0] == "--compare") {
         let a = image::open(&pair[1]).unwrap().to_rgba8();

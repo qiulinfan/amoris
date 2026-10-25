@@ -31,7 +31,7 @@ cargo build --profile web --target wasm32-unknown-unknown -p amoris-viewport
 OUT=web/viewport/pkg
 mkdir -p "$OUT"
 wasm-bindgen --target web --no-typescript --out-dir "$OUT" \
-  target/wasm32-unknown-unknown/web/amoris_viewport.wasm
+  "${CARGO_TARGET_DIR:-target}/wasm32-unknown-unknown/web/amoris_viewport.wasm"
 if command -v wasm-opt >/dev/null; then
   wasm-opt -O3 --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext \
     --enable-mutable-globals "$OUT/amoris_viewport_bg.wasm" -o "$OUT/amoris_viewport_bg.wasm"

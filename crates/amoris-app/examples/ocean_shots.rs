@@ -61,6 +61,7 @@ fn paddle(g: &mut Game, sequence: &mut u64) {
 }
 
 fn main() {
+    amoris_render::stderr_log::init();
     let args: Vec<String> = std::env::args().collect();
     let arg = |name: &str| args.windows(2).find(|a| a[0] == name).map(|a| a[1].clone());
     let out = std::path::PathBuf::from(arg("--out").unwrap_or_else(|| "out/ocean".into()));

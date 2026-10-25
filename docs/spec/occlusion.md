@@ -454,7 +454,9 @@ fragment under water reading no farther up the refracted sun than `UNDERWATER_RE
 - `cargo run --release -p amoris-render --example shadow_cull -- compare` does the same on the
   benchmark scenes at 1280x720 (the mixed scene and its orbit, the many_cubes sphere and dense
   layouts with shadows, the LOD field at `t` 0 and 0.5 with levels on and off and walking) and
-  reports each cascade's instances and triangles off and on; `-- bench SCENE` times both modes in
+  reports each cascade's instances and triangles off and on (on R1 at `6926f8aa`, 2026-10-23: no
+  pixel changes on the RTX 5060 and the 780M under Direct3D 12 and Vulkan); `-- bench SCENE`
+  times both modes in
   interleaved blocks; `tools/shadow_cull_bench.py` runs both across backends, adapters and WebGPU's
   baseline device, and `games` runs `draw_paths --compare shadow_cull` on sample projects, with
   what each cascade drew ([bench/shadows.md](../bench/shadows.md) 2 to 4: no frame differed

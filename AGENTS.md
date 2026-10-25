@@ -96,7 +96,12 @@ credential cleanup. File-verification records remain local, including in that ar
   `AMORIS_BACKEND=dx12` names D3D12 explicitly on any Windows run). DXC comes from the newest
   Windows SDK whose `bin\<version>\x64\dxcompiler.dll` is DXC 1.8.2502 or newer, wgpu's minimum (or
   `AMORIS_DXC`; `AMORIS_DXC=fxc` for FXC; an older DXC loses the device, so it is passed over for
-  FXC); never enable wgpu's `static-dxc` (it downloads binaries). `AMORIS_ADAPTER=780m` (or an
+  FXC); never enable wgpu's `static-dxc` (it downloads binaries). With no SDK DXC found (a player's
+  machine without the SDK) and on Windows other than x86-64, FXC is used without a warning. FXC does
+  not run GPU water (owner, 2026-10-23; docs/bench/gpu-matrix.md 14): it cannot compile the
+  generated kernels' `boundary_predict` (X3500) or `fs_shallow` (X3511), the fragment stage of every
+  water region's surface, so under FXC no water region draws, CPU-solved or GPU. Water checks on
+  D3D12 need DXC 1.8.2502 or newer. `AMORIS_ADAPTER=780m` (or an
   index) picks an adapter on a two-GPU machine, for any backend. D3D12 needs wgpu's indirect
   validation for `first_instance` (gpu.rs sets it); `cargo test -p amoris-render` checks it on
   Vulkan and D3D12 (`indirect_draws_keep_their_first_instance`), `tools/backend_compare.py` compares

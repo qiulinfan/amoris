@@ -264,6 +264,7 @@ fn sound(heard: &[WaterAcoustics]) -> (Vec<[f32; 2]>, f64, usize) {
 }
 
 fn main() {
+    amoris_render::stderr_log::init();
     let args: Vec<String> = std::env::args().collect();
     let arg = |name: &str| args.windows(2).find(|a| a[0] == name).map(|a| a[1].clone());
     let sample = arg("--sample").unwrap_or_else(|| "river-falls".into());

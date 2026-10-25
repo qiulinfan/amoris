@@ -572,6 +572,7 @@ fn run(gpu: &Gpu, case: &Case, advection: Advection) -> Value {
 }
 
 fn main() {
+    amoris_render::stderr_log::init();
     let args: Vec<String> = std::env::args().collect();
     let arg = |name: &str| {
         args.windows(2)

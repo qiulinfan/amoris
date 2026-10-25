@@ -1,12 +1,15 @@
 // Plays an exported web game (cargo xtask export-web, docs/spec/web-export.md) in headless Chrome
 // with WebGPU and checks it as a player would see it: node tools/web_play_check.mjs <folder>
 // [--shots DIR] [--seconds S]. The folder is served without cross-origin isolation, as a static
-// host (itch.io) serves it. The check waits for the player page to be ready (the walker's camera
-// known, the models and textures in), then, as the seat `player` with the mouse captured (the
-// page's `forceCapture`: headless Chrome has no pointer lock), holds W and checks the walker moved,
-// turns the view down at the ground, clicks and checks the block in the crosshair went, and
-// picks the hotbar's water (slot 8, WATER_SLOT=) and places it, and checks the water region's
-// wet area grows as it runs off. It prints one JSON line:
+// host (itch.io) serves it. The check waits for the player page to be ready (web/player.js: its
+// view ready, the walker's camera known and the models and textures in, and the game run 60 ticks
+// since then and since the last warming GPU water job that ran over 250 ms; READY_S= seconds,
+// default 120), and fails `ready` at once if the game stops or its world halts (worker status
+// `halted`, such as GPU water that failed or timed out). Then, as the seat `player` with the mouse
+// captured (the page's `forceCapture`: headless Chrome has no pointer lock), holds W and checks the
+// walker moved, turns the view down at the ground, clicks and checks the block in the crosshair
+// went, and picks the hotbar's water (slot 8, WATER_SLOT=) and places it, and checks the water
+// region's wet area grows as it runs off. It prints one JSON line:
 // `{ok, checks: [{name, ok, ...}], frame_ms: {p50, p95, mean}, load: {...}, errors}`; WebGPU
 // validation errors and uncaught exceptions fail it. Exit code 0 when every check passed.
 // Chrome is found as tools/web_bench.mjs finds it (CHROME= overrides). VIEWPORT=WxH (default
@@ -156,6 +159,9 @@ for (let i = 0; i < Number(process.env.READY_S || 120) * 2 && !ready; i++) {
   ready = await evaluate("window.amorisPlayer && window.amorisPlayer.ready_ms ? window.amorisPlayer.ready_ms : null").catch(() => null);
   const stopped = await evaluate("window.amorisPlayer && window.amorisPlayer.amoris.stopped && window.amorisPlayer.amoris.stopped.message").catch(() => null);
   if (stopped) { note("[stopped] " + stopped); break; }
+  // A poisoned world halts without stopping the worker (GPU water that failed or timed out).
+  const halted = await evaluate("window.amorisPlayer && window.amorisPlayer.amoris.status && window.amorisPlayer.amoris.status.state === 'halted' ? JSON.stringify(window.amorisPlayer.amoris.status.error || null) : null").catch(() => null);
+  if (halted) { note("[halted] " + halted); break; }
 }
 const waited = ready ? null : await evaluate(`(() => { const p = window.amorisPlayer; if (!p) return null;
   const s = p.stats || {}; return { frames: p.frames, look: p.look, pending_assets: s.pending_assets, instances: s.instances,

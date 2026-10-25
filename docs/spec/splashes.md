@@ -208,7 +208,8 @@ day).
 | A gush where air becomes water, away from its feeder; down from a falling cell; nothing on first sight, on `reset`, past 48 m, or for a liquid without `splash`; the per-frame cap | `amoris-render` unit tests of `splash::` |
 | Stream feet found under falling columns, re-found when a chunk changes, nearest 64 kept | same |
 | A particle dies under a liquid surface, outside its region, at 4 s; dropped on a solid block it rests on it; a full ring drops the oldest | `amoris-render` GPU test `tests/splashes.rs` (each backend; under the WebGPU baseline) |
-| Through a metre of liquid the frame behind keeps far more blue than red; what stands in front of the liquid hides it, pixel for pixel | `amoris-render` GPU test `tests/fluid_surface.rs` (each backend; under the WebGPU baseline) |
+| Through a metre of liquid the frame behind keeps far more blue than red; what stands in front of the liquid hides it, pixel for pixel | `amoris-render` GPU test `tests/fluid_surface.rs` (each backend; under the WebGPU baseline; on R1, 2026-10-23, the RTX 5060 and the 780M under Direct3D 12 and Vulkan; it never finishes under FXC, gpu-matrix.md 14) |
+| An idle or emptied solver encodes no pass and takes no timestamps | `tests/splashes.rs` (`Fluid::encodes`) |
 | Frames with no living particle are unchanged | `cargo test -p amoris-render`, `tools/build_compare.py` against a build without splashes |
 | A bank broken in a blockcraft-like volume gushes, a waterfall churns its pool; shots for the owner | `amoris-app` example `splashes` |
 | GPU cost with the pool full and empty on the M5, the RTX 5060 and the 780M, and in Chrome | docs/bench/liquids.md |

@@ -194,6 +194,7 @@ fn attach_parent_console() {
 fn main() {
     #[cfg(windows)]
     attach_parent_console();
+    amoris_render::stderr_log::init();
     // Before anything records: replays carry this source, and `Verify` and the reuse of a
     // recorded bundle's compiled modules compare it (versions.md 3.1, replay.md 2.4).
     if let Err(v) = amoris_runtime::install_engine_version!() {

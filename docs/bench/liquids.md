@@ -818,7 +818,63 @@ spread. The party in the rain against the same scene with the rain at 0 mm an ho
 12 mm an hour draws 30,672 streaks: the rain costs a frame about 0.3 ms, the streaks most of it.
 The photons pass takes 0.07 ms more as the drops' ripples refract them.
 
-Not measured: R1, and the browser.
+**R1** (2026-10-24, `r1/backends` at 7c9d6ba4; the RTX 5060 Laptop GPU, driver 32.0.16.1714 on
+Direct3D 12 and 617.14 on Vulkan, and the Radeon 780M, 32.0.13062.3005 and 24.30.62.03; release,
+under R1's bench lock, the machine otherwise idle). The same `water_flicker.py` command on the party
+in the rain (its scene now), pixels flipping in over 30 and over 50 percent of the frames:
+
+| | 5060 D3D12 | 5060 Vulkan | 780M D3D12 | 780M Vulkan |
+|---|---|---|---|---|
+| now, the party in the rain | 6090, 37 | 6095, 37 | 5780, 31 | 5799, 34 |
+| no caustics | 438, 1 | 441, 1 | 444, 0 | 440, 1 |
+| no ripples | 1010, 1 | 1013, 1 | 952, 1 | 953, 2 |
+| MSAA + TAA | 1, 0 | 1, 0 | 0, 0 | 0, 0 |
+
+The two backends of a GPU agree within a few pixels and the GPUs within 5.0 to 5.5% (6090 and 6095
+against 5780 and 5799). Mean flip rates: 0.052 (5060), 0.052 (780M) now; 0.033 without caustics;
+0.0012 with TAA.
+
+The M5's 3897 above was measured on an earlier build (298447b6), and the M5 at the same build as
+R1 (the branch's tip, 2026-10-24, the same command) gives R1's counts:
+
+| | M5 Metal |
+|---|---|
+| now, the party in the rain | 6438, 43 |
+| no caustics | 520, 0 |
+| no ripples | 1191, 3 |
+| MSAA + TAA | 0, 0 |
+
+The rise from 3897 is not the water's: with the spray off (`AMORIS_SPLASHES=off`) the builds before
+and after the lattice crowns (33c55987, 3962 with the spray; 6926f8aa, 6429) both flip 6531 and 6532
+pixels. The crowns as first thrown (water.md 52, before 2026-10-23) scattered spray and its foam
+over the water across the measured box, and covered pixels that otherwise flip; the lattice crowns
+keep to their entries. So the M5 and R1 agree, and the water's own shimmer in the rain is the
+6000-odd pixels, the caustics' most of it.
+
+Cost, the command above on the party in the rain and on a copy whose rain is 0 mm an hour, medians
+over 300 frames, two runs of each, alternated (ms):
+
+| | 5060 D3D12 | 5060 Vulkan | 780M D3D12 | 780M Vulkan |
+|---|---|---|---|---|
+| frame interval, no rain | 10.77, 10.82 | 10.25, 10.96 | 24.52, 22.73 | 18.73, 18.87 |
+| frame interval, rain | 10.98, 10.79 | 10.71, 11.23 | 25.88, 23.04 | 19.57, 19.16 |
+| GPU interval coverage, no rain | 1.981, 1.980 | 1.594, 1.588 | 11.15, 10.29 | 9.30, 9.33 |
+| GPU interval coverage, rain | 2.012, 2.016 | 1.617, 1.619 | 12.13, 10.57 | 9.73, 9.54 |
+| `water+foreground`, no rain | 0.395, 0.396 | 0.344, 0.344 | 2.39, 2.18 | 2.21, 2.25 |
+| `water+foreground`, rain | 0.418, 0.420 | 0.366, 0.366 | 2.76, 2.55 | 2.62, 2.47 |
+| `water ripples`, no rain / rain | 0.533 / 0.542 | 0.507 / 0.516 | 2.75 / 3.00 | 2.39 / 2.39 |
+| `water caustics photons`, both | 0.194 | 0.103 | 0.87 to 0.99 | 0.47 to 0.50 |
+| `water caustics` (the resolve) | 0.006 to 0.007 | 0.009 | 0.03 to 0.04 | 0.03 to 0.04 |
+
+On the RTX 5060 the rain costs the GPU about 0.03 ms a frame, the streaks most of it. On the 780M it
+adds about 0.31 ms (Vulkan) and 0.37 ms (Direct3D 12) to `water+foreground` on the means of the two
+runs, against the M5's 0.18 ms on the same means (3.73 to 3.91 ms; 0.15 and 0.21 ms run by run, at
+298447b6): the M5's "about 0.3 ms" above is the whole frame's. Direct3D 12's runs on the 780M are
+spread too widely to give the whole frame's share. The photons pass takes no more with the rain on
+R1 (0.07 ms on the M5). The 5060's frames are paced by the headless capture, not the GPU (coverage 2
+ms of 11).
+
+Not measured: the browser.
 
 ## 21. Spray drawn as water (Pioneer, 2026-10-23)
 
@@ -893,7 +949,8 @@ first-person seat, not the views above; the GPU time is the sum of the timestamp
 | river-falls | 4.67, 4.69 ms (5.28, 5.35) | 2.32, 2.36 ms | 9.55, 9.52 ms |
 | surf-beach | 10.14, 10.29 ms (13.19, 12.73) | 6.54, 6.55 ms | 13.36, 12.93 ms |
 
-Not measured: R1 (the RTX 5060 and the 780M), which cannot have this code until it is pushed.
+Not measured on R1 (the RTX 5060 and the 780M): R1 ran this code (gpu-matrix.md 13), but these
+timings were not taken there.
 
 ## 23. The refracting liquid surface and lattice crowns (Pioneer, 2026-10-23)
 
@@ -941,4 +998,5 @@ full-frame targets; it now runs as compute passes that write only the pixels wit
 ablation of its stages (leave out the filter, the composite, all) could not be measured while
 another session's build ran, and was not repeated.
 
-Not measured: R1 (the RTX 5060 and the 780M), which cannot have this code until it is pushed.
+Not measured on R1 (the RTX 5060 and the 780M): R1 ran this code (gpu-matrix.md 13), but these
+timings were not taken there.

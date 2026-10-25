@@ -48,8 +48,9 @@ shaded fragment (overdraw included), where the cascades cost four depth passes.
   `RAY_FLAG_TERMINATE_ON_FIRST_HIT`, `t` up to 1e5. Opaque geometry commits by itself; a masked
   caster's candidate hit is confirmed when the material's alpha at the hit's interpolated UV (base
   color factor times texture, LOD 0) reaches its cutoff, the test of the masked shadow pass.
-- **Frame** (renderer.rs): the cascades are neither culled for nor drawn; the top level is built
-  after the cull and light passes, before the opaque pass. Nothing else moves.
+- **Frame** (renderer.rs): the cascades are neither culled for nor drawn, unless the frame has water
+  or the liquid surface may draw (below); the top level is built after the cull and light passes,
+  before the opaque pass. Nothing else moves.
 
 ## Semantics that differ from the cascades
 
@@ -119,7 +120,15 @@ says what a device's ray queries serve; either effect alone or both open the dev
 
 `tests/rt_reflections.rs` runs on every native backend with ray queries: a block above the view
 shows in the traced reflection and not in the march's, and a block in view is reflected by both in
-the same colour.
+the same colour. It passes on Metal and, on R1 (2026-10-23), on the RTX 5060 and the 780M under
+Direct3D 12 (DXC) and Vulkan, `tools/vk_validate.py` reporting naga's
+`VUID-StandaloneSpirv-None-10684` and, in the ray-traced runs, 160
+`Undefined-Value-ShaderOutputNotConsumed` warnings, no synchronization error
+([gpu-matrix.md](../bench/gpu-matrix.md) 13). With ray-traced shadows the cascades still draw in a
+frame with water or the liquid surface: the water's medium, its spray and the surface sample them
+and trace no rays (`tests/water.rs` `the_sun_still_scatters_under_water_with_ray_traced_shadows`).
+The renderer takes the frame's block-liquid splashes (`splash_frame`) before it decides, so a splash
+that wakes the solver has the cascades drawn in its first frame.
 
 ## Amoris integration: Metal (2026-10-10)
 

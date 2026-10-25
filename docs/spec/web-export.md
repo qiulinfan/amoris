@@ -58,11 +58,19 @@ and the crosshair.
 | Hotbar | 1 to 9, wheel | 1 to 9, wheel (a notch, or 100 pixels, a slot) |
 | Look | Mouse, 0.003 rad per device count | Mouse, 0.003 rad per movement unit |
 
-The veil shows the name, the package's download, and once the walker's camera is known and the
-first models are in, "Click to play" and the controls. `?package=URL` plays another package and
-`?gpu_minimal=` takes the viewport's list (webgpu-baseline.md). `window.amorisPlayer` exposes the
-state the check reads (`ready_ms`, `look`, `stats`, `samples`, the game's handle) and
-`forceCapture()`, which plays without the lock that headless Chrome lacks.
+The veil shows the name, the package's download, and once the player is ready, "Click to play" and
+the controls. The view is ready once the walker's camera is known and the first models and textures
+are in; the player is ready once the view is and the game has run 60 ticks since the view became
+ready and since the last warming GPU water job that ran over 250 ms (`web/player.js`). A GPU water
+host's first 600 jobs are warming jobs (`web/game.js`): they compile the pipelines they first use,
+seconds each in Windows Chrome, under a budget of 120 s (`waterStartTimeoutMs`), and the game does
+not tick while one runs. Once the view is ready, the veil shows "Preparing the water…" while a
+warming job runs past 250 ms, before the player is ready and whenever such a job freezes the game
+later. A halted world (the worker's status `halted`, such as GPU water that failed or timed out)
+shows "The game halted." with the error, as a stopped game shows "The game stopped.". `?package=URL`
+plays another package and `?gpu_minimal=` takes the viewport's list (webgpu-baseline.md).
+`window.amorisPlayer` exposes the state the check reads (`ready_ms`, `look`, `stats`, `samples`, the
+game's handle) and `forceCapture()`, which plays without the lock that headless Chrome lacks.
 
 What the page leaves out of the native window: audio (`amoris-audio` and the `[sounds]` table have
 no browser path; Blockcraft has no sounds), the `--fly` and collision-camera `--walk` of games
@@ -92,14 +100,16 @@ captured, and keeps Space and the wheel from scrolling the page around the frame
 ## 5. Checking it
 
 `node tools/web_play_check.mjs <folder> [--shots DIR]` serves the folder without isolation, loads it
-in headless Chrome with WebGPU and plays it as the seat: it waits for "Click to play", captures,
-holds W and checks the walker moved, looks down and breaks the block in the crosshair, places one
-back, selects the hotbar's water (slot 8, `WATER_SLOT=`) and places it, and checks the water
-region's wet cells grow as it runs off; WebGPU validation errors and uncaught exceptions fail it. It
-prints one JSON line with every check, the frame times, the GPU and CPU times of the last frame, the
-game worker's tick timings and the transferred bytes. `QUERY=gpu_minimal=features,limits,timestamps`
-runs it on WebGPU's baseline device, `DPR=2` at a Retina display's scale. The measurements of the
-Blockcraft build are in [../bench/web-export.md](../bench/web-export.md).
+in headless Chrome with WebGPU and plays it as the seat: it waits for the player to be ready (a game
+that stops or halts first fails it) and for "Click to play", captures, holds W and checks the walker
+moved, looks down and breaks the block in the crosshair, places one back, selects the hotbar's water
+(slot 8, `WATER_SLOT=`) and places it, and checks the water region's wet cells grow as it runs off;
+WebGPU validation errors and uncaught exceptions fail it. It prints one JSON line with every check,
+the frame times, the GPU and CPU times of the last frame, the game worker's tick timings and the
+transferred bytes. `QUERY=gpu_minimal=features,limits,timestamps` runs it on WebGPU's baseline
+device, `DPR=2` at a Retina display's scale. The measurements of the Blockcraft build are in
+[../bench/web-export.md](../bench/web-export.md); its ready time is the view's, measured before the
+player waited for the game's 60 ticks.
 
 The renderer's `shaders` unit test now refuses WGSL that mixes a bitwise operator with another
 binary operator without parentheses: naga accepts it, Chrome's Tint refuses the whole module, and

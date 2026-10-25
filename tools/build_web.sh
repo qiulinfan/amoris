@@ -11,7 +11,7 @@ if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi
 . ./tools/wasm_toolchain.sh
 cargo build --profile web --target wasm32-unknown-unknown -p amoris-web
 wasm-bindgen --target web --no-typescript --out-dir web/pkg \
-  target/wasm32-unknown-unknown/web/amoris_web.wasm
+  "${CARGO_TARGET_DIR:-target}/wasm32-unknown-unknown/web/amoris_web.wasm"
 if command -v wasm-opt >/dev/null; then
   wasm-opt -O3 --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext \
     --enable-mutable-globals web/pkg/amoris_web_bg.wasm -o web/pkg/amoris_web_bg.wasm

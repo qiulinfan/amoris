@@ -32,10 +32,11 @@
 // picks the browser; CHROME_FLAGS adds switches (--force_high_performance_gpu on a two-GPU
 // laptop). Writes drag.json (samples and summaries), console.log and screenshots into --out.
 
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { Cdp } from "./cdp";
+import { chromeFlags, chromePath } from "./chrome";
 
 const args = process.argv.slice(2);
 const opt = (name: string, fallback: string) => {
@@ -54,23 +55,6 @@ const PROFILE = args.includes("--profile");
 const W = 1600;
 const H = 1000;
 mkdirSync(OUT, { recursive: true });
-
-function chromePath(): string {
-  if (process.env.CHROME) return process.env.CHROME;
-  const candidates =
-    process.platform === "win32"
-      ? [
-          join(process.env.PROGRAMFILES ?? "C:\\Program Files", "Google\\Chrome\\Application\\chrome.exe"),
-          join(process.env["PROGRAMFILES(X86)"] ?? "C:\\Program Files (x86)", "Google\\Chrome\\Application\\chrome.exe"),
-          join(process.env.LOCALAPPDATA ?? "", "Google\\Chrome\\Application\\chrome.exe"),
-        ]
-      : process.platform === "darwin"
-        ? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]
-        : ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium"];
-  const found = candidates.find((p) => existsSync(p));
-  if (!found) throw new Error(`no Chrome found (tried ${candidates.join(", ")}); set CHROME=<path>`);
-  return found;
-}
 
 /** Installed before the page's own scripts: timestamps on the page's clock (performance.now()). */
 const INSTRUMENT = `(() => {
@@ -136,7 +120,7 @@ const proc = Bun.spawn(
     "--no-default-browser-check",
     "--hide-scrollbars",
     `--window-size=${W},${H}`,
-    ...(process.env.CHROME_FLAGS ?? "").split(" ").filter(Boolean),
+    ...chromeFlags(),
     "about:blank",
   ],
   { stdout: "ignore", stderr: "ignore" },

@@ -8,13 +8,16 @@
 //   const { module } = await loadModule();
 //   const amoris = start(module, packageBytes, { seed: 1, pacing: "stepped" });
 //   // waterTimeoutMs: how long one tick's GPU water may take before the tick fails (default 10 s;
-//   // a CPU WebGPU such as SwiftShader needs longer).
+//   // a CPU WebGPU such as SwiftShader needs longer). waterStartTimeoutMs: the same for a new water
+//   // device's first 600 ticks, which compile its pipelines as they first need them (default 120 s).
 //   await amoris.ready;                                  // the worker answered `ready`
 //   const r = await amoris.command(name, params, opts);  // resolves with the result, rejects with {code, message, detail}
 //   amoris.latest();                                     // {version, tick, writes, world_hash, time}
 //   amoris.onEvents((records, missed) => { ... });
 //   amoris.onTicks((hashes, epochs) => { ... });                 // [[tick, world hash], ...]: every tick, in order
 //   amoris.onRender((bytes) => viewport.pushFrame(bytes)); // the render feed's frames, for a viewport
+//   amoris.onWater((starting) => { ... });       // a new water device's compiling job began or ended
+//   amoris.waterStarting;                         // true while it runs: the game does not tick
 //   amoris.close();
 import initGlue, { Presenter } from "./pkg/amoris_web.js";
 
@@ -48,7 +51,8 @@ class Amoris {
     this.ackDelayMs = options.ackDelayMs || 0;
     this.seqs = new Map();
     this.waiting = new Map();
-    this.listeners = { events: [], ticks: [], snapshot: [], status: [], render: [] };
+    this.listeners = { events: [], ticks: [], snapshot: [], status: [], render: [], water: [] };
+    this.waterStarting = false;
     this.unacked = 0;
     this.maxUnacked = 0;
     this.info = null;
@@ -73,7 +77,8 @@ class Amoris {
     const project = new Uint8Array(packageBytes).slice().buffer;
     const init = { seed: options.seed, pacing: options.pacing || "stepped" };
     this.worker.postMessage({ t: "init", module, project, options: init,
-      waterTimeoutMs: options.waterTimeoutMs }, [project]);
+      waterTimeoutMs: options.waterTimeoutMs, waterStartTimeoutMs: options.waterStartTimeoutMs },
+      [project]);
   }
 
   onMessage(m) {
@@ -102,6 +107,12 @@ class Amoris {
         if (m.error) w.reject(m.error); else w.resolve(m.ok);
         break;
       }
+      case "water":
+        // A new GPU water device's job that compiles pipelines is under way: the game ticks again
+        // once it is done (game.js `waterStartTimeoutMs`).
+        this.waterStarting = m.starting;
+        for (const f of this.listeners.water) f(m.starting);
+        break;
       case "status":
         this.status = m;
         for (const f of this.listeners.status) f(m);
@@ -165,6 +176,7 @@ class Amoris {
   onTicks(f) { this.listeners.ticks.push(f); }
   onSnapshot(f) { this.listeners.snapshot.push(f); }
   onStatus(f) { this.listeners.status.push(f); }
+  onWater(f) { this.listeners.water.push(f); }
   /** Subscribes to the render feed; the worker starts extracting it (its first frame is full). */
   onRender(f) {
     if (!this.listeners.render.length && !this.stopped) this.worker.postMessage({ t: "render" });

@@ -346,6 +346,12 @@ impl BrowserWater {
         self.busy.set(false);
         WaterResult { id, result }
     }
+    /// Whether the host holds a working device: when not, its next job opens one and compiles
+    /// its pipelines again (game.js gives such jobs the start budget).
+    #[wasm_bindgen(getter)]
+    pub fn warm(&self) -> bool {
+        self.service.borrow().is_some()
+    }
     pub fn abort(&self) {
         self.epoch.set(self.epoch.get().wrapping_add(1));
         if let Some(device) = self.device.borrow_mut().take() {

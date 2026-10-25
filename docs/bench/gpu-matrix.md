@@ -1050,3 +1050,153 @@ AMD_VK_PIPELINE_CACHE_PATH=out/skinflake/x AMORIS_BACKEND=vulkan AMORIS_ADAPTER=
 python out/skinflake/scripts/surgical.py only-wrong .parc:52 3   # the wrong entry only: passes
 python -m unittest tools/tests/test_amd_vkcache.py tools/tests/test_gpu_matrix.py
 ```
+
+## 13. The water range on R1 (2026-10-23, `r1/backends`)
+
+Master `6926f8aa` on the machine of section 8, with the drivers below: the first run on R1 of the
+water range, the 52 commits `6c1c8e42..6926f8aa`, which had been verified on the Apple M5 only. R1
+had run parts of the 192 commits before them (`4f150f7c..6c1c8e42`), among them the shallow-water
+check at `4dea38a0` (`323a072e`, `fa4d9ee1`). C4 below names the four native configurations
+5060-dx12, 5060-vulkan, 780m-dx12 and 780m-vulkan.
+`python tools/gpu_matrix.py --configs machine --workspace` (the `gpus` step's run), and `water_det`
+on C4 and on both GPUs' baseline devices (5060-dx12-minimal, 780m-dx12-minimal):
+
+| Configuration | Driver | Result at `6926f8aa` |
+|---|---|---|
+| 5060-dx12 | 32.0.16.1714 | 335 pass, 3 FAIL |
+| 5060-vulkan | NVIDIA 617.14 | 338 pass |
+| 780m-dx12 | 32.0.13062.3005 | 338 pass |
+| 780m-vulkan | AMD proprietary 24.30.62.03 (LLPC) | 338 pass |
+| 780m-auto | (Direct3D 12) | 338 pass |
+| 5060-dx12-minimal | 32.0.16.1714 | 324 pass, 12 skip, 2 FAIL |
+| `water_det` on C4, 5060-dx12-minimal and 780m-dx12-minimal | | 2 pass each |
+
+The twelve skips on the baseline device are what it lacks (timestamps, `INDIRECT_FIRST_INSTANCE`,
+ray queries); no cell of C4 skipped a ray-query or timestamp check.
+The failures, all on NVIDIA's Direct3D 12:
+
+| Test | 5060-dx12 | 5060-dx12-minimal | Cause |
+|---|---|---|---|
+| `water gpu_patch_culling_keeps_exact_surface_pixels_and_counts_current_dry_and_visible_tiles` | FAIL | FAIL | primitive order (below) |
+| `water resident_programs_draw_the_current_field_after_skipped_frames_compaction_and_rewind` | FAIL | pass | run-to-run 1-LSB noise |
+| `water temporal_foam_pauses_with_simulated_time_and_reset_discards_its_history` | FAIL | pass | run-to-run 1-LSB noise |
+| `water_ripples time_ripple_steps` | pass | FAIL | the test asserted timestamps (fixed: it skips) |
+
+All three `water` tests come from `af4dd1d3`, before the range, and fail at `6c1c8e42` too. The
+culling test compares a frame drawn through the full row-major index buffer with one drawn
+through the compacted patch-major one (`water_compact.wgsl`), same triangles in the same vertex
+order. On 5060-dx12, 166 to 170 of 57,600 pixels differ by one 8-bit step in one channel,
+scattered from row 52 on; the count varies from run to run. With the full buffer written in the
+compacted order the full/full case matches exactly, so the indirect path is not the cause; with
+caustics off it still fails, and with refraction, reflection and detail off 65 pixels still
+differ, so it lies in the basic surface pass (premultiplied blending with depth writes, compare
+`Greater`, no face culling). Two captures of the same unculled frame also differ in 3 to 4 pixels,
+which is what fails the two other tests under the parallel binary (each passes alone). NVIDIA's
+Vulkan on the same GPU and both of the 780M's backends match exactly. The pass that depends on
+order, and the source of the noise, are not located; the instrumentation is
+`out/r1/culling-diag.patch` on R1.
+
+The other checks at `6926f8aa`: `gpu_determinism` matches its record unblessed on
+C4 and on the baseline device of both GPUs; `amoris hashes` of surf-beach (600 ticks),
+pool-party, river-falls, water-valley, water-storm and water-resident (300) is byte-identical
+across C4 and equal to the M5's (last tick, all ticks' digest and bundle); `tools/vk_validate.py`
+over `fluid_surface`, `water_spray`, `rain`, `water_ripples`, `water`, the blocked
+non-hydrostatic solve, `rt_reflections` and `rt_shadows` on both GPUs logs only
+`VUID-StandaloneSpirv-None-10684` (section 8) and, in the ray-traced runs, 160
+`Undefined-Value-ShaderOutputNotConsumed` warnings, no synchronization error.
+`AMORIS_RT_SHADOWS=1` over `water`, `water_spray` and `fluid_surface` failed
+`the_sun_scatters_toward_an_eye_under_water_along_its_refracted_path` in every C4 cell (scattered
+sun 0.0011 against 1.2456: the cascades the medium samples were never drawn), fixed on
+`r1/backends`, where `the_sun_still_scatters_under_water_with_ray_traced_shadows` keeps it.
+`tools/build_compare.py` against `6c1c8e42` (both GPUs, both backends, 120 pairs) is identical
+but for `crowd` with TAA on Direct3D 12 (5060 with GTAO's normals, 780M both TAA modes), one 8-bit
+step at most, from `05e20f2b`'s restructured sun term in `forward.wgsl` (bisected; identical on the
+M5 and on Vulkan); `shadow_cull compare` changes no pixel on C4.
+
+After `r1/backends`' fixes (`e21d853f`, the cascades under ray-traced shadows; `c24ae861`, the round
+crown's orientation; `02bc9ab4`, the browser's water start budget; `dd83468b`, the fluid solver's
+timestamp scope; `b6210270`, the wind sea's band edges; `95e2f695`, the ripple timing test's skip),
+on the same machine and drivers, `--configs machine --workspace` and `780m-dx12-minimal`:
+
+| Configuration | Result at the branch's tip |
+|---|---|
+| 5060-dx12 | 337 pass, 2 FAIL (patch culling; the foam case, under the parallel binary) |
+| 5060-vulkan, 780m-dx12, 780m-vulkan, 780m-auto | 339 pass each |
+| 5060-dx12-minimal | 324 pass, 14 skip, 1 FAIL (patch culling) |
+| 780m-dx12-minimal | 325 pass, 14 skip |
+
+The amoris-app GPU tests (`gpu_water`, `gpu_floaters`, `gpu_feedback`, `gpu_swimming`, `gpu_energy`,
+`gpu_frontier_scenes`, `gpu_scale`, `gpu_weather`, `gpu_authoring`, `gpu_sea`, `gpu_boundaries`,
+`gpu_collider_bed`, `gpu_determinism`), each run with an empty AMD pipeline archive of its own, pass
+on C4, and the other crates' tests on x86-64. In Windows Chrome 156 (Dawn over Direct3D 12) on the
+780M and on the 5060 (`--force_high_performance_gpu`): `water_determinism_check.mjs` matches the
+record on both and on SwiftShader (120 ticks), the worker, resident, probe-script and floater checks
+pass, `water_pool_check.mjs` passes its twelve checks, and `web_play_check.mjs` passes on
+pool-party, river-falls and surf-beach but for the three block steps, which these samples have no
+blocks for (water-storm has no walker either). One surf-beach run on the 780M failed
+`walks forward`, its walker covering 0.78 m of the check's 1 m (its frames at 17 ms); reruns walked
+and passed.
+
+Before the browser's water start budget (`02bc9ab4`, `web/game.js`) every one of these failed with
+"GPU water timed out after 10000 ms": a new device's jobs compile the pipelines they first use. A
+stepped copy of the determinism check with no viewport drawing
+(`--samples surf-beach,pool-party --ticks 3`) timed the first job of each tick: on the 780M 13,578,
+34 and 22 ms for the pool party and 8,326, 12 and 12 ms for surf-beach; on the 5060 the pool party's
+first took 12,813 ms (13,010 on a rerun) and surf-beach's 5,944 ms (5,946). On the play page, with
+the viewport drawing and the game paced in real time, the pool party's jobs 0 to 11 on the 780M took
+12,233, 6, 5, 5, 14,383, 213, 17, 10, 11, 17, 9 and 9 ms: its fifth job compiled again. The player's
+`ready_ms` on a fresh profile was 15 to 49 s (5060) and 27 to 47 s (780M), against 1.5 to 2.2 s on
+the M5 before the deterministic kernels.
+
+**Reproduce** (R1; logs in its ignored `out/r1/`):
+
+```sh
+python tools/gpu_matrix.py --configs machine --workspace --json out/r1/A/matrix.json
+AMORIS_ADAPTER=5060 AMORIS_BACKEND=dx12 target/release/deps/water-<hash>.exe gpu_patch_culling --test-threads 1
+```
+
+## 14. FXC cannot run GPU water (2026-10-23, the owner's decision)
+
+The owner decided on 2026-10-23 that FXC does not run GPU water for now: its failures are recorded,
+not fixed, and GPU water on Direct3D 12 requires DXC 1.8.2502 or newer (charter, 2026-10-23).
+`AMORIS_DXC=fxc` on 5060-dx12 and 780m-dx12, at `6926f8aa` and at `6c1c8e42`:
+
+| Pipeline | Error | Tests it fails | At `6c1c8e42` |
+|---|---|---|---|
+| `boundary_predict` of the generated kernels' `shaders/det/water_boundaries.wgsl` (from `5d19274d`, in the range) | X3500: array reference cannot be used as an l-value; not natively addressable | `water_boundaries` 5 of 6; `gpu_determinism` (`water.compute_failed`) | No generated kernels and no `gpu_determinism`; the f32 kernel `shaders/water_boundaries.wgsl`, the only one then, whose `boundary_predict` FXC refuses with the same X3500 |
+| `fs_shallow` (`forward.wgsl`), the fragment stage of every region surface pipeline | X3511: unable to unroll loop (66 iterations) | `water_ripples drawn::...`; `water_spray active_field_spray_is_occluded_by_the_opaque_scene`; `splat::tile::tests::ocean_ownership_masks_unjittered_depth_used_by_splats` (CPU columns, no resident water) | The same |
+
+`fs_shallow` is not GPU water's alone. `Water::new`, which `Renderer::new` runs, builds every region
+surface pipeline at once (`water.rs` `pipeline()`: smooth, ledge, blocky, surround and stitch), all
+with this fragment stage, so under FXC every `Renderer::new` logs the X3511 and no water region
+draws, solved on the CPU or on the GPU.
+
+`crates/amoris-render/src/gpu/dxc.rs` chooses FXC with `AMORIS_DXC=fxc`; when `AMORIS_DXC` names a
+path with no `dxcompiler.dll`, or a DXC older than 1.8.2502 or without a readable version; when no
+Windows SDK `bin\<version>\x64\dxcompiler.dll` is found, as on a player's machine without the SDK;
+when every SDK DXC found is older than 1.8.2502; and on Windows other than x86-64, where `sdk_dxcs`
+searches no SDK. Direct3D 12 is the Windows default backend, so a machine without the SDK uses FXC
+with no warning (the choice is logged at the info level) and today draws no water region.
+
+Two failures were the range's own. On the 780M, `water_spray`'s
+`a_body_going_in_throws_one_lattice_crown_and_none_otherwise` drew a NaN crown: one entry point
+makes a round footprint, m.x == m.z, and with m.y == 0 its orientation 0.5 atan2(2 m.y, m.x - m.z)
+was atan2(0, 0), NaN under FXC. `c24ae861` gives a footprint whose axis terms are below a millionth
+of its moments the orientation 0, and the test passes under FXC on both GPUs. Metal gave 0 for an
+exactly round footprint, but a footprint whose centre is rounded leaves a residue m.y of about
+1e-13, for which every backend, Metal included, gave ±π/4: such crowns now turn by 45 degrees on the
+M5 too, a cosmetic change. `fluid_surface`'s
+`liquid_absorbs_by_its_thickness_and_what_stands_in_front_hides_it` still never finishes under FXC
+(killed after 300 s on both GPUs): one thread stays at a full core, a CPU-bound compile of a
+pipeline not located. The liquid surface's own eight entry points (`fluid_surface.wgsl`), at one and
+at four samples, each compile with FXC and wgpu's flags (`/Ges`) in 0.1 to 0.25 s, and the MPM
+solver's `splashes` passes under FXC in 2 s. `water_summary` and `water_det` pass under FXC.
+
+**Reproduce:**
+
+```sh
+AMORIS_DXC=fxc python tools/gpu_matrix.py --configs 5060-dx12,780m-dx12 --workspace --no-ignored \
+  --bins water_spray,water_ripples,fluid_surface,water_boundaries,water_summary,water_det
+AMORIS_DXC=fxc python tools/gpu_matrix.py --configs 5060-dx12 --workspace --bins lib --filter splat --no-ignored
+AMORIS_DXC=fxc AMORIS_ADAPTER=5060 AMORIS_BACKEND=dx12 cargo test --release -p amoris-app --test gpu_determinism
+```

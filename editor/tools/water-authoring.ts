@@ -9,9 +9,11 @@
 //   amoris serve <a project with a camera and a light> --port 7891   # AMORIS_EDITOR_DIST=editor/dist
 //   bun tools/water-authoring.ts --url http://127.0.0.1:7891/ --out ../out/editor/water
 
-import { mkdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Cdp } from "./cdp";
+import { chromeFlags, chromePath, freePort } from "./chrome";
 
 const args = process.argv.slice(2);
 const opt = (name: string, fallback: string) => {
@@ -24,18 +26,19 @@ const W = 1600;
 const H = 1000;
 mkdirSync(OUT, { recursive: true });
 
-const chrome = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const port = 9347;
+const port = await freePort();
+const profile = mkdtempSync(join(tmpdir(), "amoris-water-"));
 const proc = Bun.spawn(
   [
-    chrome,
+    chromePath(),
     "--headless=new",
     `--remote-debugging-port=${port}`,
-    `--user-data-dir=${process.env.TMPDIR ?? "/tmp"}/amoris-water-${Date.now()}`,
+    `--user-data-dir=${profile}`,
     "--enable-unsafe-webgpu",
     "--no-first-run",
     "--hide-scrollbars",
     `--window-size=${W},${H}`,
+    ...chromeFlags(),
     "about:blank",
   ],
   { stdout: "ignore", stderr: "ignore" },
@@ -50,8 +53,14 @@ for (let i = 0; i < 100 && !pageWs; i++) {
   }
   if (!pageWs) await Bun.sleep(100);
 }
-if (!pageWs) {
+/** Ends Chrome and removes its profile; the profile is locked until the process has exited. */
+async function closeChrome() {
   proc.kill();
+  await proc.exited;
+  rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+}
+if (!pageWs) {
+  await closeChrome();
   throw new Error("Chrome did not start");
 }
 const cdp = await Cdp.connect(pageWs);
@@ -266,5 +275,5 @@ try {
   console.log(JSON.stringify(result));
 } finally {
   cdp.close();
-  proc.kill();
+  await closeChrome();
 }

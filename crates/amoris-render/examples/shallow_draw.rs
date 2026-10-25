@@ -107,6 +107,7 @@ fn field(n: u32, t: f32) -> ShallowWaterView {
 }
 
 fn main() {
+    amoris_render::stderr_log::init();
     let n: u32 = arg("--n").and_then(|s| s.parse().ok()).unwrap_or(256);
     let off = std::env::args().any(|a| a == "--off");
     let frames: u64 = arg("--frames").and_then(|s| s.parse().ok()).unwrap_or(300);

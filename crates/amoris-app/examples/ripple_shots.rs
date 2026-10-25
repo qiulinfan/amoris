@@ -177,6 +177,7 @@ fn percentile(mut v: Vec<f32>, p: f64) -> Option<f32> {
 }
 
 fn main() {
+    amoris_render::stderr_log::init();
     let args: Vec<String> = std::env::args().collect();
     let arg = |name: &str| args.windows(2).find(|a| a[0] == name).map(|a| a[1].clone());
     let sample = arg("--sample").unwrap_or_else(|| "pool-party".into());

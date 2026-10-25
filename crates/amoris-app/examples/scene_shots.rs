@@ -16,6 +16,7 @@ const W: u32 = 1280;
 const H: u32 = 720;
 
 fn main() {
+    amoris_render::stderr_log::init();
     let args: Vec<String> = std::env::args().collect();
     let arg = |name: &str| args.windows(2).find(|a| a[0] == name).map(|a| a[1].clone());
     let number = |name: &str, default: u32| arg(name).map_or(default, |v| v.parse().unwrap());

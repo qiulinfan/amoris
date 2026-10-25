@@ -143,6 +143,7 @@ fn sheet(before: &str, after: &str, out: &str, names: &[String]) {
 }
 
 fn main() {
+    amoris_render::stderr_log::init();
     let args: Vec<String> = std::env::args().collect();
     if let Some(i) = args.iter().position(|a| a == "--sheet") {
         sheet(&args[i + 1], &args[i + 2], &args[i + 3], &args[i + 4..]);

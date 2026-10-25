@@ -255,29 +255,8 @@ fn shots(dir: &str, spec: FluidSpec) {
     );
 }
 
-/// Warnings and errors (wgpu's validation errors among them) to stderr.
-fn log_init() {
-    struct L;
-    impl log::Log for L {
-        fn enabled(&self, m: &log::Metadata<'_>) -> bool {
-            m.level() <= log::Level::Warn
-                && !m.target().starts_with("wgpu")
-                && !m.target().starts_with("naga")
-        }
-        fn log(&self, r: &log::Record<'_>) {
-            if self.enabled(r.metadata()) {
-                eprintln!("[{}] {}", r.level(), r.args());
-            }
-        }
-        fn flush(&self) {}
-    }
-    static LOGGER: L = L;
-    let _ = log::set_logger(&LOGGER);
-    log::set_max_level(log::LevelFilter::Warn);
-}
-
 fn main() {
-    log_init();
+    amoris_render::stderr_log::init();
     let n: u32 = arg("--cells").and_then(|s| s.parse().ok()).unwrap_or(64);
     let substeps: u32 = arg("--substeps").and_then(|s| s.parse().ok()).unwrap_or(10);
     let spec = spec(n, substeps);

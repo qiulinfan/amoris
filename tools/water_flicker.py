@@ -24,6 +24,7 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
+EXE = ".exe" if os.name == "nt" else ""
 
 
 def frames(out, first, last):
@@ -62,6 +63,9 @@ def main():
     ap.add_argument("--env", action="append", default=[], help="NAME=VALUE for the drawing process")
     ap.add_argument("--out", default="out/flicker/run", help="where the frames go (kept)")
     a = ap.parse_args()
+    missing = [tool for tool in ("ffmpeg", "ffprobe") if shutil.which(tool) is None]
+    if missing:
+        sys.exit(f"{' and '.join(missing)} not found on PATH: install ffmpeg")
     out = Path(a.out)
     if out.exists():
         shutil.rmtree(out)
@@ -71,7 +75,7 @@ def main():
         name, _, value = item.partition("=")
         env[name] = value
     target = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target"))
-    shots = target / "release" / "examples" / "scene_shots"
+    shots = target / "release" / "examples" / f"scene_shots{EXE}"
     if not shots.exists():
         sys.exit(f"{shots} is missing: cargo build --release -p amoris-app --example scene_shots")
     subprocess.run([str(shots), a.project, "--out", str(out), "--name", "f", "--eye", a.eye, "--at",

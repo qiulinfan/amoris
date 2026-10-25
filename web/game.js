@@ -16,6 +16,14 @@ let rendering = false; // the page asked for the render feed (a viewport draws i
 let water = null;
 let computing = false;
 let waterTimeoutMs = 10000; // the start option `waterTimeoutMs` (amoris.js)
+// A new GPU water host's first job also opens its device and compiles the pipelines it uses, and
+// later jobs compile what they first use (Tint, then the driver: in Windows Chrome on R1's 780M,
+// on the play page with its viewport drawing, 12.2 s for the pool party's first job and 14.4 s for
+// its fifth; 13.6 s for its first in a stepped run with no viewport; docs/spec/water.md 66.3), so a
+// host's first WATER_WARM_JOBS jobs get this budget instead (the start option `waterStartTimeoutMs`).
+let waterStartTimeoutMs = 120000;
+const WATER_WARM_JOBS = 600; // 10 s of 60 Hz ticks
+let waterJobs = 0; // jobs the current host finished
 const wake = new MessageChannel();
 wake.port1.onmessage = () => {
   scheduled = false;
@@ -92,16 +100,28 @@ async function computeWater() {
   if (!job) return fatal(new Error("the suspended tick has no external water request"));
   computing = true;
   water ||= new BrowserWater();
+  // A host without a working device makes one for this job (its first, or after an error result
+  // destroyed the last): its compiles start again, and so does its warm budget.
+  if (!water.warm) waterJobs = 0;
   const host = water;
   const id = job.id;
+  const warming = waterJobs < WATER_WARM_JOBS;
+  const budget = warming ? Math.max(waterTimeoutMs, waterStartTimeoutMs) : waterTimeoutMs;
+  // A warming job that runs long is compiling: say so, since the game does not tick meanwhile.
+  let starting = false;
+  const slow = warming ? setTimeout(() => {
+    starting = true;
+    postMessage({ t: "water", starting: true });
+  }, 250) : 0;
   let watchdog;
   try {
     const result = await Promise.race([
       host.advance(job),
       new Promise((_, reject) => {
-        watchdog = setTimeout(() => reject(new Error(`GPU water timed out after ${waterTimeoutMs} ms`)), waterTimeoutMs);
+        watchdog = setTimeout(() => reject(new Error(`GPU water timed out after ${budget} ms`)), budget);
       }),
     ]);
+    waterJobs++;
     if (!finished) game.complete_water_job(result);
   } catch (e) {
     host.abort();
@@ -109,6 +129,8 @@ async function computeWater() {
     if (!finished) game.fail_water_job(id, String(e));
   } finally {
     clearTimeout(watchdog);
+    clearTimeout(slow);
+    if (starting) postMessage({ t: "water", starting: false });
     computing = false;
     if (!finished) soon();
   }
@@ -156,6 +178,7 @@ onmessage = async (event) => {
   }
   try {
     if (m.waterTimeoutMs > 0) waterTimeoutMs = m.waterTimeoutMs;
+    if (m.waterStartTimeoutMs > 0) waterStartTimeoutMs = m.waterStartTimeoutMs;
     const t0 = performance.now();
     await init({ module_or_path: m.module });
     const t1 = performance.now();

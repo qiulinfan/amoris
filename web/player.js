@@ -199,10 +199,40 @@ export async function main() {
     forceCapture(on = true) { input.forced = on; veil(); },
   });
   let ready = false;
+  let viewReady = false;
+  // The world's halt (a poisoned tick, such as GPU water that failed or timed out): the worker
+  // keeps running and says so in its status, which the page shows as it shows a stopped game.
+  let halted = null;
   const veil = () => {
-    $("veil").hidden = ready && input.captured();
-    if (ready) $("status").textContent = "Click to play";
+    // A compiling water job freezes the game even after the page was ready: the veil says so.
+    const compiling = viewReady && amoris.waterStarting;
+    $("veil").hidden = ready && input.captured() && !compiling && !halted;
+    if (halted) {
+      $("status").textContent = "The game halted.";
+      $("error").hidden = false;
+      $("error").textContent = halted.error?.message || "the world was poisoned";
+    } else if (compiling) $("status").textContent = "Preparing the water…";
+    else if (ready) $("status").textContent = "Click to play";
   };
+  // Ready once the view is and the game ticks: a new GPU water device compiles its pipelines as its
+  // first ticks need them (seconds each in Windows Chrome) and the game waits for each, so the
+  // game must have run a second (60 ticks) since the view was ready and since the last such job.
+  let firstTick = null;
+  const settle = () => {
+    const tick = amoris.latest()?.tick ?? 0;
+    if (viewReady && (firstTick === null || amoris.waterStarting)) firstTick = tick;
+    if (ready || halted || !viewReady || amoris.waterStarting || tick < firstTick + 60) return veil();
+    ready = true;
+    state.ready_ms = performance.now() - t0;
+    progress(1);
+    veil();
+  };
+  amoris.onWater(settle);
+  amoris.onStatus((s) => {
+    halted = s.state === "halted" ? s : null;
+    if (!halted) $("error").hidden = true;
+    settle();
+  });
   document.addEventListener("pointerlockchange", veil);
   $("veil").addEventListener("click", () => { if (ready) input.capture(); });
   canvas.addEventListener("click", () => { if (ready && !input.captured()) input.capture(); });
@@ -224,13 +254,9 @@ export async function main() {
     state.stats = s;
     state.samples.push(s.frame_ms);
     if (state.samples.length > 600) state.samples.shift();
-    // Ready once the walker's camera is known and the first models and textures are in.
-    if (!ready && state.look && s.pending_assets === 0 && s.instances > 0) {
-      ready = true;
-      state.ready_ms = performance.now() - t0;
-      progress(1);
-      veil();
-    }
+    // The view is ready once the walker's camera is known and the first models and textures are in.
+    if (!viewReady && state.look && s.pending_assets === 0 && s.instances > 0) viewReady = true;
+    if (!ready) settle();
   });
   state.loaded_ms = performance.now() - t0;
   await amoris.ready;

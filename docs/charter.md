@@ -460,6 +460,18 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
   CPU 编码是 Vulkan 的 1.6–2.3 倍，`Renderer::new` 约 0.18 s；Radeon 780M 上 Direct3D 12 在
   many_cubes 与点云花园上快 4%–30%，蒙皮人群则慢（GPU 时间多 9%，离屏帧时间多 19%）。见
   [bench/dx12.md](bench/dx12.md) 第 11 节。
+- 2026-10-23（所有者决定）：Direct3D 12 上的 GPU 水要求 DXC 1.8.2502 或更新版本；FXC 暂不支持 GPU
+  水，它的失败只记录、不修复。R1 上 FXC 编译不了两处。一是确定性水核的 `boundary_predict`（X3500）：
+  确定性水核在水的提交区间 6c1c8e42..6926f8aa 内（5d19274d）才加入；6c1c8e42 时只有 f32 水核
+  `shaders/water_boundaries.wgsl`，它的 `boundary_predict` 已有同样的 X3500。二是
+  `fs_shallow`（X3511，6c1c8e42 时已如此）：它不只属于 GPU 水，而是每条水域表面管线（`water.rs` 的
+  smooth、ledge、blocky、surround、stitch）的片元阶段，`Renderer::new` 一开始就构建这些管线，所以在
+  FXC 下每次 `Renderer::new` 都记录这个错误，任何水域都不绘制，无论由 CPU 还是 GPU 求解。以下情形使
+  用 FXC（`crates/amoris-render/src/gpu/dxc.rs`）：`AMORIS_DXC=fxc`；`AMORIS_DXC` 指向的路径没有
+  `dxcompiler.dll`，或其 DXC 早于 1.8.2502；找不到任何 Windows SDK 的 `dxcompiler.dll`（没有装 SDK
+  的普通玩家机器）；SDK 的 DXC 都早于 1.8.2502；非 x86-64 的 Windows（不搜索 SDK）。Direct3D 12 是
+  Windows 的默认后端，所以没有 SDK 的机器不加警告地使用 FXC，目前不绘制任何水域。记录与复现命令见
+  [bench/gpu-matrix.md](bench/gpu-matrix.md) 第 14 节。
 - 2026-10-09（Pioneer）：光追研究从 Metal 扩展到所有暴露 ray query 的后端。2026-10-05 的 GI
   决定以 Metal ray query 表述，表面 PT、SHaRC/ReSTIR 原型与在线 NRC 也只在 Metal 上运行；
   现在它们在 Vulkan（`VK_KHR_ray_query`）与 Direct3D 12（DXR 1.1、Shader Model 6.5）上同样运行，

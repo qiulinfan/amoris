@@ -122,6 +122,7 @@ fn project(blocks: Option<&Path>, breach: i32) -> PathBuf {
 }
 
 fn main() {
+    amoris_render::stderr_log::init();
     let args: Vec<String> = std::env::args().collect();
     let dir = value(&args, "--shots").unwrap_or_else(|| "out/splashes".into());
     let frames: u64 = value(&args, "--frames")
