@@ -85,23 +85,6 @@
   "notes": "Native frames are captured offscreen along declared cameras. Playback FPS is separate from measured stress workload timing. The editor is the real WebGPU frontend connected to the Rust host.",
   "stills": [
     {
-      "file": "scene-poster.jpg",
-      "dimensions": [
-        1024,
-        768
-      ],
-      "captured_on": "2026-10-05",
-      "capture": "actual engine render",
-      "renderer": "Metal surface PT",
-      "scene": "lighting/scene-scene.json",
-      "report": "lighting/scene-pt-report.json",
-      "samples_per_pixel": 512,
-      "bounce_limit": 12,
-      "texture_size": 512,
-      "online_nrc": false,
-      "engine_commit": "dfc93213c474ade1da06d62cd5fbcba91542d545"
-    },
-    {
       "file": "agent-poster.jpg",
       "dimensions": [
         1280,
@@ -129,23 +112,6 @@
       "scope": "Fixed-pose ship and cargo mesh diffuse GI. Ocean retains its existing sky/sun/reflection lighting.",
       "engine_commit": "dfc93213c474ade1da06d62cd5fbcba91542d545",
       "scene_kind": "Frozen tick-60 mesh/light/environment snapshot; procedural ocean and sailing systems remain in the source project."
-    },
-    {
-      "file": "detail-poster.jpg",
-      "dimensions": [
-        1280,
-        960
-      ],
-      "captured_on": "2026-10-05",
-      "capture": "actual engine render",
-      "renderer": "Metal surface PT",
-      "scene": "lighting/detail-scene.json",
-      "report": "lighting/detail-pt-report.json",
-      "samples_per_pixel": 512,
-      "bounce_limit": 12,
-      "texture_size": 2048,
-      "online_nrc": false,
-      "engine_commit": "dfc93213c474ade1da06d62cd5fbcba91542d545"
     },
     {
       "file": "editor-poster.jpg",
@@ -183,32 +149,6 @@
           34.6,
           3.8,
           14.7
-        ]
-      },
-      "scope": "Cropped to 4:3 from 1280 x 720."
-    },
-    {
-      "captured_on": "2026-10-26",
-      "capture": "actual engine render",
-      "engine_commit": "f4a3356f",
-      "file": "falls-side.jpg",
-      "dimensions": [
-        960,
-        720
-      ],
-      "renderer": "native Metal forward, MSAA + TAA (scene_shots example)",
-      "project": "samples/river-falls, its UiText HUD removed",
-      "capture_tick": 1200,
-      "camera": {
-        "position": [
-          44,
-          6,
-          22
-        ],
-        "look_at": [
-          36,
-          4,
-          14
         ]
       },
       "scope": "Cropped to 4:3 from 1280 x 720."
@@ -332,5 +272,5 @@
       "scope": "Playing; the Dinghy selected and framed."
     }
   ],
-  "stills_notes": "New global-illumination stills replace showcase posters. Clips retain their original forward-renderer capture provenance. PT stills are offline renders; prior stress timing does not describe their performance. Source settings and PT reports accompany the images."
+  "stills_notes": "Stills are engine captures, each with its renderer, camera and engine commit. Clips retain their original forward-renderer capture provenance."
 }
