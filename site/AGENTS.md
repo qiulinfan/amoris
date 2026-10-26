@@ -1,7 +1,11 @@
 # Amoris showcase authoring
 
-- `index.html`, `site.css`, and `site.js` are the hand-authored landing page. The palette and card layout continue `qiulinfan/amoris` at
-  `5dda82cbde63893b5a0e0902cdeea5b5de297e6e`.
+- `index.html`, `site.css`, and `site.js` are the hand-authored landing page. The card layout
+  continues `qiulinfan/amoris` at `5dda82cbde63893b5a0e0902cdeea5b5de297e6e`. The palette is the
+  icon's Morandi lavender, sage and sand, as tokens on `:root` (dark, the default) and
+  `:root[data-bs-theme=light]`; the landing page's switch and the MkDocs toggle share the
+  `mkdocs-colormode` choice, and without one both follow the system. Colours go through the tokens,
+  never literals.
 - `content/` contains user documentation, built with MkDocs. `theme/main.html` makes its
   brand link return to the showcase; both surfaces load the single `site.css`.
 - Run `python3 tools/site/build_site.py`. Output goes to ignored `out/site`; it is the Pages

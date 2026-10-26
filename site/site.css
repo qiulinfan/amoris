@@ -1,16 +1,81 @@
-/* Continuation of the original Amoris site palette and card layout.
+/* Continuation of the original Amoris site's card layout.
    Reference: qiulinfan/amoris at 5dda82cbde63893b5a0e0902cdeea5b5de297e6e. */
 :root {
-  --bg:#17191d;
-  --panel:#21252b;
-  --panel-strong:#2a2f36;
-  --text:#e8ebef;
-  --muted:#aeb6c1;
+  /* Morandi, from the icon: lavender, sage and sand over a warm charcoal (dark) or a warm paper
+     (light). Dark is the default; `data-bs-theme` (shared with the MkDocs pages' toggle) or the
+     system's preference selects light. */
+  --bg:#1d1c1f;
+  --bg-deep:#161518;
+  --panel:#262428;
+  --panel-strong:#2f2c31;
+  --card-a:rgba(47,44,49,.96);
+  --card-b:rgba(34,32,36,.96);
+  --text:#ece7e2;
+  --muted:#b5aca6;
+  --fine:#9d948f;
   --accent:#c2b8c8;
   --accent-2:#bbc5b9;
-  --border:#3a4048;
-  --shadow:rgba(0,0,0,.28);
+  --accent-3:#cbbbad;
+  --border:#3d393f;
+  --shadow:rgba(0,0,0,.3);
+  --glow:rgba(194,184,200,.09);
+  --chip:rgba(194,184,200,.08);
+  --chip-border:rgba(194,184,200,.16);
+  --button-a:#c9d1c6;
+  --button-b:#a6b2a3;
+  --button-hover:#d2d8cf;
+  --button-text:#1d1c1f;
+  --ghost:rgba(255,255,255,.03);
+  --ghost-hover:rgba(255,255,255,.07);
+  --media:#18171a;
+  --caption:rgba(16,15,18,.4);
+  --strip:rgba(34,32,36,.55);
+  --tag-text:#cbbbad;
+  --tag:rgba(203,187,173,.05);
+  --main:rgba(34,32,36,.8);
+  --nav:#211f23;
+  --pre:#18171a;
+  --code:#ddd3c7;
+  --bar-1:#a6b2a3;
+  --bar-2:#ac9fb4;
   color-scheme:dark
+}
+:root[data-bs-theme=light] {
+  --bg:#efebe6;
+  --bg-deep:#e6e0d9;
+  --panel:#f6f3ef;
+  --panel-strong:#fbf9f6;
+  --card-a:rgba(251,249,246,.97);
+  --card-b:rgba(243,239,234,.97);
+  --text:#2b292d;
+  --muted:#675f66;
+  --fine:#7a7076;
+  --accent:#76687f;
+  --accent-2:#677664;
+  --accent-3:#86705e;
+  --border:#d8d0c8;
+  --shadow:rgba(76,62,54,.1);
+  --glow:rgba(172,159,180,.16);
+  --chip:rgba(172,159,180,.12);
+  --chip-border:rgba(172,159,180,.3);
+  --button-a:#a6b2a3;
+  --button-b:#909e8d;
+  --button-hover:#b6c0b3;
+  --button-text:#1f1e21;
+  --ghost:rgba(255,255,255,.5);
+  --ghost-hover:rgba(255,255,255,.85);
+  --media:#e4ded7;
+  --caption:rgba(255,255,255,.45);
+  --strip:rgba(251,249,246,.6);
+  --tag-text:#86705e;
+  --tag:rgba(203,187,173,.14);
+  --main:rgba(251,249,246,.85);
+  --nav:#f4f0eb;
+  --pre:#ebe5de;
+  --code:#86705e;
+  --bar-1:#909e8d;
+  --bar-2:#9a8ca3;
+  color-scheme:light
 }
 
 * {
@@ -25,7 +90,7 @@ html {
 body {
   margin:0;
   font-family:Inter,"Segoe UI",system-ui,sans-serif;
-  background:radial-gradient(circle at top,rgba(125,196,255,.1),transparent 32%),linear-gradient(180deg,#17191d,#121417);
+  background:radial-gradient(circle at top,var(--glow),transparent 32%),linear-gradient(180deg,var(--bg),var(--bg-deep));
   color:var(--text);
   line-height:1.6
 }
@@ -152,7 +217,7 @@ p {
 }
 
 .hero-card,.section-card {
-  background:linear-gradient(180deg,rgba(42,47,54,.96),rgba(28,32,38,.96));
+  background:linear-gradient(180deg,var(--card-a),var(--card-b));
   border:1px solid var(--border);
   border-radius:18px;
   box-shadow:0 20px 50px var(--shadow)
@@ -186,8 +251,8 @@ p {
 .hero-copy>.eyebrow {
   max-width:155px;
   padding:6px 10px;
-  background:rgba(125,196,255,.08);
-  border:1px solid rgba(125,196,255,.12);
+  background:var(--chip);
+  border:1px solid var(--chip-border);
   border-radius:999px;
   margin-bottom:20px
 }
@@ -229,23 +294,23 @@ p {
 }
 
 .button-primary {
-  background:linear-gradient(180deg,#7dc4ff,#5e9fff);
-  color:#11151a
+  background:linear-gradient(180deg,var(--button-a),var(--button-b));
+  color:var(--button-text)
 }
 
 .button-primary:hover {
-  color:#11151a;
-  background:#9bd1ff
+  color:var(--button-text);
+  background:var(--button-hover)
 }
 
 .button-secondary {
-  background:rgba(255,255,255,.025);
+  background:var(--ghost);
   color:var(--text);
   border-color:var(--border)
 }
 
 .button-secondary:hover {
-  background:rgba(255,255,255,.06);
+  background:var(--ghost-hover);
   border-color:var(--muted)
 }
 
@@ -268,7 +333,7 @@ p {
   min-height:300px;
   min-width:0;
   object-fit:contain;
-  background:#131b21
+  background:var(--media)
 }
 
 .hero-media figcaption {
@@ -278,7 +343,7 @@ p {
   gap:12px;
   padding:14px 16px;
   font-size:12px;
-  background:rgba(12,16,22,.4);
+  background:var(--caption);
   border-top:1px solid var(--border)
 }
 
@@ -306,7 +371,7 @@ p {
   border-radius:14px;
   margin:24px 0 0;
   padding:18px 24px;
-  background:rgba(28,32,38,.55)
+  background:var(--strip)
 }
 
 .summary-strip div {
@@ -381,7 +446,7 @@ p {
   height:auto;
   aspect-ratio:4/3;
   object-fit:contain;
-  background:#12171c;
+  background:var(--media);
   border-bottom:1px solid var(--border)
 }
 
@@ -414,14 +479,14 @@ p {
   border-radius:6px;
   padding:3px 8px;
   font-size:10px;
-  color:#b6c7d7;
-  background:rgba(125,196,255,.035)
+  color:var(--tag-text);
+  background:var(--tag)
 }
 
 .fineprint {
   font-size:11px;
   line-height:1.6;
-  color:#9aa7b5
+  color:var(--fine)
 }
 
 .card-copy .fineprint {
@@ -437,7 +502,7 @@ p {
 .editor-media .editor-render {
   width:100%;
   height:auto;
-  background:#11151a;
+  background:var(--media);
   object-fit:contain
 }
 
@@ -622,11 +687,11 @@ p {
 }
 
 .amoris-bar {
-  background:#90d681
+  background:var(--bar-1)
 }
 
 .reference-bar {
-  background:#75b9ed
+  background:var(--bar-2)
 }
 
 .bar span {
@@ -725,23 +790,30 @@ p {
 body:not(.showcase) {
   font-family:Inter,"Segoe UI",system-ui,sans-serif;
   background-color:var(--bg);
-  background-image:linear-gradient(180deg,#17191d,#121417);
+  background-image:linear-gradient(180deg,var(--bg),var(--bg-deep));
   padding-top:0
 }
 
-.navbar.bg-dark {
-  background:#1c2026!important;
+.navbar.fixed-top {
+  background:var(--nav)!important;
   border-bottom:1px solid var(--border)
 }
 
 .navbar .navbar-brand {
   color:var(--text);
-  font-weight:600
+  font-weight:600;
+  margin-right:10px;
+  flex-shrink:0;
+  white-space:nowrap
 }
 
 .navbar .nav-link {
   font-size:13px;
   color:var(--muted)
+}
+
+.navbar .nav-link.active,.navbar .nav-link:hover,.navbar .nav-link:focus {
+  color:var(--text)!important
 }
 
 body:not(.showcase) .container {
@@ -765,7 +837,7 @@ body:not(.showcase) .container {
 
 .col-md-9[role=main] {
   min-width:0;
-  background:rgba(28,32,38,.8);
+  background:var(--main);
   border:1px solid var(--border);
   border-radius:14px;
   padding:28px 34px;
@@ -793,7 +865,7 @@ body:not(.showcase) .container {
 }
 
 pre {
-  background:#15191e!important;
+  background:var(--pre)!important;
   color:var(--text)!important;
   border:1px solid var(--border);
   border-radius:9px;
@@ -803,7 +875,7 @@ pre {
 }
 
 code {
-  color:#a8d5ff!important;
+  color:var(--code)!important;
   font:12px/1.65 "SFMono-Regular",Consolas,monospace
 }
 
@@ -864,6 +936,30 @@ body:not(.showcase) footer {
   white-space:nowrap
 }
 
+/* The theme switch beside the navigation. */
+.theme-toggle {
+  display:inline-grid;
+  place-items:center;
+  width:30px;
+  height:30px;
+  margin-left:6px;
+  padding:0;
+  border:1px solid var(--border);
+  border-radius:999px;
+  background:var(--ghost);
+  color:var(--text);
+  cursor:pointer;
+  font-size:14px;
+  line-height:1
+}
+.theme-toggle:hover {
+  background:var(--ghost-hover);
+  border-color:var(--muted)
+}
+:root[data-bs-theme=light] .navbar-dark .navbar-toggler-icon {
+  filter:invert(1)
+}
+
 /* The editor first, across the page, under a one-line title bar. */
 .hero-stack {
   grid-template-columns:1fr
@@ -906,7 +1002,7 @@ body:not(.showcase) footer {
   overflow:hidden;
   border:1px solid var(--border);
   border-radius:14px;
-  background:#12171c
+  background:var(--media)
 }
 .gallery img {
   display:block;
