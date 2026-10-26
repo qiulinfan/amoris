@@ -41,8 +41,11 @@ still on the tube, whether it is in the water and its eye's position, and the ev
 
 `python3 samples/river-falls/build_scene.py` rebuilds the terrain (`terrain.glb`, also the fixed
 TriMesh the water's bed and the bodies stand on), `scene.json` and `perception.json`. It uses only
-Python's standard library and no downloaded assets. The gameplay check rides the whole run
-through the player's controls:
+Python's standard library and no downloaded assets: `textures.py` draws the stratified cliff
+rock, grass, sand and river-stone textures (albedo and normal maps) procedurally, and
+`terrain.glb` embeds them together with the generated boulders (also set into the cliff as
+ledges) and the pines' crowns, which are drawn only and have no colliders. The gameplay check
+rides the whole run through the player's controls:
 
 ```sh
 cargo test --release -p amoris-app --test gpu_frontier_scenes river_falls
