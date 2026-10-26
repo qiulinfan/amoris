@@ -16,7 +16,7 @@
     <header class="topbar">
       <a class="brand" href="./"><img src="assets/icon.svg" alt="" width="36" height="36"><span>Amoris</span></a>
       <nav aria-label="Main navigation">
-        <a href="#showcase">Showcase</a><a href="#editor">Editor</a><a href="#data">Benchmarks</a>
+        <a href="#showcase">Water</a><a href="#rendering">Rendering</a><a href="#editor">Editor</a><a href="#data">Benchmarks</a>
         <a href="documentation/">Documentation <span aria-hidden="true">↗</span></a>
       </nav>
     </header>
@@ -35,31 +35,62 @@
           <p class="fineprint">A working prototype. The examples below come from the engine.</p>
         </article>
         <figure class="hero-card hero-media">
-          <img class="hero-render" src="media/scene-poster.jpg" alt="Bistro street in sunlight, rendered in Amoris with multi-bounce Metal path tracing" width="1024" height="768" fetchpriority="high">
-          <figcaption><div>Bistro <span class="muted">/ Metal path tracing · rendered still</span></div><a class="recording-link" href="media/scene.mp4">Earlier recording <span aria-hidden="true">↗</span></a></figcaption>
+          <img class="hero-render" src="media/falls-poster.jpg" alt="River falls in Amoris: a river leaves a stratified rock lip as a glassy sheet that whitens and tears into strands above a misty plunge pool" width="960" height="720" fetchpriority="high">
+          <figcaption><div>River falls <span class="muted">/ GPU water · real-time renderer</span></div><a class="recording-link" href="https://github.com/qiulinfan/amoris/tree/main/samples/river-falls">Play the sample <span aria-hidden="true">↗</span></a></figcaption>
         </figure>
       </section>
 
       <section class="summary-strip" aria-label="Project at a glance">
         <div><strong>Rust + TypeScript</strong><span>stateless systems · state in components</span></div>
         <div><strong>Metal · Vulkan · D3D12 · WebGPU</strong><span>one renderer · WGSL shaders</span></div>
+        <div><strong>GPU water</strong><span>the same bits on every device</span></div>
         <div><strong>CLI · editor · MCP</strong><span>one discoverable command catalog</span></div>
       </section>
 
       <section id="showcase" class="page-section" aria-labelledby="showcase-title">
-        <div class="section-heading"><div><span class="eyebrow">In the engine</span><h2 id="showcase-title">Scenes with global illumination.</h2></div><p>Actual engine stills. Metal path tracing for Bistro and Flight Helmet; baked probes for Harbor.</p></div>
+        <div class="section-heading"><div><span class="eyebrow">Playable samples · 26 October 2026</span><h2 id="showcase-title">Water you can play in.</h2></div><p>Shallow-water regions solved on the GPU, with breaking waves, falling sheets, wind, rain and a wind sea. The kernels compute the same bits on every GPU and in the browser, so the water replays with the rest of the world.</p></div>
         <div class="demo-grid">
           <article class="section-card demo-card">
+            <img class="demo-render" src="media/falls-side.jpg" alt="The river falls seen from beside the pool: one continuous sheet of water, streaked and whitening as it drops past layered rock" width="960" height="720" loading="lazy">
+            <div class="card-copy"><span class="card-number">01 / Falling sheets</span><h3>River falls</h3><p>A river drops about 7 m over a rock lip into a plunge pool, ridden on an inner tube through three gates. The sheet leaves the lip glassy, whitens over the break-up length of a falling nappe and tears into strands; its streaks fall with the water.</p><div class="tags"><span>Resident GPU water</span><span>Ballistic sheets</span><span>Procedural rock</span></div><p class="fineprint">Headless capture of the sample at tick 1200, Apple M5 / Metal, MSAA + TAA, its HUD left out. <a href="https://github.com/qiulinfan/amoris/tree/main/samples/river-falls">Sample and controls.</a></p></div>
+          </article>
+          <article class="section-card demo-card">
+            <img class="demo-render" src="media/surf-poster.jpg" alt="A wave breaking along a reef in the surf beach sample, its crest pitching forward over the face" width="800" height="600" loading="lazy">
+            <div class="card-copy"><span class="card-number">02 / Breaking waves</span><h3>Surf beach</h3><p>A 2.4 m groundswell trips on a slanted reef and breaks along it. Steep, fast crests throw their top layer ahead of the face, conserving water exactly; you paddle into a wave and ride its face on a board.</p><div class="tags"><span>Plunging lips</span><span>Non-hydrostatic pressure</span><span>Board and rider</span></div><p class="fineprint">shore_shots, along the breaking wave at tick 2100, Apple M5 / Metal.</p></div>
+          </article>
+          <article class="section-card demo-card">
+            <img class="demo-render" src="media/sea-poster.jpg" alt="The open sea under a low sun, its wind waves glinting, running in toward the bay's headlands" width="800" height="600" loading="lazy">
+            <div class="card-copy"><span class="card-number">03 / Wind sea</span><h3>To the horizon</h3><p>Beyond the simulated bay, an FFT wind sea in three cascades runs to the horizon; the region's water and the sea meet over a band without a seam.</p><div class="tags"><span>FFT cascades</span><span>Seamless join</span><span>Sun glint</span></div><p class="fineprint">ocean_shots, from the open sea toward the bay at tick 2100, Apple M5 / Metal.</p></div>
+          </article>
+          <article class="section-card demo-card">
+            <img class="demo-render" src="media/pool-poster.jpg" alt="A backyard pool in the rain with swim rings, beach balls and a dinghy floating on GPU water, caustics on its floor" width="960" height="720" loading="lazy">
+            <div class="card-copy"><span class="card-number">04 / Floating bodies</span><h3>Pool party</h3><p>Floats, dinghies buoyed by their hulls and swimmers on a resident GPU field, in a breeze and 12 mm an hour of rain; guests cannonball off the board.</p><div class="tags"><span>Buoyancy</span><span>Rain rings</span><span>Caustics</span></div><p class="fineprint">Headless capture at tick 900, Apple M5 / Metal, MSAA + TAA, its HUD left out.</p></div>
+          </article>
+          <article class="section-card demo-card detail-card">
+            <img class="demo-render" src="media/blockcraft-poster.jpg" alt="Blockcraft's voxel island of grass, stone and trees in an open ocean, with blocky clouds" width="960" height="720" loading="lazy">
+            <div class="card-copy"><span class="card-number">05 / Block volumes</span><h3>Blockcraft</h3><p>A seeded 128 × 128 island of one-metre blocks. Break and place blocks; the engine's shallow water floods through a broken bank, pours and drains. The same game exports as a static WebGPU folder for itch.io.</p><div class="tags"><span>Voxels</span><span>Shallow water</span><span>Web export</span></div><p class="fineprint">amoris serve capture, Apple M5 / Metal. <a href="https://github.com/qiulinfan/amoris/tree/main/samples/blockcraft">Sample.</a></p></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="rendering" class="page-section" aria-labelledby="rendering-title">
+        <div class="section-heading"><div><span class="eyebrow">In the engine</span><h2 id="rendering-title">Scenes with global illumination.</h2></div><p>The interactive renderer with baked probes and ray-traced shadows, and the research path tracer.</p></div>
+        <div class="demo-grid">
+          <article class="section-card demo-card detail-card">
+            <img class="demo-render" src="media/town-poster.jpg" alt="The Bistro street in Amoris's real-time renderer, with baked probe lighting, ray-traced sun shadows and ambient occlusion" width="1280" height="960" loading="lazy">
+            <div class="card-copy"><span class="card-number">01 / Real-time</span><h3>Bistro, walked</h3><p>The ORCA Bistro exterior in the interactive renderer: 43,725 baked world probes for diffuse light, ray-traced sun shadows, TAA and GTAO. The Town walk sample walks it with collision.</p><div class="tags"><span>Baked probe GI</span><span>Ray-traced shadows</span><span>TAA · GTAO</span></div><p class="fineprint">amoris serve capture at 1920 × 1080, Apple M5 / Metal, 26 October 2026; no frame-rate claim. The third-party model is prepared locally and not committed.</p></div>
+          </article>
+          <article class="section-card demo-card">
             <img class="demo-render" src="media/scene-poster.jpg" alt="Amoris Metal path-traced Bistro exterior, with sunlight, building shadows, and light reflected between surfaces" width="1024" height="768" loading="lazy">
-            <div class="card-copy"><span class="card-number">01 / Metal path tracing</span><h3>Bistro</h3><p>The public Bistro exterior in sunlight, with multi-bounce lighting. An offline 1024 × 768 render at 512 samples per pixel, a 12-bounce limit, and textures capped at 512 px.</p><div class="tags"><span>Authored scene</span><span>512 spp</span><span>12-bounce limit</span></div><p class="fineprint">This still has no real-time FPS measurement. <a href="media/scene.mp4">Earlier recording: native forward-renderer walkthrough.</a></p></div>
+            <div class="card-copy"><span class="card-number">02 / Metal path tracing</span><h3>Bistro, path-traced</h3><p>The public Bistro exterior in sunlight, with multi-bounce lighting. An offline 1024 × 768 render at 512 samples per pixel, a 12-bounce limit, and textures capped at 512 px.</p><div class="tags"><span>Authored scene</span><span>512 spp</span><span>12-bounce limit</span></div><p class="fineprint">This still has no real-time FPS measurement. <a href="media/scene.mp4">Earlier recording: native forward-renderer walkthrough.</a></p></div>
           </article>
           <article class="section-card demo-card">
             <img class="demo-render" src="media/agent-poster.jpg" alt="Harbor's CC0 Dutch ship and cargo meshes in Amoris, with baked probe diffuse global illumination at a fixed pose" width="1280" height="720" loading="lazy">
-            <div class="card-copy"><span class="card-number">02 / Baked probe lighting</span><h3>Harbor</h3><p>World-space probes light the ship and cargo meshes in a fixed sailing pose. The ocean keeps its existing sky, sun, and reflection lighting.</p><div class="tags"><span>Baked probes</span><span>Mesh diffuse GI</span><span>Fixed pose</span></div><p class="fineprint"><a href="media/agent.mp4">Earlier recording: sailing through MCP.</a> A scripted pilot tests four steering forks, chooses an action, and takes reachable cargo aboard. Developer-mode automation · 2 crates collected · not an autonomous LLM player.</p></div>
+            <div class="card-copy"><span class="card-number">03 / Baked probe lighting</span><h3>Harbor</h3><p>World-space probes light the ship and cargo meshes in a fixed sailing pose. The ocean keeps its existing sky, sun, and reflection lighting.</p><div class="tags"><span>Baked probes</span><span>Mesh diffuse GI</span><span>Fixed pose</span></div><p class="fineprint"><a href="media/agent.mp4">Earlier recording: sailing through MCP.</a> A scripted pilot tests four steering forks, chooses an action, and takes reachable cargo aboard. Developer-mode automation · 2 crates collected · not an autonomous LLM player.</p></div>
           </article>
           <article class="section-card demo-card detail-card">
             <img class="demo-render" src="media/detail-poster.jpg" alt="CC0 Flight Helmet rendered in Amoris with Metal path tracing and its authored PBR material maps" width="1280" height="960" loading="lazy">
-            <div class="card-copy"><span class="card-number">03 / Metal path tracing</span><h3>Materials, up close.</h3><p>The CC0 Flight Helmet: 94,722 triangles, six materials, and authored color, normal, and roughness maps. This offline Metal path-traced still shows its materials under multi-bounce lighting.</p><div class="tags"><span>glTF</span><span>PBR materials</span><span>94.7K triangles</span></div><p class="fineprint"><a href="media/detail.mp4">Earlier recording: forward-rendered material close-up.</a></p></div>
+            <div class="card-copy"><span class="card-number">04 / Metal path tracing</span><h3>Materials, up close.</h3><p>The CC0 Flight Helmet: 94,722 triangles, six materials, and authored color, normal, and roughness maps. This offline Metal path-traced still shows its materials under multi-bounce lighting.</p><div class="tags"><span>glTF</span><span>PBR materials</span><span>94.7K triangles</span></div><p class="fineprint"><a href="media/detail.mp4">Earlier recording: forward-rendered material close-up.</a></p></div>
           </article>
         </div>
       </section>
@@ -67,8 +98,8 @@
       <section id="editor" class="page-section" aria-labelledby="editor-title">
         <div class="section-heading"><div><span class="eyebrow">A shared workspace</span><h2 id="editor-title">Edit, play, and debug.</h2></div><a class="text-link" href="documentation/editor/">Editor guide <span aria-hidden="true">→</span></a></div>
         <figure class="section-card editor-media">
-          <img class="editor-render" src="media/editor-poster.jpg" alt="The Amoris web editor connected to a real Rust host, showing Harbor with baked probe GI in the WebGPU viewport" width="1280" height="720" loading="lazy">
-          <figcaption><span>Harbor with baked probe GI. Connected to the real Rust host; the viewport is the engine's WebGPU renderer.</span><a class="recording-link" href="media/editor.mp4">Earlier recording <span aria-hidden="true">↗</span></a></figcaption>
+          <img class="editor-render" src="media/editor-pool.jpg" alt="The Amoris web editor playing Pool party against a real Rust host: the WebGPU viewport with a dinghy selected, the hierarchy, inspector, assets, console, history and agent panels" width="1600" height="900" loading="lazy">
+          <figcaption><span>Pool party playing in the web editor, the dinghy selected. Connected to the real Rust host; the viewport is the engine's WebGPU renderer.</span><a class="recording-link" href="media/editor.mp4">Earlier recording <span aria-hidden="true">↗</span></a></figcaption>
         </figure>
         <div class="section-grid editor-points">
           <article class="section-card"><span class="small-icon" aria-hidden="true">↔</span><h3>Desktop and browser</h3><p>The same docked panels in a native desktop window or a browser. Viewport, hierarchy, inspector, assets, history, and a command palette.</p></article>

@@ -160,6 +160,176 @@
       "project": "Harbor",
       "scope": "Real Rust host; Sky selected to show the loaded baked_gi asset and gi_intensity.",
       "engine_commit": "dfc93213c474ade1da06d62cd5fbcba91542d545"
+    },
+    {
+      "captured_on": "2026-10-26",
+      "capture": "actual engine render",
+      "engine_commit": "f4a3356f",
+      "file": "falls-poster.jpg",
+      "dimensions": [
+        960,
+        720
+      ],
+      "renderer": "native Metal forward, MSAA + TAA (scene_shots example)",
+      "project": "samples/river-falls, its UiText HUD removed",
+      "capture_tick": 1200,
+      "camera": {
+        "position": [
+          47,
+          3,
+          6
+        ],
+        "look_at": [
+          34.6,
+          3.8,
+          14.7
+        ]
+      },
+      "scope": "Cropped to 4:3 from 1280 x 720."
+    },
+    {
+      "captured_on": "2026-10-26",
+      "capture": "actual engine render",
+      "engine_commit": "f4a3356f",
+      "file": "falls-side.jpg",
+      "dimensions": [
+        960,
+        720
+      ],
+      "renderer": "native Metal forward, MSAA + TAA (scene_shots example)",
+      "project": "samples/river-falls, its UiText HUD removed",
+      "capture_tick": 1200,
+      "camera": {
+        "position": [
+          44,
+          6,
+          22
+        ],
+        "look_at": [
+          36,
+          4,
+          14
+        ]
+      },
+      "scope": "Cropped to 4:3 from 1280 x 720."
+    },
+    {
+      "captured_on": "2026-10-26",
+      "capture": "actual engine render",
+      "engine_commit": "f4a3356f",
+      "file": "surf-poster.jpg",
+      "dimensions": [
+        800,
+        600
+      ],
+      "renderer": "native Metal forward, MSAA + TAA (shore_shots example, view tube)",
+      "project": "samples/surf-beach",
+      "capture_tick": 2100,
+      "scope": "Cropped to 4:3 below the HUD from 1280 x 720."
+    },
+    {
+      "captured_on": "2026-10-26",
+      "capture": "actual engine render",
+      "engine_commit": "f4a3356f",
+      "file": "sea-poster.jpg",
+      "dimensions": [
+        800,
+        600
+      ],
+      "renderer": "native Metal forward, MSAA + TAA (ocean_shots example, view outside)",
+      "project": "samples/surf-beach",
+      "capture_tick": 2100,
+      "scope": "Cropped to 4:3 below the HUD from 1280 x 720."
+    },
+    {
+      "captured_on": "2026-10-26",
+      "capture": "actual engine render",
+      "engine_commit": "f4a3356f",
+      "file": "pool-poster.jpg",
+      "dimensions": [
+        960,
+        720
+      ],
+      "renderer": "native Metal forward, MSAA + TAA (scene_shots example)",
+      "project": "samples/pool-party, its UiText HUD removed",
+      "capture_tick": 900,
+      "camera": {
+        "position": [
+          -2,
+          1.8,
+          -1.5
+        ],
+        "look_at": [
+          8,
+          -0.5,
+          4
+        ]
+      },
+      "scope": "Cropped to 4:3 from 1280 x 720."
+    },
+    {
+      "captured_on": "2026-10-26",
+      "capture": "actual engine render",
+      "engine_commit": "f3ec40f9",
+      "file": "blockcraft-poster.jpg",
+      "dimensions": [
+        960,
+        720
+      ],
+      "renderer": "native Metal forward, MSAA (amoris serve capture)",
+      "project": "samples/blockcraft, its UiText removed in the edit world",
+      "camera": {
+        "position": [
+          -90,
+          60,
+          -90
+        ],
+        "look_at": [
+          0,
+          20,
+          0
+        ]
+      },
+      "scope": "Cropped to 4:3 from 1920 x 1080."
+    },
+    {
+      "captured_on": "2026-10-26",
+      "capture": "actual engine render",
+      "engine_commit": "f3ec40f9",
+      "file": "town-poster.jpg",
+      "dimensions": [
+        1280,
+        960
+      ],
+      "renderer": "native Metal forward with baked diffuse GI, ray-traced sun shadows, TAA and GTAO (amoris serve capture; AMORIS_AA=taa, AMORIS_GTAO=on, AMORIS_RT_SHADOWS=1)",
+      "project": "samples/town-walk, its UiText removed in the edit world",
+      "probe_count": 43725,
+      "camera": {
+        "position": [
+          12,
+          2.1,
+          18
+        ],
+        "look_at": [
+          6.45,
+          2.1,
+          9.68
+        ]
+      },
+      "scope": "Cropped to 4:3 from 1920 x 1080. No frame-rate claim."
+    },
+    {
+      "captured_on": "2026-10-26",
+      "capture": "actual engine render",
+      "engine_commit": "f3ec40f9",
+      "file": "editor-pool.jpg",
+      "dimensions": [
+        1600,
+        900
+      ],
+      "renderer": "real browser WebGPU editor (headless Chrome) against amoris serve",
+      "project": "samples/pool-party",
+      "scope": "Playing; the Dinghy selected and framed."
     }
   ],
   "stills_notes": "New global-illumination stills replace showcase posters. Clips retain their original forward-renderer capture provenance. PT stills are offline renders; prior stress timing does not describe their performance. Source settings and PT reports accompany the images."
