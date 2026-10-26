@@ -22,7 +22,6 @@ Work in progress: engine captures on Apple M5 / Metal ([asset credits](site/cont
 <table>
 <tr><td width="33%"><img src="site/media/falls-poster.jpg" alt="River falls"><br><a href="samples/river-falls">River falls</a></td><td width="33%"><img src="site/media/surf-poster.jpg" alt="A wave breaking along a reef"><br><a href="samples/surf-beach">Surf beach</a></td><td width="33%"><img src="site/media/sea-poster.jpg" alt="The open sea under a low sun"><br>Wind sea</td></tr>
 <tr><td width="33%"><img src="site/media/pool-poster.jpg" alt="A pool in the rain with floats"><br><a href="samples/pool-party">Pool party</a></td><td width="33%"><img src="site/media/blockcraft-poster.jpg" alt="A voxel island"><br><a href="samples/blockcraft">Blockcraft</a></td><td width="33%"><img src="site/media/town-poster.jpg" alt="The Bistro in the real-time renderer"><br><a href="samples/town-walk">Bistro</a>, real-time</td></tr>
-<tr><td width="33%"><img src="site/media/falls-side.jpg" alt="The river falls from the pool"><br>Falls, from the pool</td><td width="33%"><img src="site/media/scene-poster.jpg" alt="The Bistro path-traced"><br>Bistro, path-traced</td><td width="33%"><img src="site/media/detail-poster.jpg" alt="The Flight Helmet path-traced"><br>Flight Helmet</td></tr>
 </table>
 
 ## Highlights
