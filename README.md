@@ -20,8 +20,8 @@ on Metal, Vulkan, and Direct3D 12, and in the browser on WebGPU.
 Work in progress: engine captures on Apple M5 / Metal ([asset credits](site/content/credits.md)).
 
 <table>
-<tr><td width="33%"><img src="site/media/falls-poster.jpg" alt="River falls"><br><a href="samples/river-falls">River falls</a></td><td width="33%"><img src="site/media/surf-poster.jpg" alt="A wave breaking along a reef"><br><a href="samples/surf-beach">Surf beach</a></td><td width="33%"><img src="site/media/sea-poster.jpg" alt="The open sea under a low sun"><br>Wind sea</td></tr>
-<tr><td width="33%"><img src="site/media/pool-poster.jpg" alt="A pool in the rain with floats"><br><a href="samples/pool-party">Pool party</a></td><td width="33%"><img src="site/media/blockcraft-poster.jpg" alt="A voxel island"><br><a href="samples/blockcraft">Blockcraft</a></td><td width="33%"><img src="site/media/town-poster.jpg" alt="The Bistro in the real-time renderer"><br><a href="samples/town-walk">Bistro</a>, real-time</td></tr>
+<tr><td width="33%"><img src="site/media/falls-loop.webp" alt="River falls"><br><a href="samples/river-falls">River falls</a></td><td width="33%"><img src="site/media/surf-loop.webp" alt="A wave breaking along a reef"><br><a href="samples/surf-beach">Surf beach</a></td><td width="33%"><img src="site/media/sea-loop.webp" alt="The open sea under a low sun"><br>Wind sea</td></tr>
+<tr><td width="33%"><img src="site/media/pool-loop.webp" alt="A pool in the rain with floats"><br><a href="samples/pool-party">Pool party</a></td><td width="33%"><img src="site/media/blockcraft-loop.webp" alt="A voxel island"><br><a href="samples/blockcraft">Blockcraft</a></td><td width="33%"><img src="site/media/town-loop.webp" alt="The Bistro in the real-time renderer"><br><a href="samples/town-walk">Bistro</a>, real-time</td></tr>
 </table>
 
 ## Highlights

@@ -130,15 +130,22 @@
     {
       "captured_on": "2026-10-26",
       "capture": "actual engine render",
-      "engine_commit": "f4a3356f",
-      "file": "falls-poster.jpg",
+      "engine_commit": "f3ec40f9",
+      "file": "editor-pool.jpg",
       "dimensions": [
-        960,
-        720
+        1600,
+        900
       ],
-      "renderer": "native Metal forward, MSAA + TAA (scene_shots example)",
-      "project": "samples/river-falls, its UiText HUD removed",
-      "capture_tick": 1200,
+      "renderer": "real browser WebGPU editor (headless Chrome) against amoris serve",
+      "project": "samples/pool-party",
+      "scope": "Playing; the Dinghy selected and framed."
+    }
+  ],
+  "stills_notes": "Stills are engine captures, each with its renderer, camera and engine commit. Clips retain their original forward-renderer capture provenance.",
+  "loops": [
+    {
+      "file": "falls-loop.webp",
+      "source": "scene_shots on samples/river-falls (its UiText HUD removed in a copy under out/), MSAA + TAA, every third tick from 1200 to 1377",
       "camera": {
         "position": [
           47,
@@ -151,48 +158,19 @@
           14.7
         ]
       },
-      "scope": "Cropped to 4:3 from 1280 x 720."
+      "dimensions": [
+        640,
+        480
+      ],
+      "captured_on": "2026-10-26",
+      "capture": "actual engine frames",
+      "frame_ms": 50,
+      "engine_commit": "f0019cdd",
+      "encoding": "animated WebP (img2webp -lossy -q 88); the water loops crossfade their last 12 frames into their first"
     },
     {
-      "captured_on": "2026-10-26",
-      "capture": "actual engine render",
-      "engine_commit": "f4a3356f",
-      "file": "surf-poster.jpg",
-      "dimensions": [
-        800,
-        600
-      ],
-      "renderer": "native Metal forward, MSAA + TAA (shore_shots example, view tube)",
-      "project": "samples/surf-beach",
-      "capture_tick": 2100,
-      "scope": "Cropped to 4:3 below the HUD from 1280 x 720."
-    },
-    {
-      "captured_on": "2026-10-26",
-      "capture": "actual engine render",
-      "engine_commit": "f4a3356f",
-      "file": "sea-poster.jpg",
-      "dimensions": [
-        800,
-        600
-      ],
-      "renderer": "native Metal forward, MSAA + TAA (ocean_shots example, view outside)",
-      "project": "samples/surf-beach",
-      "capture_tick": 2100,
-      "scope": "Cropped to 4:3 below the HUD from 1280 x 720."
-    },
-    {
-      "captured_on": "2026-10-26",
-      "capture": "actual engine render",
-      "engine_commit": "f4a3356f",
-      "file": "pool-poster.jpg",
-      "dimensions": [
-        960,
-        720
-      ],
-      "renderer": "native Metal forward, MSAA + TAA (scene_shots example)",
-      "project": "samples/pool-party, its UiText HUD removed",
-      "capture_tick": 900,
+      "file": "pool-loop.webp",
+      "source": "scene_shots on samples/pool-party (its UiText HUD removed in a copy under out/), MSAA + TAA, every third tick from 780 to 957",
       "camera": {
         "position": [
           -2,
@@ -205,45 +183,58 @@
           4
         ]
       },
-      "scope": "Cropped to 4:3 from 1280 x 720."
+      "dimensions": [
+        640,
+        480
+      ],
+      "captured_on": "2026-10-26",
+      "capture": "actual engine frames",
+      "frame_ms": 50,
+      "engine_commit": "f0019cdd",
+      "encoding": "animated WebP (img2webp -lossy -q 88); the water loops crossfade their last 12 frames into their first"
     },
     {
-      "captured_on": "2026-10-26",
-      "capture": "actual engine render",
-      "engine_commit": "f3ec40f9",
-      "file": "blockcraft-poster.jpg",
+      "file": "surf-loop.webp",
+      "source": "shore_shots --view tube on samples/surf-beach, MSAA + TAA, every third tick from 2100 to 2277, cropped below the HUD",
       "dimensions": [
-        960,
-        720
+        640,
+        480
       ],
-      "renderer": "native Metal forward, MSAA (amoris serve capture)",
-      "project": "samples/blockcraft, its UiText removed in the edit world",
-      "camera": {
-        "position": [
-          -90,
-          60,
-          -90
-        ],
-        "look_at": [
-          0,
-          20,
-          0
-        ]
-      },
-      "scope": "Cropped to 4:3 from 1920 x 1080."
+      "captured_on": "2026-10-26",
+      "capture": "actual engine frames",
+      "frame_ms": 50,
+      "engine_commit": "f0019cdd",
+      "encoding": "animated WebP (img2webp -lossy -q 88); the water loops crossfade their last 12 frames into their first"
     },
     {
-      "captured_on": "2026-10-26",
-      "capture": "actual engine render",
-      "engine_commit": "f3ec40f9",
-      "file": "town-poster.jpg",
+      "file": "sea-loop.webp",
+      "source": "ocean_shots --view outside on samples/surf-beach, MSAA + TAA, every third tick from 2100 to 2277, cropped below the HUD",
       "dimensions": [
-        1280,
-        960
+        640,
+        480
       ],
-      "renderer": "native Metal forward with baked diffuse GI, ray-traced sun shadows, TAA and GTAO (amoris serve capture; AMORIS_AA=taa, AMORIS_GTAO=on, AMORIS_RT_SHADOWS=1)",
-      "project": "samples/town-walk, its UiText removed in the edit world",
-      "probe_count": 43725,
+      "captured_on": "2026-10-26",
+      "capture": "actual engine frames",
+      "frame_ms": 50,
+      "engine_commit": "f0019cdd",
+      "encoding": "animated WebP (img2webp -lossy -q 88); the water loops crossfade their last 12 frames into their first"
+    },
+    {
+      "file": "blockcraft-loop.webp",
+      "source": "amoris serve samples/blockcraft playing, its UiText removed; 120 capture calls around a 120 m orbit at 55 m, 960 x 720, MSAA + TAA",
+      "dimensions": [
+        640,
+        480
+      ],
+      "captured_on": "2026-10-26",
+      "capture": "actual engine frames",
+      "frame_ms": 50,
+      "engine_commit": "f0019cdd",
+      "encoding": "animated WebP (img2webp -lossy -q 70); the water loops crossfade their last 12 frames into their first"
+    },
+    {
+      "file": "town-loop.webp",
+      "source": "amoris serve samples/town-walk, its UiText removed, AMORIS_AA=taa AMORIS_GTAO=on AMORIS_RT_SHADOWS=1; 59 capture calls along a 4 m dolly, played forward and back",
       "camera": {
         "position": [
           12,
@@ -254,23 +245,22 @@
           6.45,
           2.1,
           9.68
+        ],
+        "moved_by": [
+          -2.2,
+          0,
+          -3.3
         ]
       },
-      "scope": "Cropped to 4:3 from 1920 x 1080. No frame-rate claim."
-    },
-    {
-      "captured_on": "2026-10-26",
-      "capture": "actual engine render",
-      "engine_commit": "f3ec40f9",
-      "file": "editor-pool.jpg",
       "dimensions": [
-        1600,
-        900
+        640,
+        480
       ],
-      "renderer": "real browser WebGPU editor (headless Chrome) against amoris serve",
-      "project": "samples/pool-party",
-      "scope": "Playing; the Dinghy selected and framed."
+      "captured_on": "2026-10-26",
+      "capture": "actual engine frames",
+      "frame_ms": 50,
+      "engine_commit": "f0019cdd",
+      "encoding": "animated WebP (img2webp -lossy -q 50); the water loops crossfade their last 12 frames into their first"
     }
-  ],
-  "stills_notes": "Stills are engine captures, each with its renderer, camera and engine commit. Clips retain their original forward-renderer capture provenance."
+  ]
 }
