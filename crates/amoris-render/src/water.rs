@@ -321,12 +321,14 @@ fn lip_pipeline(
             entry_point: Some("vs_lip"),
             compilation_options: Default::default(),
             buffers: &[Some(wgpu::VertexBufferLayout {
-                array_stride: crate::water_lip::STRIDE,
+                array_stride: crate::water_lip::SHEET_STRIDE,
                 step_mode: wgpu::VertexStepMode::Instance,
                 attributes: &wgpu::vertex_attr_array![
                     0 => Float32x4,
                     1 => Float32x4,
-                    2 => Float32x4
+                    2 => Float32x4,
+                    3 => Float32x4,
+                    4 => Float32x4
                 ],
             })],
         },
@@ -2102,7 +2104,7 @@ impl Water {
             };
             pass.set_bind_group(3, &g.group, &[]);
             pass.set_pipeline(&self.lip);
-            pass.set_vertex_buffer(0, pool.lips.slice(..));
+            pass.set_vertex_buffer(0, pool.sheets.slice(..));
             pass.draw_indirect(&pool.args, 0);
         }
     }

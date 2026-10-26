@@ -1484,31 +1484,103 @@ struct LipOut {
     @location(1) normal: vec3f,
     // How far along its flight, the sheet's thickness there, and its kind (0 a lip, 1 a fall).
     @location(2) along: vec3f,
+    // Where across the sheet the water left (world metres along it) and how long it has flown (s).
+    @location(3) flow: vec2f,
+    // The way across the sheet.
+    @location(4) across: vec3f,
+    // How far the water has dropped since it left (m), 1 on an edge that ends the sheet, and the
+    // water leaving a metre of the lip (m^2/s).
+    @location(5) fall: vec3f,
 };
 @vertex
-fn vs_lip(@builtin(vertex_index) vi: u32, @location(0) launch: vec4f,
-    @location(1) velocity: vec4f, @location(2) side: vec4f) -> LipOut {
+fn vs_lip(@builtin(vertex_index) vi: u32, @location(0) left: vec4f,
+    @location(1) left_velocity: vec4f, @location(2) right: vec4f,
+    @location(3) right_velocity: vec4f, @location(4) side: vec4f) -> LipOut {
     let corner = vi % 6u;
     let s = f32(vi / 6u + array<u32, 6>(0u, 1u, 1u, 0u, 1u, 0u)[corner]) / f32(LIP_SEGMENTS);
-    let across = array<f32, 6>(-1.0, -1.0, 1.0, -1.0, 1.0, 1.0)[corner];
-    let t = s * velocity.w;
+    let on_right = array<bool, 6>(false, false, true, false, true, true)[corner];
     let g = vec3f(0.0, -9.81, 0.0);
+    // The vertex's edge: a ribbon's edge is its neighbour's (water_lip.wgsl `join`), so the sheet's
+    // vertices are shared bit for bit.
+    let launch = select(left, right, on_right);
+    let velocity = select(left_velocity, right_velocity, on_right);
+    let flags = u32(side.w);
+    let free = (flags & select(2u, 4u, on_right)) != 0u;
+    let t = s * velocity.w;
     let moving = velocity.xyz + g * t;
-    let world = launch.xyz + velocity.xyz * t + 0.5 * g * t * t + side.xyz * across;
+    let world = launch.xyz + velocity.xyz * t + 0.5 * g * t * t;
+    let across = normalize(side.xyz);
     var o: LipOut;
     o.clip = view.view_proj * vec4f(world, 1.0);
     o.world = world;
-    o.normal = normalize(cross(moving, side.xyz));
+    // From the edge's own velocity and the sheet's way across, which its neighbour shares: one
+    // normal at a shared vertex, so the joins do not show.
+    o.normal = normalize(cross(moving, across));
     let thickness = launch.w * length(velocity.xyz) / max(length(moving), 0.1);
-    o.along = vec3f(s, thickness, side.w);
+    o.along = vec3f(s, thickness, f32(flags & 1u));
+    o.flow = vec2f(dot(launch.xyz, across), t);
+    o.across = across;
+    o.fall = vec3f(launch.y - world.y, select(0.0, 1.0, free), launch.w * length(velocity.xyz));
+    return o;
+}
+// Value noise on the integer lattice (common.wgsl `pcg_hash`, the same bits on every GPU) and its
+// derivative along x.
+fn lip_noise(q: vec2f, seed: u32) -> vec2f {
+    let i = floor(q);
+    let f = q - i;
+    let x = bitcast<u32>(i32(i.x));
+    let y = bitcast<u32>(i32(i.y));
+    let h = array<f32, 4>(
+        unit_from_hash(pcg_hash(x ^ pcg_hash(y ^ seed))),
+        unit_from_hash(pcg_hash((x + 1u) ^ pcg_hash(y ^ seed))),
+        unit_from_hash(pcg_hash(x ^ pcg_hash((y + 1u) ^ seed))),
+        unit_from_hash(pcg_hash((x + 1u) ^ pcg_hash((y + 1u) ^ seed))));
+    let u = f * f * (3.0 - 2.0 * f);
+    let du = 6.0 * f * (1.0 - f);
+    let value = mix(mix(h[0], h[1], u.x), mix(h[2], h[3], u.x), u.y);
+    return vec2f(value, du.x * mix(h[1] - h[0], h[3] - h[2], u.y));
+}
+// The sheet's streaks (water.md 63.2): bands of thicker, whiter water and thinner, clearer water
+// a few centimetres to decimetres across, fixed to the water as it falls. They are found by when
+// the water left the lip, so they fall with it and lengthen as it speeds up. Bands finer than four
+// pixels fade to their mean, so the sheet does not shimmer.
+struct LipStreaks {
+    // The streak's value (mean 0.5) and its slope across the sheet (per metre).
+    band: vec2f,
+    // Thin white threads of aerated water, 0 to 1.
+    threads: f32,
+    // Where the sheet tears once it breaks up, 0 to 1 (mean 0.5): it opens where this is low.
+    tear: f32,
+    // The flow's pulse, the water leaving faster and slower over seconds (mean 0.5).
+    pulse: f32,
+}
+fn lip_streaks(flow: vec2f, footprint: f32) -> LipStreaks {
+    let left = shallow.time - flow.y;
+    let wide = lip_noise(vec2f(flow.x * 5.0, left * 2.0), 0x5f1ed6c6u);
+    let fine = lip_noise(vec2f(flow.x * 13.0 + 1.7 * wide.x, left * 4.5), 0x9e3779b9u);
+    let thread = lip_noise(vec2f(flow.x * 34.0 + 2.3 * fine.x, left * 2.5), 0x2545f491u);
+    let tear = lip_noise(vec2f(flow.x * 8.0 + 1.1 * fine.x, left * 3.0), 0x68e31da4u);
+    let keep = vec4f(0.2, 0.077, 0.015, 0.0625) / (footprint * 4.0) - 1.0;
+    let k = clamp(keep, vec4f(0.0), vec4f(1.0));
+    let d = k.x * 0.35 * (wide.x - 0.5) + k.y * 0.4 * (fine.x - 0.5) + k.z * 0.25 * (thread.x - 0.5);
+    let slope = k.x * 0.35 * wide.y * 5.0 + k.y * 0.4 * fine.y * 13.0 + k.z * 0.25 * thread.y * 34.0;
+    var o: LipStreaks;
+    o.band = vec2f(clamp(0.5 + 2.4 * d, 0.0, 1.0), 2.4 * slope);
+    o.threads = k.z * smoothstep(0.6, 0.85, thread.x);
+    o.tear = mix(0.5, tear.x, k.w);
+    o.pulse = lip_noise(vec2f(flow.x * 0.4, left * 0.8), 0x1b873593u).x;
     return o;
 }
 @fragment
 fn fs_lip(in: LipOut) -> @location(0) vec4f {
+    // Gradients first, in uniform control flow.
+    let streaks = lip_streaks(in.flow, length(fwidth(in.world)));
+    let streak = streaks.band;
     let v_world = view.camera_pos.xyz - in.world;
     let v = select(vec3f(view.view[0].z, view.view[1].z, view.view[2].z),
         v_world / max(length(v_world), 1e-6), abs(view.proj[3].w) < 0.5);
-    var n = normalize(in.normal);
+    // The streaks bend the sheet across itself: their sides catch the sky and the sun.
+    var n = normalize(normalize(in.normal) + normalize(in.across) * streak.y * 0.04);
     if (dot(n, v) < 0.0) { n = -n; }
     let nv = max(dot(n, v), 1e-3);
     let f = shallow_fresnel(nv, 0.75);
@@ -1521,31 +1593,51 @@ fn fs_lip(in: LipOut) -> @location(0) vec4f {
     let body_light = sh_irradiance(vec3f(0.0, 1.0, 0.0)) * 0.08 + sun_lux * max(sun.y, 0.0) * 0.012;
     let shadow = shadow_factor(in.world, n, dot(in.world - view.camera_pos.xyz,
         -vec3f(view.view[0].z, view.view[1].z, view.view[2].z)));
+    // The air the jet takes in. A lip stays clear as it leaves the crest and whitens as it pitches
+    // over and lands. A fall leaves its lip glassy; its surface takes in air as it drops, in thin
+    // threads first, and it is white through by the time it breaks up, about 6 q^0.32 metres below
+    // the lip for q m^2/s leaving a metre of it (Horeni's break-up length of a falling nappe), where
+    // it tears into strands.
+    let drop = in.fall.x;
+    let breakup = clamp(6.0 * pow(max(in.fall.z, 1e-3), 0.32), 1.0, 12.0);
+    let is_fall = in.along.z > 0.5;
+    let taken = select(0.04 + 0.7 * smoothstep(0.45, 1.0, in.along.x),
+        0.1 + 0.85 * smoothstep(0.0, breakup, drop), is_fall);
+    let threads = streaks.threads * select(smoothstep(0.3, 0.8, in.along.x),
+        smoothstep(0.05, 0.3 * breakup, drop), is_fall);
+    let air = clamp(taken * (0.25 + 1.5 * streak.x) + 0.9 * threads, 0.0, 1.0);
+    // Where the sheet is whole: it tears past its break-up length and frays at its free ends.
+    let torn = select(0.0, smoothstep(0.8 * breakup, 1.4 * breakup, drop), is_fall);
+    let fray = 1.0 - 0.9 * in.fall.y + (streaks.tear - 0.5) * 0.6;
+    let cover = mix(1.0, smoothstep(0.4, 0.62, streaks.tear), torn) * smoothstep(0.35, 0.6, fray);
     var spec = vec3f(0.0);
     if (view.sun_dir.w > 0.0) {
         let h = normalize(sun + v);
         let nl = max(dot(n, sun), 0.0);
-        let a = 0.01;
-        spec = d_ggx(max(dot(n, h), 0.0), a) * v_smith(nv, nl, a)
+        // Clear water is glassy; aerated water scatters its glints over a broad, faint lobe.
+        let a = mix(0.01, 0.3, air);
+        spec = (1.0 - air) * d_ggx(max(dot(n, h), 0.0), a) * v_smith(nv, nl, a)
             * f_schlick(vec3f(0.02), max(dot(v, h), 0.0)) * sun_lux * nl * shadow;
     }
-    // The light crossing the sheet along the view, and the light it scatters toward the eye.
+    // The light crossing the sheet along the view, and the light it scatters toward the eye. The
+    // flow pulses: the sheet thickens and thins over seconds as well as across its streaks.
     let haze = max(shallow.fog.w, 0.0);
     let extinction = shallow.absorb.rgb + shallow.scatter.rgb + vec3f(haze);
-    let through = exp(-extinction * in.along.y / nv);
+    let thickness = in.along.y * (0.15 + 1.7 * streak.x) * (0.75 + 0.5 * streaks.pulse);
+    let through = exp(-extinction * thickness / nv);
     let source = shallow.scatter.rgb * body_light + shallow.fog.rgb * haze * view.sun_color.w;
     let body = source / max(extinction, vec3f(1e-6)) * (1.0 - through);
-    // The air the jet takes in: a lip stays clear as it leaves the crest and whitens as it pitches
-    // over and lands; a fall whitens from its lip on.
-    let air = select(0.04 + 0.7 * smoothstep(0.45, 1.0, in.along.x), 0.35 + 0.55 * in.along.x,
-        in.along.z > 0.5);
-    let white = vec3f(0.85, 0.9, 0.92) * (body_light * 6.0 + sun_lux * max(sun.y, 0.0) * 0.25
-        * shadow);
+    // White water scatters the sky and the sun as a cloud does: brightest in its threads, darker in
+    // the shadowed folds between its streaks, and lit from behind, forward, toward the sun.
+    let toward_sun = pow(max(dot(-v, sun), 0.0), 4.0);
+    let white = vec3f(0.85, 0.9, 0.92) * (body_light * 6.0 + sun_lux * max(sun.y, 0.0)
+        * (0.25 + 0.35 * toward_sun) * shadow) * (0.6 + 0.5 * streak.x + 0.3 * threads);
     let clear = (body * (1.0 - f) + sky * f + spec) * (1.0 - air) + white * air;
-    // What the sheet lets through of what is behind it, which the blend keeps.
+    // What the sheet lets through of what is behind it, which the blend keeps; where it is torn,
+    // all of it (the colour is premultiplied by the sheet's cover).
     let behind = dot(through, vec3f(1.0 / 3.0)) * (1.0 - f) * (1.0 - air);
     let c = mix(clear, view.fog.rgb * view.sun_color.w * (1.0 - behind), fog_amount(in.world));
-    return vec4f(c, 1.0 - behind);
+    return vec4f(c * cover, (1.0 - behind) * cover);
 }
 
 @fragment

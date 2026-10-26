@@ -1,6 +1,7 @@
 //! Plunging lips and falling sheets drawn as sheets of water (water.md 63.2): each face of the
 //! displayed field over which the resident kernel throws water ballistically becomes a ribbon along
-//! the jet's parabola, found on the GPU every frame and drawn indirectly (forward.wgsl `vs_lip`).
+//! the jet's parabola, found on the GPU every frame, joined to the ribbons beside it into one sheet
+//! and drawn indirectly (forward.wgsl `vs_lip`).
 //! Presentation only: no field readback.
 use crate::profiler::GpuProfiler;
 use bytemuck::{Pod, Zeroable};
@@ -9,8 +10,10 @@ use bytemuck::{Pod, Zeroable};
 pub const CAPACITY: u32 = 8192;
 /// Segments along a ribbon's parabola (forward.wgsl `LIP_SEGMENTS`), two triangles each.
 pub const SEGMENTS: u32 = 12;
-/// A ribbon's bytes: three vec4s, read as instance attributes.
+/// A ribbon's bytes as found: three vec4s.
 pub const STRIDE: u64 = 48;
+/// A ribbon's bytes as drawn, its two edges and its side: five vec4s, read as instance attributes.
+pub const SHEET_STRIDE: u64 = 80;
 
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
@@ -35,11 +38,14 @@ pub struct FieldSpec {
 pub struct Pipelines {
     layout: wgpu::BindGroupLayout,
     find: wgpu::ComputePipeline,
+    join: wgpu::ComputePipeline,
 }
 
 pub struct Pool {
     params: wgpu::Buffer,
     pub lips: wgpu::Buffer,
+    /// The ribbons' edges, what draws.
+    pub sheets: wgpu::Buffer,
     pub args: wgpu::Buffer,
     group: wgpu::BindGroup,
 }
@@ -64,6 +70,9 @@ impl Pipelines {
                 entry(1, storage(true)),
                 entry(2, storage(false)),
                 entry(3, storage(false)),
+                entry(4, storage(false)),
+                entry(5, storage(false)),
+                entry(6, storage(false)),
             ],
         });
         let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -75,15 +84,21 @@ impl Pipelines {
             label: Some("water lips"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/water_lip.wgsl").into()),
         });
-        let find = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("water lips find"),
-            layout: Some(&pl),
-            module: &module,
-            entry_point: Some("find"),
-            compilation_options: crate::shaders::compute_options(),
-            cache: None,
-        });
-        Self { layout, find }
+        let pipeline = |label, entry_point| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(label),
+                layout: Some(&pl),
+                module: &module,
+                entry_point: Some(entry_point),
+                compilation_options: crate::shaders::compute_options(),
+                cache: None,
+            })
+        };
+        Self {
+            find: pipeline("water lips find", "find"),
+            join: pipeline("water lips join", "join"),
+            layout,
+        }
     }
 }
 
@@ -120,11 +135,27 @@ impl Pool {
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
         );
+        let sheets = buffer(
+            "water lip sheets",
+            u64::from(CAPACITY) * SHEET_STRIDE,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_SRC,
+        );
+        let faces = buffer(
+            "water lip faces",
+            u64::from(CAPACITY) * 4,
+            wgpu::BufferUsages::STORAGE,
+        );
+        // A slot for each face along x and along z of every column the field holds (16 bytes each).
+        let slots = buffer(
+            "water lip slots",
+            columns.size() / 16 * 2 * 4,
+            wgpu::BufferUsages::STORAGE,
+        );
         queue.write_buffer(&args, 0, bytemuck::cast_slice(&[SEGMENTS * 6, 0u32, 0, 0]));
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("water lips"),
             layout: &p.layout,
-            entries: &[&params, columns, &lips, &args]
+            entries: &[&params, columns, &lips, &args, &faces, &slots, &sheets]
                 .into_iter()
                 .enumerate()
                 .map(|(i, b)| wgpu::BindGroupEntry {
@@ -136,6 +167,7 @@ impl Pool {
         Self {
             params,
             lips,
+            sheets,
             args,
             group,
         }
@@ -167,5 +199,7 @@ impl Pool {
         pass.set_pipeline(&p.find);
         pass.set_bind_group(0, &self.group, &[]);
         pass.dispatch_workgroups(f.size[0].div_ceil(8), f.size[1].div_ceil(8), 1);
+        pass.set_pipeline(&p.join);
+        pass.dispatch_workgroups(CAPACITY.div_ceil(64), 1, 1);
     }
 }

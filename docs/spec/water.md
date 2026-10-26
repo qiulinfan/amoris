@@ -3985,6 +3985,13 @@ sheet of water along its trajectory.
   and the arriving water's speed. Each face throwing water becomes a ribbon a face wide from the
   face's centre at the jet's leaving height, along its parabola to where it meets the water or the
   bed, marched half a column at a time as the kernel does; at most 8192 a region.
+- A second pass (`join`) makes the ribbons of one sheet one surface. Each face's ribbon is kept in
+  a slot for the face; a ribbon whose neighbour along the sheet throws water of the same kind, the
+  same way, from within a column's height of its own, shares an edge with it: where both leave from,
+  the thickness leaving, the velocity and the time of flight, each the mean of the two ribbons'.
+  Both work the mean out to the same bits, so the vertices and their normals, from the edge's
+  velocity and the sheet's way across, are shared and no gap or crease shows. At a sheet's ends a
+  ribbon keeps its own edge, half a face out from its centre.
 - The ribbons draw indirectly, 12 segments each (forward.wgsl `vs_lip`, `fs_lip`), two-sided, after
   the region's water, tested against its depth without writing it. A ribbon is a sheet of the
   region's water as thick as the water leaving, all of a fall's depth or the crest's share, thinning
@@ -3993,6 +4000,24 @@ sheet of water along its trajectory.
   at the water's Fresnel, and whitens with the air it takes in: a lip clear as it leaves the crest
   and white as it lands, a fall white from its lip on. It blends over what is behind it, src + dst
   (1 - src_alpha).
+- The sheet is streaked (`lip_streaks`): value noise on the integer hash, found by where across
+  the sheet and when the water left the lip (`shallow.time` less its time of flight), so the
+  pattern falls with the water and lengthens as it speeds up, as a texture scrolled at the jet's own
+  speed would. Bands 0.2, 0.08 and 0.03 m across scale the sheet's thickness from 0.15 to 1.85
+  times and its air from 0.25 to 1.75 times, and their slope across the sheet bends the normal, so
+  their sides catch the sky and the sun; the finest, sharpened, are thin white threads. The flow
+  pulses too, the sheet 0.75 to 1.25 times as thick over seconds. An octave finer than four pixels
+  fades to its mean (68).
+- A fall takes in air as it drops. A falling nappe keeps a clear core for a break-up length, which
+  Horeni puts at 6 q^0.32 m for q m^2/s leaving a metre of the lip (in the laboratory's range, and
+  taken here between 1 and 12 m); beyond it the jet is blobs and drops. The sheet leaves its lip
+  glassy, a tenth air, whitens through over that length from the threads in, and past 0.8 of it
+  tears along a 0.125 m band of the noise into strands, all gone by 1.4 of it (the tears premultiply
+  the colour and the sheet's cover). A lip keeps its whitening along its flight. A ribbon whose edge
+  ends the sheet (`join` adds 2 or 4 to its kind) frays there along the same band.
+- White water scatters as a cloud does, brighter in the threads and darker in the folds between the
+  bands, and brighter looking toward the sun through it; the sun's glint takes the air's roughness,
+  from 0.01 on clear water to 0.3 on white, and fades with it.
 
 ### 63.3 Checks, cost and limits
 
@@ -4003,7 +4028,16 @@ risen 52 rows along with plunging against 49 without, and both keep their volume
 `cargo test -p amoris-render --test water_lip`: over a crest 2 m deep running at 4 m/s onto 0.6 m,
 each of the 16 rows throws one lip from the front's face, 0.79 m thick (the share 0.39 of 2 m) at
 4.43 m/s, flying as long as it takes to fall to the water ahead; still water and plunging off throw
-none.
+none. `the_ribbons_of_one_sheet_share_their_edges`: over the same crest at three speeds by row, each
+row's lip meets the next at the same bits, the mean of the two, and the end rows keep their own
+edges.
+
+`python tools/water/water_flicker.py samples/river-falls --eye 46,2.5,8 --at 34.6,3.5,14.7 --from 1200 --to 1260 --box 450,120,830,420`
+on the falls (M5, Metal, 2026-10-26), its textured cliff behind them: with MSAA, 1682 pixels flip in
+over 30 percent of the frames and 11 in over half; with `AMORIS_AA=msaa+taa`, none; with MSAA and
+`AMORIS_SPLASHES=off`, 7 and none. What flips is the spray's drops and ligaments moving over the
+sheet and seen through its glassy top, the spray's own motion, as the rain's is (liquids.md 20); the
+sheet itself does not. (The flat-grey falls before, separate unstreaked ribbons: 405 and 2.)
 
 `cargo run --release -p amoris-app --example shore_shots -- --view break --every 60 --from 1800
 --to 2400` (the lips drawn in one colour): as each wave reaches the reef, lips line its edge from
