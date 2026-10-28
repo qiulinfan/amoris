@@ -6,6 +6,11 @@ on:
     branches: [main]
     paths:
       - site/**
+      - samples/windward/**
+      - samples/emberlight/**
+      - web/**
+      - crates/**
+      - Cargo.lock
       - tools/site/build_site.py
       - tools/site/check_site.py
       - .github/workflows/pages.yml
@@ -20,6 +25,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      AMORIS_LLVM: /usr
     permissions:
       contents: read
       pages: read
@@ -29,6 +36,17 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install -r site/requirements.txt
+      - run: sudo apt-get update
+      - run: sudo apt-get install -y clang llvm lld binaryen
+      - run: rustup show
+      - name: Install the matching WebAssembly binding generator
+        run: |
+          version=$(python -c 'import tomllib; print(next(p["version"] for p in tomllib.load(open("Cargo.lock", "rb"))["package"] if p["name"] == "wasm-bindgen"))')
+          cargo install wasm-bindgen-cli --version "$version" --locked
+      - name: Export the playable Wind Road
+        run: cargo xtask export-web samples/windward --out out/windward-web
+      - name: Export playable Emberlight
+        run: cargo xtask export-web samples/emberlight --out out/emberlight-web
       - uses: actions/configure-pages@v6.0.0
       - run: python tools/site/build_site.py
       - run: python tools/site/check_site.py --links-only

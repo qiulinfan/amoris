@@ -1,5 +1,5 @@
-// The showcase uses actual engine stills. Earlier recordings open through ordinary links;
-// no autoplay, motion toggle, or client-side media controller is required.
+// Showcase stills and videos are actual engine captures. Videos use native controls without
+// autoplay or a separate client-side media controller.
 
 // The theme switch: dark or light, kept under the key the documentation's toggle uses, so both
 // follow the same choice.

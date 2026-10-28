@@ -1,0 +1,71 @@
+Original task brief. Machine paths normalized to portable placeholders.
+
+# Make a game in Amoris, alone, in 12 hours
+
+You are one of several autonomous agents, each making its own game with the Amoris engine. Nobody
+will answer questions or approve anything while you work: decide for yourself, and keep going.
+
+Your slot is `b`. Your theme word, to keep the games apart, is **wind**: interpret it
+freely. Your checkout is `<checkout>`, a Git worktree on branch `games/b`, made for you from
+`main`. Your cargo target directory is `<cargo-target>` (already set as `CARGO_TARGET_DIR`). You started
+at `2026-10-26 19:56 EDT` and you have until `2026-10-27 07:56 EDT` (12 hours); the process is killed then. Check `date`
+often.
+
+## The goal
+
+Make the best game you can, as far as you can take it: gameplay, models and rendering all count.
+Something a person would want to play for a few minutes, that looks deliberate, not a test scene.
+Push the engine: Amoris is agent-native, and you are the proof. Ambition is welcome; a finished,
+playable game at the deadline matters more than an unfinished bigger one.
+
+## Read first
+
+1. `<checkout>/AGENTS.md` (how to work on Amoris; its "Samples" section is binding for you),
+   `docs/charter.md`, `docs/sdk.md` (how games are written) and `docs/spec/README.md`.
+2. The existing games under `samples/`, especially `samples/blockcraft`, `samples/river-falls`,
+   `samples/pool-party` and `samples/surf-beach`: how a project is laid out (`project.toml`,
+   `scene.json`, `perception.json`, `scripts/`, `check.toml`, a README), and how their generators
+   (`build_scene.py`, `textures.py`, `gen_world.py`) write the assets. Do not copy one of them as
+   your game.
+
+## Rules
+
+- Your game is one new folder, `samples/<your-game>/`, self-contained, with its own README saying
+  what it is, how to play it (`cargo run --release -p amoris-app -- play samples/<your-game>`, with
+  `--walk` if it has a first-person seat) and how it is built. It uses only the `amoris` module and
+  project files.
+- Generated files (scenes, meshes, textures) are committed together with the generator that writes
+  them, in your folder; regenerate, never hand-edit them. Assets are original (made by you) or
+  compatibly licensed with their licence and source beside them. Keep your folder under 40 MB.
+- Models: you may build them in Blender, headless and scripted:
+  `/Applications/Blender.app/Contents/MacOS/Blender -b --python <your_script.py>` exporting glTF
+  binary (`.glb`). Commit the Blender Python script with the `.glb`. The `auto-ta` skill describes
+  a technical-art pipeline you may use. Procedural Python generators (standard library) are fine
+  too.
+- If the engine lacks something your game needs, fix it in the engine, natively, in its own commit,
+  following AGENTS.md (run the tests of the crates you touch). Never work around an engine gap in
+  the game.
+- Verify headlessly; never open windows. Use the capture examples
+  (`cargo run --release -p amoris-app --example scene_shots -- samples/<game> --out out/... --eye
+  x,y,z --at x,y,z --ticks a,b`), `amoris serve samples/<game>` with `amoris call capture '{...}'`
+  and the CLI (`amoris help`, `amoris step`, `amoris player act`), and `cargo xtask check`. Look at
+  your captures (read the PNGs) and iterate on how the game looks. Captures, logs and run output go
+  under ignored `out/`, never into `samples/`.
+- Commit on `games/b` in `<checkout>` at every working milestone, with clear messages
+  (`git -C <checkout> commit`). Never push, never force, never rewrite history, never touch
+  `main`, the checkout at `<main-checkout>` or another agent's worktree.
+- Stay inside `<checkout>`, your target directory and `<report-directory>`. Do not change system or
+  user settings, install system software, delete files outside your worktree, or send anything to
+  external services beyond reading documentation on the web.
+
+## Pace
+
+- Hour 0 to 1: read, choose the game, write its one-paragraph pitch to `<report-directory>/pitch.md`,
+  and get a first playable scene running and captured.
+- Then build in vertical slices: each one playable and committed. Spend real time on the models,
+  the materials, the lighting and the camera: look at captures after every change.
+- From 11 hours on, add nothing new: make sure `samples/<your-game>` plays from a clean build,
+  its `check.toml` (if you add one) passes, the README is right, and everything is committed.
+- Last, write `<report-directory>/report.md`: what the game is, how to play it, what you built in the
+  engine, what works, what does not, and the paths of your best captures (copy three or four of them
+  into `<report-directory>`).

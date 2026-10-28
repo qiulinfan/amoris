@@ -1028,6 +1028,42 @@ body:not(.showcase) footer {
   margin-top:14px
 }
 
+.game-cards video {
+  width:100%;
+  height:auto;
+  aspect-ratio:16/9;
+  background:var(--media)
+}
+.game-cards h3 {
+  font-size:21px
+}
+.game-cards h3 .muted {
+  font-size:16px;
+  font-weight:400
+}
+.session-facts {
+  display:grid;
+  grid-template-columns:64px minmax(0,1fr);
+  gap:6px 12px;
+  font-size:13px;
+  margin:18px 0
+}
+.session-facts dt {
+  color:var(--muted)
+}
+.session-facts dd {
+  margin:0
+}
+.game-links {
+  display:flex;
+  align-items:center;
+  gap:18px
+}
+.section-heading>div>p {
+  margin:10px 0 0;
+  font-size:14px
+}
+
 @media(max-width:980px) {
   .gallery {
     grid-template-columns:repeat(2,minmax(0,1fr))

@@ -1,0 +1,4 @@
+WEBVTT
+
+00:00.000 --> 00:00:42.066
+Windward: a scripted API speedrun in the native Amoris renderer. The controller reads developer world state; this is separate from the model-selected flight.

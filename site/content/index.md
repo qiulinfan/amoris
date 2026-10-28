@@ -25,7 +25,7 @@ cargo build --release
 Open **http://127.0.0.1:7878/**. The host starts paused. Press **Play** in the editor
 to run a fork of the edit world; **Stop** returns to the original edit world.
 
-For the detailed sailing workflow shown on the homepage, serve `site/demos/harbor` instead.
+For the detailed sailing demo, serve `site/demos/harbor` instead.
 `site/demos/detail` contains the CC0 Flight Helmet material study.
 `site/demos/bistro` contains the full licensed Bistro exterior.
 Run `python3 tools/site/showcase_assets.py --projects` to fetch the pinned CC0 models

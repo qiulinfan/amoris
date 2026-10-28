@@ -66,6 +66,54 @@
       "selected_condition": "gameplay-v2/episode-2 (first successful low-effort trial)",
       "captured_frames": 789,
       "end_hold_seconds": 2
+    },
+    {
+      "name": "windroad",
+      "dimensions": [
+        1280,
+        720
+      ],
+      "frames": 1262,
+      "fps": 30.0,
+      "duration_seconds": 42.066667,
+      "recorded_on": "2026-10-27",
+      "capture": "Existing scripted developer-state speedrun; native frames every two simulation ticks, no audio."
+    },
+    {
+      "name": "windroad-player",
+      "dimensions": [
+        1280,
+        720
+      ],
+      "frames": 1499,
+      "fps": 30.0,
+      "duration_seconds": 49.966667,
+      "recorded_on": "2026-10-27",
+      "capture": "Hash-verified replay of actual DeepSeek Flash calls through the native HTTP player projection; simulation sampled every two ticks."
+    },
+    {
+      "name": "windroad-debug",
+      "dimensions": [
+        1280,
+        720
+      ],
+      "frames": 1470,
+      "fps": 30.0,
+      "duration_seconds": 49.0,
+      "recorded_on": "2026-10-27",
+      "capture": "Actual native captures paired with actual model tool results; edited for length. The scene-edit close-up replays the same edit and undo with a fixed camera."
+    },
+    {
+      "name": "emberlight",
+      "dimensions": [
+        1280,
+        720
+      ],
+      "frames": 1842,
+      "fps": 30.0,
+      "duration_seconds": 61.4,
+      "recorded_on": "2026-10-28",
+      "capture": "Native scripted API playthrough, with soundtrack mixed from the game audio at recorded event times; source game games/a at 6d68252f."
     }
   ],
   "models": [
@@ -191,7 +239,7 @@
       "capture": "actual engine frames",
       "frame_ms": 50,
       "engine_commit": "f0019cdd",
-      "encoding": "animated WebP (img2webp -lossy -q 88); the water loops crossfade their last 12 frames into their first"
+      "encoding": "Lossless WebP animation, 50 ms per frame; coalesced from the original capture loop by tools/site/repack_loop.py. Original loop at 762bb321."
     },
     {
       "file": "surf-loop.webp",
