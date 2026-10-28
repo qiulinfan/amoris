@@ -6,13 +6,14 @@
 //! derive that would generate their slot functions does not live in a crate it may depend on yet
 //! (architecture.md 11, choice 7). The runtime, which links both physics and the script host,
 //! therefore rebuilds the world's component registry with schemas for `Transform`, `Velocity`,
-//! `Boat`, `Wind`, `Walker`, UI and water request components, and registers
-//! hand-written slot functions for them (architecture.md 11, Slice
-//! 1). The rebuilt registry must name exactly the components the old one did, so a component
+//! `Boat`, `Wind`, `Walker`, UI, the visual components a game animates (`Model`, `Light`,
+//! `Environment`) and water request components, and registers hand-written slot functions for
+//! them (architecture.md 11, Slice 1). The rebuilt registry must name exactly the components the old one did, so a component
 //! physics adds later fails the game's construction instead of vanishing from it.
 
 use amoris_assets::{
-    Animator, AudioSource, Camera, Environment, Light, Model, ParticleEmitter, Splat, UiBar, UiText,
+    Animator, AudioSource, Camera, Environment, Light, LightKind, Model, ParticleEmitter, SkyKind,
+    Splat, UiBar, UiText,
 };
 use amoris_contract::{CheckOptions, Problem, Shape, detail};
 use amoris_physics::water::displacement::WaterDisplacement;
@@ -899,6 +900,329 @@ fn ui_text_fns() -> EngineFns<UiText> {
     }
 }
 
+fn model_schema() -> Result<ComponentSchema, Problem> {
+    let d = Model::default();
+    schema(
+        "Model",
+        Model::VERSION,
+        "What an entity looks like: a mesh with a material, scaled at its Transform. A game \
+         changes scale, colour, emission and visibility to animate a look; the mesh and material \
+         name the asset it was built with.",
+        vec![
+            (
+                "mesh",
+                FieldType::Str,
+                FieldValue::Str(d.mesh.into()),
+                "A primitive or an asset mesh path.",
+            ),
+            (
+                "material",
+                FieldType::Str,
+                FieldValue::Str(d.material.into()),
+                "An asset material path, or empty for the inline material.",
+            ),
+            (
+                "scale",
+                FieldType::Vec3,
+                FieldValue::Vec3(d.scale),
+                "Scale along the entity's own axes.",
+            ),
+            (
+                "color",
+                FieldType::Vec4,
+                FieldValue::Vec4(d.color),
+                "Base colour, linear RGBA; alpha below 1 draws it blended.",
+            ),
+            (
+                "metallic",
+                FieldType::F64,
+                FieldValue::F64(d.metallic),
+                "0 dielectric to 1 metal.",
+            ),
+            (
+                "roughness",
+                FieldType::F64,
+                FieldValue::F64(d.roughness),
+                "0 mirror to 1 rough.",
+            ),
+            (
+                "emissive",
+                FieldType::Vec3,
+                FieldValue::Vec3(d.emissive),
+                "Emitted light, linear RGB.",
+            ),
+            (
+                "cast_shadows",
+                FieldType::Bool,
+                FieldValue::Bool(d.cast_shadows),
+                "Whether it casts shadows.",
+            ),
+            (
+                "visible",
+                FieldType::Bool,
+                FieldValue::Bool(d.visible),
+                "Whether it is drawn.",
+            ),
+        ],
+    )
+}
+
+fn model_fns() -> EngineFns<Model> {
+    fn read(m: &Model) -> ProjectValues {
+        let c = m.color;
+        ProjectValues {
+            nums: [
+                m.scale[0],
+                m.scale[1],
+                m.scale[2],
+                c[0],
+                c[1],
+                c[2],
+                c[3],
+                m.metallic,
+                m.roughness,
+                m.emissive[0],
+                m.emissive[1],
+                m.emissive[2],
+                bit(m.cast_shadows),
+                bit(m.visible),
+            ]
+            .into(),
+            strs: Box::new([m.mesh.as_str().into(), m.material.as_str().into()]),
+        }
+    }
+    fn write(m: &mut Model, v: &ProjectValues) {
+        let n = &v.nums;
+        m.scale = v3(n, 0);
+        m.color = [n[3], n[4], n[5], n[6]];
+        m.metallic = n[7];
+        m.roughness = n[8];
+        m.emissive = v3(n, 9);
+        m.cast_shadows = n[12] != 0.0;
+        m.visible = n[13] != 0.0;
+        if let Some(s) = v.strs.first() {
+            m.mesh = s.to_string();
+        }
+        if let Some(s) = v.strs.get(1) {
+            m.material = s.to_string();
+        }
+    }
+    EngineFns {
+        read,
+        write,
+        make: |v| {
+            let mut m = Model::default();
+            write(&mut m, v);
+            m
+        },
+    }
+}
+
+fn light_schema() -> Result<ComponentSchema, Problem> {
+    let d = Light::default();
+    schema(
+        "Light",
+        Light::VERSION,
+        "A light at an entity's Transform: the sun (directional), a lamp (point) or a beam (spot).",
+        vec![
+            (
+                "kind",
+                FieldType::Enum(["directional", "point", "spot"].map(Box::from).into()),
+                FieldValue::Enum(0),
+                "directional, point or spot.",
+            ),
+            (
+                "color",
+                FieldType::Vec3,
+                FieldValue::Vec3(d.color),
+                "Linear RGB.",
+            ),
+            (
+                "intensity",
+                FieldType::F64,
+                FieldValue::F64(d.intensity),
+                "Lux-like for the sun, candela-like for point and spot.",
+            ),
+            (
+                "range",
+                FieldType::F64,
+                FieldValue::F64(d.range),
+                "Point and spot: where it fades out, metres.",
+            ),
+            (
+                "inner_deg",
+                FieldType::F64,
+                FieldValue::F64(d.inner_deg),
+                "Spot: the full-intensity cone's half angle.",
+            ),
+            (
+                "outer_deg",
+                FieldType::F64,
+                FieldValue::F64(d.outer_deg),
+                "Spot: the cone's half angle.",
+            ),
+            (
+                "shadows",
+                FieldType::Bool,
+                FieldValue::Bool(d.shadows),
+                "Whether it casts shadows.",
+            ),
+        ],
+    )
+}
+
+fn light_kind_index(kind: LightKind) -> f64 {
+    match kind {
+        LightKind::Directional => 0.0,
+        LightKind::Point => 1.0,
+        LightKind::Spot => 2.0,
+    }
+}
+
+fn light_fns() -> EngineFns<Light> {
+    fn read(l: &Light) -> ProjectValues {
+        let c = l.color;
+        nums(&[
+            light_kind_index(l.kind),
+            c[0],
+            c[1],
+            c[2],
+            l.intensity,
+            l.range,
+            l.inner_deg,
+            l.outer_deg,
+            bit(l.shadows),
+        ])
+    }
+    fn write(l: &mut Light, v: &ProjectValues) {
+        let n = &v.nums;
+        l.kind = if n[0] == 1.0 {
+            LightKind::Point
+        } else if n[0] == 2.0 {
+            LightKind::Spot
+        } else {
+            LightKind::Directional
+        };
+        l.color = v3(n, 1);
+        l.intensity = n[4];
+        l.range = n[5];
+        l.inner_deg = n[6];
+        l.outer_deg = n[7];
+        l.shadows = n[8] != 0.0;
+    }
+    EngineFns {
+        read,
+        write,
+        make: |v| {
+            let mut l = Light::default();
+            write(&mut l, v);
+            l
+        },
+    }
+}
+
+fn environment_schema() -> Result<ComponentSchema, Problem> {
+    let d = Environment::default();
+    schema(
+        "Environment",
+        Environment::VERSION,
+        "The world's sky, ambient light, fog and image settings; the lowest-id entity with it wins.",
+        vec![
+            (
+                "sky",
+                FieldType::Enum(["atmosphere", "color"].map(Box::from).into()),
+                FieldValue::Enum(0),
+                "atmosphere or color.",
+            ),
+            (
+                "sky_color",
+                FieldType::Vec3,
+                FieldValue::Vec3(d.sky_color),
+                "The flat sky's linear RGB.",
+            ),
+            (
+                "ambient",
+                FieldType::F64,
+                FieldValue::F64(d.ambient),
+                "How much the sky lights the scene, 0 to 2.",
+            ),
+            (
+                "gi_intensity",
+                FieldType::F64,
+                FieldValue::F64(d.gi_intensity),
+                "Multiplier for baked or learned diffuse light.",
+            ),
+            (
+                "fog_density",
+                FieldType::F64,
+                FieldValue::F64(d.fog_density),
+                "Exponential height fog per metre; 0 for none.",
+            ),
+            (
+                "fog_color",
+                FieldType::Vec3,
+                FieldValue::Vec3(d.fog_color),
+                "Linear RGB.",
+            ),
+            (
+                "exposure_ev",
+                FieldType::F64,
+                FieldValue::F64(d.exposure_ev),
+                "Exposure, stops.",
+            ),
+            (
+                "bloom",
+                FieldType::F64,
+                FieldValue::F64(d.bloom),
+                "Bloom strength, 0 to 1.",
+            ),
+        ],
+    )
+}
+
+fn environment_fns() -> EngineFns<Environment> {
+    fn read(e: &Environment) -> ProjectValues {
+        nums(&[
+            if e.sky == SkyKind::Color { 1.0 } else { 0.0 },
+            e.sky_color[0],
+            e.sky_color[1],
+            e.sky_color[2],
+            e.ambient,
+            e.gi_intensity,
+            e.fog_density,
+            e.fog_color[0],
+            e.fog_color[1],
+            e.fog_color[2],
+            e.exposure_ev,
+            e.bloom,
+        ])
+    }
+    fn write(e: &mut Environment, v: &ProjectValues) {
+        let n = &v.nums;
+        e.sky = if n[0] == 1.0 {
+            SkyKind::Color
+        } else {
+            SkyKind::Atmosphere
+        };
+        e.sky_color = v3(n, 1);
+        e.ambient = n[4];
+        e.gi_intensity = n[5];
+        e.fog_density = n[6];
+        e.fog_color = v3(n, 7);
+        e.exposure_ev = n[10];
+        e.bloom = n[11];
+    }
+    EngineFns {
+        read,
+        write,
+        make: |v| {
+            let mut e = Environment::default();
+            write(&mut e, v);
+            e
+        },
+    }
+}
+
 fn rain_fns() -> EngineFns<Rain> {
     EngineFns {
         read: |r| nums(&[r.intensity_mm_h, r.drop_mm]),
@@ -1083,10 +1407,10 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     ComponentRegistry::register::<Sail>(world, None)?;
     ComponentRegistry::register::<Hull>(world, None)?;
     ComponentRegistry::register::<Sea>(world, None)?;
-    ComponentRegistry::register::<Model>(world, None)?;
-    ComponentRegistry::register::<Light>(world, None)?;
+    ComponentRegistry::register::<Model>(world, Some(model_schema()?))?;
+    ComponentRegistry::register::<Light>(world, Some(light_schema()?))?;
     ComponentRegistry::register::<Camera>(world, None)?;
-    ComponentRegistry::register::<Environment>(world, None)?;
+    ComponentRegistry::register::<Environment>(world, Some(environment_schema()?))?;
     ComponentRegistry::register::<Splat>(world, None)?;
     ComponentRegistry::register::<Animator>(world, None)?;
     ComponentRegistry::register::<UiText>(world, Some(ui_text_schema()?))?;
@@ -1112,6 +1436,9 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     register_engine::<Rain>(world, rain_fns())?;
     register_engine::<Walker>(world, walker_fns())?;
     register_engine::<UiText>(world, ui_text_fns())?;
+    register_engine::<Model>(world, model_fns())?;
+    register_engine::<Light>(world, light_fns())?;
+    register_engine::<Environment>(world, environment_fns())?;
     register_engine::<WaterSource>(world, flow_fns!(WaterSource))?;
     register_engine::<WaterDrain>(world, flow_fns!(WaterDrain))?;
     register_engine::<WaterProbe>(
@@ -1185,5 +1512,71 @@ mod tests {
         let v = (fns.read)(&b);
         assert_eq!(v.nums.len(), usize::from(boat_schema().unwrap().slots()));
         assert_eq!((fns.make)(&v), b);
+    }
+
+    #[test]
+    fn a_model_slots_round_trip_keeps_its_asset_and_optional_material() {
+        let m = Model {
+            mesh: "models/mirror.glb#Mirror".into(),
+            material: "models/mirror.glb#Silver".into(),
+            scale: [1.0, 2.0, 3.0],
+            color: [0.1, 0.2, 0.3, 0.9],
+            metallic: 0.7,
+            roughness: 0.2,
+            emissive: [1.0, 0.5, 0.25],
+            transmission: Some(0.4),
+            ior: Some(1.3),
+            cast_shadows: false,
+            visible: true,
+        };
+        let fns = model_fns();
+        let v = (fns.read)(&m);
+        assert_eq!(v.nums.len(), usize::from(model_schema().unwrap().slots()));
+        let mut out = m.clone();
+        (fns.write)(&mut out, &v);
+        assert_eq!(out, m);
+    }
+
+    #[test]
+    fn a_light_slots_round_trip_keeps_its_kind_and_cone() {
+        let l = Light {
+            kind: LightKind::Spot,
+            color: [0.2, 0.4, 0.6],
+            intensity: 12.0,
+            range: 9.0,
+            inner_deg: 15.0,
+            outer_deg: 31.0,
+            shadows: false,
+        };
+        let fns = light_fns();
+        let v = (fns.read)(&l);
+        assert_eq!(v.nums.len(), usize::from(light_schema().unwrap().slots()));
+        let mut out = Light::default();
+        (fns.write)(&mut out, &v);
+        assert_eq!(out, l);
+    }
+
+    #[test]
+    fn an_environment_slots_round_trip_keeps_its_sky_fog_and_look() {
+        let e = Environment {
+            sky: SkyKind::Color,
+            sky_color: [0.5, 0.3, 0.2],
+            ambient: 0.8,
+            gi_intensity: 1.2,
+            fog_density: 0.004,
+            fog_color: [0.4, 0.3, 0.2],
+            exposure_ev: 0.25,
+            bloom: 0.3,
+            ..Environment::default()
+        };
+        let fns = environment_fns();
+        let v = (fns.read)(&e);
+        assert_eq!(
+            v.nums.len(),
+            usize::from(environment_schema().unwrap().slots())
+        );
+        let mut out = e.clone();
+        (fns.write)(&mut out, &v);
+        assert_eq!(out, e);
     }
 }

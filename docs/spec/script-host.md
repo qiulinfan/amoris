@@ -500,7 +500,10 @@ component, event kinds (`IsEventKind`: snake_case words joined by dots, with non
 `emit` refuses; a unit test of `natives/events.rs` keeps `ReservedEventPrefix` equal to its
 `RESERVED`) and system names (`IsWord`, `^[a-z][a-z0-9_]*$`; the 56-byte limit is checked at load
 only). A kind or name held in a `string` is checked at run time only. Registered components without
-a script schema (`Model`, `Light`, ...) are listed in a comment and are not `ComponentName`s.
+a script schema (the visual components a game does not animate: `Camera`, `Splat`, `UiBar`,
+`AudioSource`, `ParticleEmitter`, ...) are listed in a comment and are not `ComponentName`s.
+`Model`, `Light` and `Environment` have schemas, so a game can animate a look, a lamp or the dawn
+(`docs/sdk.md`).
 
 Departures from the first design of this section, which listed more files: a component's value is
 reached as `Components["Boat"]` (or `ComponentValue<"Boat">`), not as a named interface per

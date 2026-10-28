@@ -192,7 +192,8 @@ fn script_types_declare_engine_and_game_components() {
             names("project"),
             vec![json!("Crew"), json!("Tally"), json!("Log"), json!("Cargo")]
         );
-        assert!(names("unavailable").contains(&json!("Model")), "{r}");
+        assert!(names("engine").contains(&json!("Model")), "{r}");
+        assert!(names("unavailable").contains(&json!("Camera")), "{r}");
         assert_eq!(r["project_from"], json!("scripts"), "{r}");
         // A game built from data has no project directory: the text only.
         assert_eq!(r["dir"], Value::Null);

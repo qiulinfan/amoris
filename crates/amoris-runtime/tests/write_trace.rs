@@ -387,7 +387,7 @@ fn script_writes_are_named_at_the_statement_that_wrote() {
     });
 }
 
-/// A component scripts cannot read (`Model`) is traced through the world alone: the script host's
+/// A component scripts cannot read (`Camera`) is traced through the world alone: the script host's
 /// recorder stays off (a probe of it would fail at every statement), while a field scripts read
 /// arms it for the trace's ticks only.
 #[test]
@@ -401,7 +401,7 @@ fn the_recorder_runs_only_for_fields_scripts_can_read() {
             field: field.map(str::to_owned),
         };
         for (t, scripted) in [
-            (trace("Model", None), false),
+            (trace("Camera", None), false),
             (trace("Boat", Some("rudder")), true),
             (trace("Log", Some("distance")), true),
         ] {

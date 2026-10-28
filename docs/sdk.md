@@ -82,8 +82,10 @@ export default game({ components: [Crew, Tally, Log, Cargo], systems: [muster, l
 | `str` | `string` | none |
 
 `components.d.ts` lists the engine components scripts can use (`Transform`, `Boat`, `Walker`,
-`UiText`'s text, size, colour, offset and visibility, ...); `Model`, `Light`, ... are scene data
-only.
+`UiText`'s text, size, colour, offset and visibility, ...). A game may also animate a look through
+`Model` (scale, colour, emission, visibility), a `Light` (kind, colour, intensity, cone) and the
+`Environment` (sky colour, ambient, fog, exposure, bloom); the mesh and material paths a `Model`
+was built with are part of those fields too.
 
 ## Systems and queries
 

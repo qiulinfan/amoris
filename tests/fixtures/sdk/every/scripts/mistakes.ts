@@ -10,7 +10,7 @@ export function mistakes(ctx: SystemContext): void {
     // @ts-expect-error a field of a component the query does not name
     ctx.query({ with: ["Every"], fields: ["Transform.position"] });
     // @ts-expect-error a component scripts cannot name
-    ctx.world.get(ctx.single("Every"), "Model");
+    ctx.world.get(ctx.single("Every"), "Camera");
     // @ts-expect-error event kinds are lowercase
     ctx.emit("Every.Ran");
     // @ts-expect-error no empty word
