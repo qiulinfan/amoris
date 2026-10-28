@@ -41,7 +41,7 @@ it are charter 5.4.
   (`tools/build_viewport.sh`); `web/pkg` and `web/projects/` are built by `tools/build_web.sh` and
   ignored.
 - `samples/`: one project per folder. The games and demos are `blockcraft`, `sailing`,
-  `sailing-course`, `anim`, `town-walk` and the six water games with a README (`pool-party`,
+  `sailing-course`, `anim`, `town-walk`, `windward`, `emberlight` and the six water games with a README (`pool-party`,
   `river-falls`, `surf-beach`, `water-pool`, `water-storm`, `water-valley`).
   `tests/fixtures/`: projects only tests and checks read: the checks' negative controls, the SDK's
   type test, and `scenes/`, the scenes that tests, checks and measurement tools read (eight

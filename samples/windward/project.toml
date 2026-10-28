@@ -1,0 +1,18 @@
+# Windward: a soaring arcade game along a wind road above a sea of sunset cloud.
+name = "Windward"
+rate = 60
+seed = 4
+
+[sounds]
+"wind.gate" = "sfx:powerup"
+"wind.ember" = "sfx:coin"
+"wind.crash" = "sfx:hit"
+"wind.finish" = "sfx:powerup"
+"wind.fail" = "sfx:blip"
+"wind.restart" = "sfx:click"
+
+[player]
+perception = "perception.json"
+actions = "first_person"
+camera = "game"
+controls = "A / D bank · W / S dive and climb · Shift gust · Space or left click burst · Right click restart · Mouse look · Esc pause"

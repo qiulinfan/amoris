@@ -1,0 +1,14 @@
+# The local check: the same run on two seeds, two forks, and two script reloads. One player control
+# at ten seconds exercises the seat, the flight, the clock and the collisions; the player's own
+# route is flown in the captures and with `amoris player act`.
+[run]
+seeds = [1, 2]
+ticks = 900
+inputs = "checks/inputs.jsonl"
+
+[fork]
+at = [240, 600]
+ticks = 120
+
+[reload]
+at = [120, 480]

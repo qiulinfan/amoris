@@ -1,0 +1,12 @@
+Emberlight's assets are original work for this sample.
+
+- models/*.glb: built by build_models.py in Blender 4.5 from primitives; no third-party meshes,
+  textures or materials.
+- architecture.glb: built by build_scene.py from primitives; its embedded ashlar and slate maps
+  are drawn by textures.py.
+- scene.json, perception.json: written by build_scene.py.
+- audio/*.wav: synthesized by build_audio.py, original.
+- scripts/main.ts: game rules, original.
+
+No downloaded art, audio or fonts are included. The engine's synthesized sound presets are used
+through the project's [sounds] table.

@@ -1,0 +1,415 @@
+{
+ "observers": [
+  {
+   "name": "player",
+   "doc": "A wind rider's eyes, instruments and run.",
+   "sight": {
+    "range_m": 500,
+    "fov_deg": 78,
+    "eye_m": {
+     "x": 0,
+     "y": 0,
+     "z": 0
+    },
+    "occlusion": false
+   },
+   "positions": true,
+   "attention_m": 120,
+   "memory_s": 120,
+   "memory_capacity": 32,
+   "event_capacity": 64,
+   "budget_tokens": 800,
+   "instruments": [
+    "time_left_s",
+    "gates",
+    "total",
+    "speed_mps",
+    "altitude_m",
+    "boost",
+    "heading_rad",
+    "pitch_rad",
+    "position_x_m",
+    "position_z_m",
+    "crashed",
+    "best_s",
+    "medal"
+   ]
+  }
+ ],
+ "instruments": [
+  {
+   "name": "time_left_s",
+   "doc": "Seconds of light left.",
+   "unit": {
+    "unit": "seconds"
+   },
+   "precision": 1,
+   "source": {
+    "from": "field",
+    "component": "Course",
+    "path": "time_left_s"
+   }
+  },
+  {
+   "name": "gates",
+   "doc": "Wind gates passed this run.",
+   "unit": {
+    "unit": "count"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Course",
+    "path": "gates"
+   }
+  },
+  {
+   "name": "total",
+   "doc": "Wind gates in the run.",
+   "unit": {
+    "unit": "count"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Course",
+    "path": "total"
+   }
+  },
+  {
+   "name": "speed_mps",
+   "doc": "Airspeed through the wind.",
+   "unit": {
+    "unit": "metres_per_second"
+   },
+   "precision": 1,
+   "source": {
+    "from": "field",
+    "component": "Flight",
+    "path": "speed"
+   }
+  },
+  {
+   "name": "altitude_m",
+   "doc": "Height above the cloud sea.",
+   "unit": {
+    "unit": "metres"
+   },
+   "precision": 1,
+   "source": {
+    "from": "field",
+    "component": "Course",
+    "path": "altitude_m"
+   }
+  },
+  {
+   "name": "boost",
+   "doc": "Gust charge, 0 to 1.",
+   "unit": {
+    "unit": "fraction",
+    "min": 0,
+    "max": 1
+   },
+   "precision": 2,
+   "source": {
+    "from": "field",
+    "component": "Flight",
+    "path": "boost"
+   }
+  },
+  {
+   "name": "heading_rad",
+   "doc": "Heading: forward is (-sin(heading), 0, -cos(heading)).",
+   "unit": {
+    "unit": "fraction",
+    "min": -3.142,
+    "max": 3.142
+   },
+   "precision": 3,
+   "source": {
+    "from": "field",
+    "component": "Flight",
+    "path": "heading"
+   }
+  },
+  {
+   "name": "pitch_rad",
+   "doc": "Nose pitch in radians; positive climbs.",
+   "unit": {
+    "unit": "fraction",
+    "min": -1.571,
+    "max": 1.571
+   },
+   "precision": 3,
+   "source": {
+    "from": "field",
+    "component": "Flight",
+    "path": "pitch"
+   }
+  },
+  {
+   "name": "position_x_m",
+   "doc": "Own east-west coordinate.",
+   "unit": {
+    "unit": "metres"
+   },
+   "precision": 1,
+   "source": {
+    "from": "field",
+    "component": "Transform",
+    "path": "position.0"
+   }
+  },
+  {
+   "name": "position_z_m",
+   "doc": "Own north-south coordinate.",
+   "unit": {
+    "unit": "metres"
+   },
+   "precision": 1,
+   "source": {
+    "from": "field",
+    "component": "Transform",
+    "path": "position.2"
+   }
+  },
+  {
+   "name": "crashed",
+   "doc": "Wipeout recovery is active.",
+   "unit": {
+    "unit": "count"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Flight",
+    "path": "crashed"
+   }
+  },
+  {
+   "name": "best_s",
+   "doc": "The fastest finished run, 0 before one.",
+   "unit": {
+    "unit": "seconds"
+   },
+   "precision": 1,
+   "source": {
+    "from": "field",
+    "component": "Course",
+    "path": "best_s"
+   }
+  },
+  {
+   "name": "medal",
+   "doc": "The last run's medal: 0 none, 1 bronze, 2 silver, 3 gold.",
+   "unit": {
+    "unit": "count"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Course",
+    "path": "medal"
+   }
+  }
+ ],
+ "kinds": [
+  {
+   "kind": "gate",
+   "doc": "A wind gate through the road.",
+   "facts": [
+    {
+     "name": "order",
+     "doc": "Its place in the road, from 0.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 0,
+     "exposure": "coarse",
+     "source": {
+      "from": "field",
+      "component": "Gate",
+      "path": "index"
+     }
+    }
+   ]
+  },
+  {
+   "kind": "beacon",
+   "doc": "The light over the next gate.",
+   "facts": [
+    {
+     "name": "gate",
+     "doc": "The gate it marks, from 0.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 0,
+     "exposure": "coarse",
+     "source": {
+      "from": "field",
+      "component": "Beacon",
+      "path": "next"
+     }
+    }
+   ]
+  },
+  {
+   "kind": "rival",
+   "doc": "The wind's own rider.",
+   "facts": [
+    {
+     "name": "gate",
+     "doc": "Gates it has passed, from 0.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 0,
+     "exposure": "coarse",
+     "source": {
+      "from": "field",
+      "component": "Rival",
+      "path": "gate"
+     }
+    }
+   ]
+  }
+ ],
+ "events": [
+  {
+   "kind": "wind.gate",
+   "doc": "A wind gate was passed.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": [
+    {
+     "name": "gate",
+     "doc": "The gate, from 1.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 0,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "gate"
+     }
+    },
+    {
+     "name": "time_left_s",
+     "doc": "Seconds of light left.",
+     "unit": {
+      "unit": "seconds"
+     },
+     "precision": 1,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "time_left_s"
+     }
+    }
+   ]
+  },
+  {
+   "kind": "wind.ember",
+   "doc": "A gust ember was gathered.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": [
+    {
+     "name": "ember",
+     "doc": "Embers gathered.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 0,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "ember"
+     }
+    }
+   ]
+  },
+  {
+   "kind": "wind.crash",
+   "doc": "The glider struck rock or cloud.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": [
+    {
+     "name": "gates",
+     "doc": "Gates passed.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 0,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "gates"
+     }
+    }
+   ]
+  },
+  {
+   "kind": "wind.finish",
+   "doc": "The last wind gate was passed.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": [
+    {
+     "name": "time_s",
+     "doc": "The run's time.",
+     "unit": {
+      "unit": "seconds"
+     },
+     "precision": 1,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "time_s"
+     }
+    },
+    {
+     "name": "medal",
+     "doc": "0 none, 1 bronze, 2 silver, 3 gold.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 0,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "medal"
+     }
+    },
+    {
+     "name": "rival",
+     "doc": "0 none, 1 the player beat the rival, 2 the rival won.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 0,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "rival"
+     }
+    }
+   ]
+  },
+  {
+   "kind": "wind.fail",
+   "doc": "The light ran out before the last gate.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": []
+  }
+ ]
+}

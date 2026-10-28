@@ -1,0 +1,15 @@
+# The engine's determinism, fork and reload checks on the observatory. The keeper stands still:
+# the beam, doors, lamps and dawn all run through the scripts from the scene alone.
+[run]
+seeds = [1, 2, 3]
+ticks = 600
+# The keeper's ten turns, with the walk between them elided: the check plays every chamber's
+# puzzle through the seat's own controls, then runs out the dawn.
+inputs = "checks/inputs.jsonl"
+
+[fork]
+at = [180, 300]
+ticks = 120
+
+[reload]
+at = [60, 300]

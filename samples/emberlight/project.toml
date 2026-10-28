@@ -1,0 +1,15 @@
+name = "Emberlight"
+rate = 60
+seed = 5
+
+[sounds]
+"ember.turn" = "sfx:click"
+"ember.chime" = "audio/lamp.wav"
+"ember.door" = "audio/door.wav"
+"ember.reset" = "sfx:blip"
+"ember.dawn" = "audio/dawn.wav"
+
+[player]
+perception = "perception.json"
+actions = "first_person"
+controls = "WASD walk · Mouse look · Left click turn mirror · Right click reset room · Shift run · Space jump · Esc menu"

@@ -1,0 +1,224 @@
+{
+ "observers": [
+  {
+   "name": "player",
+   "doc": "The keeper's own eyes, lamp count and time.",
+   "sight": {
+    "range_m": 70,
+    "fov_deg": 76,
+    "eye_m": {
+     "x": 0,
+     "y": 0,
+     "z": 0
+    },
+    "occlusion": false
+   },
+   "positions": true,
+   "attention_m": 24,
+   "memory_s": 120,
+   "memory_capacity": 32,
+   "event_capacity": 32,
+   "budget_tokens": 400,
+   "instruments": [
+    "lamps_lit",
+    "lamps_total",
+    "turns",
+    "room",
+    "time_s",
+    "dawn",
+    "position_m"
+   ]
+  }
+ ],
+ "instruments": [
+  {
+   "name": "lamps_lit",
+   "doc": "Sun-lanterns woken.",
+   "unit": {
+    "unit": "count"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Progress",
+    "path": "lamps_lit"
+   }
+  },
+  {
+   "name": "lamps_total",
+   "doc": "Sun-lanterns in the observatory.",
+   "unit": {
+    "unit": "count"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Progress",
+    "path": "lamps_total"
+   }
+  },
+  {
+   "name": "turns",
+   "doc": "Mirrors and prisms turned.",
+   "unit": {
+    "unit": "count"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Progress",
+    "path": "turns"
+   }
+  },
+  {
+   "name": "room",
+   "doc": "The chamber the keeper stands in.",
+   "unit": {
+    "unit": "count"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Progress",
+    "path": "room"
+   }
+  },
+  {
+   "name": "time_s",
+   "doc": "Seconds since the keeper woke.",
+   "unit": {
+    "unit": "seconds"
+   },
+   "precision": 1,
+   "source": {
+    "from": "field",
+    "component": "Progress",
+    "path": "shown_seconds"
+   }
+  },
+  {
+   "name": "dawn",
+   "doc": "The last lamp burns.",
+   "unit": {
+    "unit": "bool"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Progress",
+    "path": "dawn"
+   }
+  },
+  {
+   "name": "position_m",
+   "doc": "The keeper's eye.",
+   "unit": {
+    "unit": "position"
+   },
+   "precision": 2,
+   "source": {
+    "from": "field",
+    "component": "Transform",
+    "path": "position"
+   }
+  }
+ ],
+ "kinds": [],
+ "events": [
+  {
+   "kind": "ember.lit",
+   "doc": "A sun-lantern woke.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": [
+    {
+     "name": "lamp",
+     "doc": "Which lamp, from 1.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 0,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "lamp"
+     }
+    }
+   ]
+  },
+  {
+   "kind": "ember.open",
+   "doc": "A chamber's door opened.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": [
+    {
+     "name": "room",
+     "doc": "Which chamber, from 0.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 0,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "room"
+     }
+    }
+   ]
+  },
+  {
+   "kind": "ember.turn",
+   "doc": "A mirror or prism turned.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": []
+  },
+  {
+   "kind": "ember.reset",
+   "doc": "A chamber's mirrors returned to their first turn.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": []
+  },
+  {
+   "kind": "ember.dawn",
+   "doc": "The last lamp woke the sun.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": [
+    {
+     "name": "elapsed_s",
+     "doc": "Seconds since the keeper woke.",
+     "unit": {
+      "unit": "seconds"
+     },
+     "precision": 1,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "elapsed_s"
+     }
+    },
+    {
+     "name": "turns",
+     "doc": "Mirrors and prisms turned.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 0,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "turns"
+     }
+    }
+   ]
+  }
+ ]
+}
