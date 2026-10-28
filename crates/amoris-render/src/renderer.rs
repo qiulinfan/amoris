@@ -191,6 +191,9 @@ struct Model {
     /// (mesh id, material key or empty) per mesh index.
     meshes: Vec<(u32, String)>,
     names: HashMap<String, usize>,
+    /// The primitives of each named node, so `file.glb#Name` draws a multi-material mesh as all
+    /// of its parts, not only the one a mesh-name lookup happens to find.
+    by_node: HashMap<String, Vec<(usize, Option<usize>)>>,
     /// (mesh index, local TRS, skin) per drawn node.
     nodes: Vec<DrawnNode>,
     /// The asset itself when it has skins (poses are evaluated from it every frame).
@@ -207,6 +210,24 @@ struct Pools<'a> {
     skinning: &'a mut Skinning,
     device: &'a wgpu::Device,
     queue: &'a wgpu::Queue,
+}
+
+/// The parts a `file.glb#Name` or `file.glb#3` requests: every primitive of a multi-material node
+/// by its node name, one mesh by its mesh name or index. A part's skin comes from its node.
+fn named_node_parts(model: &Model, sub: &str) -> Option<Vec<(usize, Option<usize>)>> {
+    if let Some(parts) = model.by_node.get(sub) {
+        return Some(parts.clone());
+    }
+    let i = model
+        .names
+        .get(sub)
+        .copied()
+        .or_else(|| sub.parse::<usize>().ok())
+        .filter(|&i| i < model.meshes.len())?;
+    Some(vec![(
+        i,
+        model.nodes.iter().find(|n| n.0 == i).and_then(|n| n.2),
+    )])
 }
 
 impl Pools<'_> {
@@ -341,31 +362,33 @@ impl Resolve for Pools<'_> {
                 Some(parts)
             }
             Some(s) => {
-                let i = model
-                    .names
-                    .get(s)
-                    .copied()
-                    .or_else(|| s.parse::<usize>().ok())
-                    .filter(|&i| i < model.meshes.len())?;
-                let (_, key) = &model.meshes[i];
-                let material = material_for(self.materials, key)?;
-                let skin = model.nodes.iter().find(|n| n.0 == i).and_then(|n| n.2);
-                let mesh = self.mesh_for(
-                    entity,
-                    path,
-                    model,
-                    i,
-                    skin,
-                    (Vec3::ZERO, Quat::IDENTITY, Vec3::ONE),
-                );
-                Some(vec![Part {
-                    mesh,
-                    material,
-                    variant: self.materials.variant(material),
-                    transparent: self.materials.transparent(material),
-                    casts: self.materials.casts(material),
-                    local: None,
-                }])
+                // A glTF mesh with several materials imports as one part per primitive
+                // (`Name.0`, `Name.1`, ...), and the importer keeps the node's own name on
+                // each part. `#Name` therefore draws every part of that node; `#3` still names
+                // one mesh by index.
+                let parts = named_node_parts(model, s)?;
+                let mut out = Vec::with_capacity(parts.len());
+                for (i, skin) in parts {
+                    let (_, key) = &model.meshes[i];
+                    let material = material_for(self.materials, key)?;
+                    let mesh = self.mesh_for(
+                        entity,
+                        path,
+                        model,
+                        i,
+                        skin,
+                        (Vec3::ZERO, Quat::IDENTITY, Vec3::ONE),
+                    );
+                    out.push(Part {
+                        mesh,
+                        material,
+                        variant: self.materials.variant(material),
+                        transparent: self.materials.transparent(material),
+                        casts: self.materials.casts(material),
+                        local: None,
+                    });
+                }
+                Some(out)
             }
         }
     }
@@ -2259,11 +2282,22 @@ impl Renderer {
             })
             .collect();
         let skinned = (!asset.skins.is_empty()).then(|| std::sync::Arc::new(asset.clone()));
+        let mut by_node: HashMap<String, Vec<(usize, Option<usize>)>> = HashMap::new();
+        for n in &asset.nodes {
+            if n.name.is_empty() {
+                continue;
+            }
+            by_node
+                .entry(n.name.clone())
+                .or_default()
+                .push((n.mesh, n.skin.filter(|_| !asset.skins.is_empty())));
+        }
         self.models.insert(
             path.to_owned(),
             Model {
                 meshes,
                 names,
+                by_node,
                 nodes,
                 skinned,
             },
@@ -4411,5 +4445,34 @@ fn splashes_from_env() -> bool {
             log::warn!("AMORIS_SPLASHES: {v:?} is not off or on; using on");
             true
         }
+    }
+}
+
+#[cfg(test)]
+mod named_mesh_tests {
+    use super::*;
+
+    fn model() -> Model {
+        let identity = (Vec3::ZERO, Quat::IDENTITY, Vec3::ONE);
+        Model {
+            meshes: vec![(0, String::new()), (1, "material".into())],
+            names: HashMap::from([("Solo".to_owned(), 0)]),
+            by_node: HashMap::from([("Group".to_owned(), vec![(0, None), (1, Some(2))])]),
+            nodes: vec![(0, identity, None), (1, identity, Some(2))],
+            skinned: None,
+        }
+    }
+
+    #[test]
+    fn a_named_multi_material_node_names_all_its_primitives() {
+        let m = model();
+        assert_eq!(
+            named_node_parts(&m, "Group"),
+            Some(vec![(0, None), (1, Some(2))])
+        );
+        assert_eq!(named_node_parts(&m, "Solo"), Some(vec![(0, None)]));
+        assert_eq!(named_node_parts(&m, "1"), Some(vec![(1, Some(2))]));
+        assert_eq!(named_node_parts(&m, "3"), None);
+        assert_eq!(named_node_parts(&m, "Nope"), None);
     }
 }
