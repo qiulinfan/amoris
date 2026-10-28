@@ -15,8 +15,12 @@
 // Chrome is found as tools/web_bench.mjs finds it (CHROME= overrides). VIEWPORT=WxH (default
 // 1280x720) sets the page's size in CSS pixels; DPR= its device scale factor (default 1); QUERY=
 // the page's query (`gpu_minimal=features,limits,timestamps`: WebGPU's baseline device).
+// --windward checks the game-controlled camera, startup hold, banking/diving keys, restart,
+// pause on release, and a complete ten-gate run by a scripted test pilot instead of voxel edits.
+// --no-pointer-lock reproduces embedded browsers that refuse capture; the real click must still
+// start a game-camera game with keyboard controls and drag-to-look, without forceCapture.
 import { spawn } from "node:child_process";
-import { createReadStream, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { extname, join, normalize, resolve } from "node:path";
@@ -30,6 +34,9 @@ const opt = (name, fallback) => {
 };
 const shots = opt("--shots", null);
 const settle = Number(opt("--seconds", "6"));
+const windward = args.includes("--windward");
+const emberlight = args.includes("--emberlight");
+const noPointerLock = args.includes("--no-pointer-lock");
 if (!existsSync(join(folder, "index.html"))) {
   console.error("usage: node tools/host/web_play_check.mjs <exported folder> [--shots DIR] [--seconds S]");
   process.exit(2);
@@ -128,6 +135,9 @@ const click = async (button) => {
 
 await send("Page.enable");
 await send("Runtime.enable");
+if (noPointerLock) await send("Page.addScriptToEvaluateOnNewDocument", { source:
+  'HTMLCanvasElement.prototype.requestPointerLock = function () { return Promise.reject(new DOMException("Unavailable in this embedded browser", "NotSupportedError")); };'
+});
 await send("Emulation.setDeviceMetricsOverride", { width: vw, height: vh, deviceScaleFactor: Number(process.env.DPR || 1), mobile: false });
 const started = Date.now();
 await send("Page.navigate", { url });
@@ -173,6 +183,111 @@ if (ready) {
   await shot("1-ready");
   const veil = await evaluate("!document.getElementById('veil').hidden && document.getElementById('status').textContent");
   check("click to play shown", veil === "Click to play", { status: veil });
+  if (emberlight) {
+    await click("left");
+    await sleep(200);
+    const active = await evaluate("window.amorisPlayer.input.captured() && !window.amorisPlayer.input.forced && document.getElementById('veil').hidden");
+    check("real click starts first-person play", active);
+    const before = await world();
+    await key("KeyW", 400);
+    const after = await world();
+    check("keeper walks with the keyboard", Math.hypot(after.walker[0]-before.walker[0], after.walker[2]-before.walker[2]) > 0.1);
+    await shot("2-walked");
+    // The sample's own puzzle input fixture: real player turns, with travel between rooms elided.
+    const fixture = readFileSync(new URL("../../samples/emberlight/checks/inputs.jsonl", import.meta.url), "utf8")
+      .trim().split("\n").map(JSON.parse);
+    const result = await evaluate(`(async () => {
+      const p=window.amorisPlayer, a=p.amoris;
+      await a.command("player.pacing", {pacing:{pacing:"stepped"}});
+      // Stop input while the deterministic test drives its own controls.
+      if(document.pointerLockElement) document.exitPointerLock();
+      p.input.release();
+      await a.command("snapshots.restore", {tick:0});
+      let tick=0;
+      for(const call of ${JSON.stringify(fixture)}) {
+        if(call.tick>tick+1) { await a.command("time.step", {ticks:call.tick-tick-1}); tick=call.tick-1; }
+        await a.command(call.name,call.params, {source:call.source});
+      }
+      await a.command("time.step", {ticks:600-tick});
+      return (await a.command("world.query", {with:["Progress"],fields:["Progress.lamps_lit","Progress.dawn","Progress.finale"]}))[0];
+    })()`);
+    check("five lanterns and the dawn in the browser", result["Progress.lamps_lit"]===5 && result["Progress.dawn"]===true && result["Progress.finale"]===1,
+      {lamps:result["Progress.lamps_lit"],dawn:result["Progress.dawn"],finale:result["Progress.finale"]});
+    await sleep(200);
+    await shot("3-dawn");
+  } else if (windward) {
+    const tick = await evaluate("window.amorisPlayer.amoris.command('status').then(s => s.tick)");
+    check("holds the start while loading", tick === 1, { tick });
+    const flight = () => evaluate(`window.amorisPlayer.amoris.command("world.query", {
+      with: ["Flight"], fields: ["Flight.heading", "Flight.pitch", "Transform.position"]
+    }).then(r => r[0])`);
+    const initial = await flight();
+    check("game camera and control legend", await evaluate(`window.amorisPlayer.gameCamera
+      && document.getElementById("help").textContent.includes("bank")`));
+    await click("left");
+    await sleep(300);
+    const startedByClick = await evaluate(`(() => { const p = window.amorisPlayer;
+      return { captured: p.input.captured(), forced: p.input.forced, unlocked: p.input.unlocked,
+        veil: document.getElementById("veil").hidden, pointer: !!document.pointerLockElement };
+    })()`);
+    check("a real click starts the game", startedByClick.captured && !startedByClick.forced && startedByClick.veil, startedByClick);
+    if (noPointerLock) check("keyboard play when pointer lock is refused", startedByClick.unlocked && !startedByClick.pointer);
+    await key("KeyA", 600);
+    const turned = await flight();
+    check("keyboard banks the glider", Math.abs(turned["Flight.heading"] - initial["Flight.heading"]) > 0.05);
+    await key("KeyW", 500);
+    const dived = await flight();
+    check("keyboard dives the glider", dived["Flight.pitch"] < -0.1);
+    await shot("2-flight");
+    await click("right");
+    await sleep(100);
+    const restart = await flight();
+    check("right click restarts", restart["Transform.position"][0] < 30);
+    await evaluate("window.amorisPlayer.input.dx += 120");
+    await sleep(120);
+    const orbit = await evaluate(`window.amorisPlayer.amoris.command("world.query", {
+      with: ["Cam"], fields: ["Cam.orbit_yaw"]
+    }).then(r => r[0]["Cam.orbit_yaw"])`);
+    check("mouse reaches the game's chase camera", Math.abs(orbit) > 0.1, { orbit });
+    if (startedByClick.unlocked) await key("Escape", 50);
+    else await evaluate("document.exitPointerLock()");
+    await sleep(200);
+    const paused = await evaluate("window.amorisPlayer.amoris.command('status').then(s => s.tick)");
+    await sleep(500);
+    const held = await evaluate("window.amorisPlayer.amoris.command('status').then(s => s.tick)");
+    check("release pauses the game", paused === held, { tick: held });
+    // A scripted test pilot, distinct from the model recording: exercise every gate in WASM.
+    const complete = await evaluate(`(async () => {
+      const p = window.amorisPlayer, a = p.amoris;
+      const act = actions => a.command("player.act", { actions }, { source: "player" });
+      await act([{ do: "pulse", control: "secondary" }]);
+      await a.command("time.step", { ticks: 1 });
+      const wrap = x => x - Math.PI * 2 * Math.round(x / (Math.PI * 2));
+      const gates = await a.command("world.query", { with: ["Gate"], fields: ["Gate.index", "Transform.position"] });
+      gates.sort((x,y) => x["Gate.index"] - y["Gate.index"]);
+      let course;
+      for (let i = 0; i < 1200; i++) {
+        course = (await a.command("world.query", { with: ["Course"], fields: ["Course.gates", "Course.medal"] }))[0];
+        if (course["Course.gates"] === 10) break;
+        const f = (await a.command("world.query", { with: ["Flight"],
+          fields: ["Transform.position", "Flight.heading", "Flight.speed", "Flight.boost"] }))[0];
+        const pos = f["Transform.position"], target = gates[course["Course.gates"]]["Transform.position"];
+        const dx = target[0]-pos[0], dz = target[2]-pos[2], horizontal = Math.hypot(dx,dz);
+        const error = wrap(Math.atan2(-dx,-dz) - f["Flight.heading"]);
+        let pitch = Math.max(-0.6, Math.min(0.55, Math.atan2(target[1]-pos[1], Math.max(horizontal,30))));
+        if (f["Flight.speed"] < 16) pitch = Math.min(pitch,-0.1);
+        await act([{ do: "set", controls: { strafe: Math.max(-1,Math.min(1,-error*2.6)),
+          forward: Math.max(-1,Math.min(1,-pitch/0.62)), run: f["Flight.boost"]>0.35 && horizontal>150 } }]);
+        await a.command("time.step", { ticks: 4 });
+      }
+      await a.command("time.step", { ticks: 6 });
+      return course;
+    })()`);
+    check("completes all ten gates in the browser", complete["Course.gates"] === 10,
+      { gates: complete["Course.gates"], medal: complete["Course.medal"] });
+    await sleep(200);
+    await shot("3-finish");
+  } else {
   await evaluate("window.amorisPlayer.forceCapture(true)");
   await sleep(300);
   const before = await world();
@@ -223,6 +338,7 @@ if (ready) {
       p95: s[Math.floor(s.length * 0.95)], max: s[s.length - 1] } : null; };
     return { ticks: p.ticks, step_ms: q(p.step_ms), publish_ms: q(p.publish_ms) }; })`).catch((e) => String(e));
   globalThis.frames = frames;
+  }
 }
 check("no WebGPU or script errors", errors.length === 0);
 const load = await evaluate(`(() => { const e = performance.getEntriesByType("resource");

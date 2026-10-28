@@ -23,10 +23,13 @@
   .bar { height: 4px; width: 260px; margin: 12px auto 0; background: #2a3240; border-radius: 2px; overflow: hidden; }
   .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
   #error { color: #ffb4a8; white-space: pre-wrap; text-align: left; font-size: 14px; }
+  #input-mode { position: fixed; right: 12px; bottom: 12px; margin: 0; padding: 5px 9px;
+    color: var(--ink); background: var(--veil); font-size: 12px; pointer-events: none; }
 </style>
 </head>
 <body>
 <canvas id="view" tabindex="0" aria-label="The game, drawn by the Amoris renderer with WebGPU"></canvas>
+<p id="input-mode" hidden>Drag to look · Esc pauses</p>
 <div id="veil">
   <div class="card">
     <h1 id="name">Amoris</h1>

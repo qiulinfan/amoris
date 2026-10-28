@@ -221,7 +221,15 @@ fn play_inner(raw: &[String]) -> Result<Outcome, Problem> {
         options,
     )?;
     let seat = if args.has("walk") && first_person {
-        Some(SeatWalk::new(game.client(amoris_link::Source::Player(0))?))
+        let game_camera = project
+            .manifest
+            .player
+            .as_ref()
+            .is_some_and(|p| p.camera == amoris_runtime::player::PlayerCamera::Game);
+        Some(SeatWalk::new(
+            game.client(amoris_link::Source::Player(0))?,
+            game_camera,
+        ))
     } else {
         None
     };
@@ -285,10 +293,12 @@ struct SeatWalk {
     slot: u8,
     sent: Option<(f32, f32, bool, f32, f32, bool)>,
     status: String,
+    /// The game's rules pose the scene's active camera; the mouse still steers the seat.
+    game_camera: bool,
 }
 
 impl SeatWalk {
-    fn new(client: amoris_link::GameClient) -> SeatWalk {
+    fn new(client: amoris_link::GameClient, game_camera: bool) -> SeatWalk {
         SeatWalk {
             client,
             input: WalkInput::default(),
@@ -297,6 +307,7 @@ impl SeatWalk {
             slot: 0,
             sent: None,
             status: "Click to play — Esc exits".into(),
+            game_camera,
         }
     }
 
@@ -384,12 +395,15 @@ impl SeatWalk {
                 eprintln!("player.act not sent: {}", p.message);
             }
         }
-        camera.rotation = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
-        r.set_look_override(Some(camera.rotation));
+        if !self.game_camera {
+            camera.rotation = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
+            r.set_look_override(Some(camera.rotation));
+        }
         // The targeted block's outline, from the renderer's own copy of the volumes.
         r.overlays.lines.clear();
         let dir = camera.rotation * Vec3::NEG_Z;
-        if captured
+        if !self.game_camera
+            && captured
             && let Some((corner, edge)) = r.voxel_target(camera.position.into(), dir.into(), 5.0)
         {
             let c = Vec3::from(corner) - Vec3::splat(0.002);
@@ -445,7 +459,7 @@ impl SeatWalk {
             7,
             [0.0, 24.0],
         ));
-        if captured {
+        if captured && !self.game_camera {
             r.scene
                 .ui
                 .push(walk_text(CROSSHAIR_ID, "+".into(), 24.0, 4, [0.0, 0.0]));

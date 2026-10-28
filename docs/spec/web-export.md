@@ -59,7 +59,14 @@ and the crosshair.
 | Look | Mouse, 0.003 rad per device count | Mouse, 0.003 rad per movement unit |
 
 The veil shows the name, the package's download, and once the player is ready, "Click to play" and
-the controls. The view is ready once the walker's camera is known and the first models and textures
+the controls (`[player] controls` when provided). `camera = "game"` preserves the game's active
+camera and sends mouse look only as player input, without a crosshair or voxel outline. It loads
+at one completed tick, holds until the player clicks, and pauses on release; its view is ready
+once the camera and assets are in. The default look camera keeps the behavior below.
+When an embedded browser refuses pointer lock, clicking still starts keyboard play, with
+left-drag look and an on-screen hint. A stationary click triggers the primary action; a drag does
+not. Escape or window blur leaves this mode; game-camera games also pause their simulation.
+The view is ready once the walker's camera is known and the first models and textures
 are in; the player is ready once the view is and the game has run 60 ticks since the view became
 ready and since the last warming GPU water job that ran over 250 ms (`web/player.js`). A GPU water
 host's first 600 jobs are warming jobs (`web/game.js`): they compile the pipelines they first use,
@@ -95,7 +102,8 @@ it. The renderer draws on WebGPU's defaults (webgpu-baseline.md: the baseline dr
 On itch.io the zip is uploaded as an HTML5 game ("This file will be played in the browser"). It
 needs no "SharedArrayBuffer support". Its limits are 1000 files and 500 MB unpacked; Blockcraft's
 build is 42 files and 15.6 MB (5.1 MB zipped). The game reads the keyboard only while the mouse is
-captured, and keeps Space and the wheel from scrolling the page around the frame then.
+captured (or its game-camera keyboard mode is active), and keeps Space and the wheel from
+scrolling the page around the frame then.
 
 ## 5. Checking it
 
@@ -110,6 +118,12 @@ tick timings and the transferred bytes. `QUERY=gpu_minimal=features,limits,times
 WebGPU's baseline device, `DPR=2` at a Retina display's scale. The measurements of the Blockcraft
 build are in [../bench/web-export.md](../bench/web-export.md); its ready time is the view's,
 measured before the player waited for the game's 60 ticks.
+
+For Windward, add `--windward`: the check verifies the game camera, the initial hold, a real click
+to play without `forceCapture`, actual bank and dive keys, right-click restart and pause on mouse
+release, then flies all ten gates with a scripted test pilot in the browser worker. Add
+`--no-pointer-lock` to exercise a browser that refuses capture. This pilot is separate from the
+model recording.
 
 The renderer's `shaders` unit test now refuses WGSL that mixes a bitwise operator with another
 binary operator without parentheses: naga accepts it, Chrome's Tint refuses the whole module, and

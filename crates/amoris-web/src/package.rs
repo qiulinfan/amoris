@@ -36,6 +36,12 @@ pub struct Package {
     /// The player declarations (amoris-runtime's `PlayerSpec`), when the game has players.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub player: Option<amoris_runtime::player::PlayerSpec>,
+    /// Presentation only: whether the page aims the camera or leaves it to the game.
+    #[serde(default)]
+    pub player_camera: amoris_runtime::player::PlayerCamera,
+    /// The project's control legend, shown before a human captures the mouse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub player_controls: Option<String>,
 }
 
 fn invalid(message: String) -> Problem {
@@ -58,6 +64,8 @@ impl Package {
             scene: setup.scene.clone(),
             scripts: serde_json::to_value(&setup.scripts).unwrap_or(Value::Null),
             player: setup.player.clone(),
+            player_camera: Default::default(),
+            player_controls: None,
         }
     }
 

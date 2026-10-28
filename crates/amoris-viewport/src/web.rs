@@ -292,7 +292,15 @@ impl Viewport {
     /// since the last call (CSS pixels, used while `captured`); while captured the targeted block is
     /// outlined and a crosshair drawn. Returns `[yaw, pitch]` for the page's `player.act` controls,
     /// or nothing until the world has published an active camera that a tick has placed.
-    pub fn first_person(&mut self, dx: f32, dy: f32, captured: bool) -> Vec<f32> {
+    /// `game_camera` preserves that camera's pose and suppresses the voxel overlay; mouse deltas
+    /// still reach the seat, whose game can use them to orbit a chase camera.
+    pub fn first_person(
+        &mut self,
+        dx: f32,
+        dy: f32,
+        captured: bool,
+        game_camera: bool,
+    ) -> Vec<f32> {
         const CROSSHAIR_ID: u64 = u64::MAX - 2;
         let r = &mut self.renderer;
         // The walker's camera, drawn between ticks with the world it sees, turned by the look.
@@ -320,9 +328,11 @@ impl Viewport {
         }
         yaw = (yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
         self.look = Some((yaw, pitch));
-        camera.rotation = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
-        r.set_look_override(Some(camera.rotation));
-        if !captured {
+        if !game_camera {
+            camera.rotation = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
+            r.set_look_override(Some(camera.rotation));
+        }
+        if !captured || game_camera {
             return vec![yaw, pitch];
         }
         let dir = camera.rotation * Vec3::NEG_Z;

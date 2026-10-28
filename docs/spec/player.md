@@ -42,6 +42,8 @@ A project opts in with `[player]` in `project.toml`:
 perception = "perception.json"   # default; the observer profiles, instruments, kinds, events
 actions = "sailing"              # the engine's action catalog: "sailing", "first_person" or "none"
 done_event = "course.finished"   # the episode ends in the tick one is emitted (optional)
+camera = "look"                  # who aims the camera: "look" (default) or "game"
+controls = "WASD move · Mouse look" # optional plain-text legend for the browser's pause veil
 # decisions = { events = ["intent.", "sighted"], idle_s = 10, every_s = 120 }  # default: sailing's
 ```
 
@@ -50,6 +52,16 @@ done_event = "course.finished"   # the episode ends in the tick one is emitted (
   kinds with facts and affordances, events with their scope. It is decoded strictly and validated at
   load (`definition.invalid` with a JSON pointer at the first fault). Derived facts name the
   engine's registered functions (`sailing.*`, `perception/sailing.rs`).
+- `camera = "game"` hands the native window's and browser player's camera to the game:
+  `amoris play --walk` sends the
+  mouse look and the keys to the seat as before but draws the scene's active `Camera` as the rules
+  pose it, so a third-person or chase camera can follow a craft the seat does not sit in. The
+  default, `"look"`, keeps the camera on the seat's head, turned at once by the mouse.
+  The browser packages the camera choice and optional `controls` legend as presentation metadata;
+  neither enters the persisted `PlayerSpec`. With a game camera it loads at the first completed
+  tick, starts real time on the first click and pauses when the mouse is released. Embedded
+  browsers that refuse pointer lock use keyboard play with drag-to-look; Escape or window blur
+  pauses that mode (web-export.md 3).
 - `actions` names an engine catalog (README, The game definition: engine parts are Rust values
   beside their systems). `sailing` is one seat, `skipper`; the controls `rudder`, `sheet`, `hoist`
   (a `Boat`'s) and `interact` (a pulse written into the project's `Crew.take`, which the game's rule

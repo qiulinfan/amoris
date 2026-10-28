@@ -65,6 +65,24 @@ pub struct PlayerManifest {
     /// (time.md, Episodes). None: the episode never ends by itself.
     #[serde(default)]
     pub done_event: Option<String>,
+    /// Who aims the player view while a first-person seat plays: the mouse's look
+    /// (`look`, the default) or the game's rules, which pose the scene's active camera (`game`).
+    #[serde(default)]
+    pub camera: PlayerCamera,
+    /// A plain-text control legend for the browser player's loading and pause veil.
+    #[serde(default)]
+    pub controls: Option<String>,
+}
+
+/// How a first-person seat's native window and browser player aim their camera.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PlayerCamera {
+    /// The window turns the active camera with the mouse look, as it always has.
+    #[default]
+    Look,
+    /// The game poses the active camera; the mouse look still reaches the seat's Walker.
+    Game,
 }
 
 fn default_perception() -> String {
@@ -1120,5 +1138,23 @@ pub fn pacing_params(world: &World, source: Source, raw: &Value) -> Result<PlayP
             Ok(p.pacing)
         }
         PlayPacing::Stepped => Ok(p.pacing),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_native_camera_option_defaults_to_look_and_reads_game() {
+        let look: PlayerManifest =
+            toml::from_str("actions = \"first_person\"\n").expect("a player table");
+        assert_eq!(look.camera, PlayerCamera::Look);
+        let game: PlayerManifest = toml::from_str(
+            "actions = \"first_person\"\ncamera = \"game\"\ncontrols = \"A/D bank\"\n",
+        )
+        .expect("a player table");
+        assert_eq!(game.camera, PlayerCamera::Game);
+        assert_eq!(game.controls.as_deref(), Some("A/D bank"));
     }
 }
