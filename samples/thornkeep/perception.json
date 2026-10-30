@@ -1,0 +1,151 @@
+{
+ "observers": [
+  {
+   "name": "player",
+   "doc": "The sellsword's eyes.",
+   "sight": {
+    "range_m": 80,
+    "fov_deg": 80,
+    "eye_m": {
+     "x": 0,
+     "y": 0,
+     "z": 0
+    },
+    "occlusion": false
+   },
+   "positions": true,
+   "attention_m": 40,
+   "memory_s": 60,
+   "memory_capacity": 48,
+   "event_capacity": 64,
+   "budget_tokens": 400,
+   "instruments": [
+    "position_m",
+    "health",
+    "stamina",
+    "focus",
+    "action",
+    "flasks",
+    "kills"
+   ]
+  }
+ ],
+ "instruments": [
+  {
+   "name": "position_m",
+   "doc": "The sellsword's eye.",
+   "unit": {
+    "unit": "position"
+   },
+   "precision": 2,
+   "source": {
+    "from": "field",
+    "component": "Transform",
+    "path": "position"
+   }
+  },
+  {
+   "name": "health",
+   "doc": "Health.",
+   "unit": {
+    "unit": "count"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Fighter",
+    "path": "hp"
+   }
+  },
+  {
+   "name": "stamina",
+   "doc": "Stamina.",
+   "unit": {
+    "unit": "count"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Fighter",
+    "path": "stamina"
+   }
+  },
+  {
+   "name": "focus",
+   "doc": "Focus for bolts and knives.",
+   "unit": {
+    "unit": "count"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Fighter",
+    "path": "focus"
+   }
+  },
+  {
+   "name": "action",
+   "doc": "The action under way (0 free).",
+   "unit": {
+    "unit": "count"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Fighter",
+    "path": "action"
+   }
+  },
+  {
+   "name": "flasks",
+   "doc": "Healing flasks left.",
+   "unit": {
+    "unit": "count"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Player",
+    "path": "flasks"
+   }
+  },
+  {
+   "name": "kills",
+   "doc": "Foes felled.",
+   "unit": {
+    "unit": "count"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Player",
+    "path": "kills"
+   }
+  }
+ ],
+ "kinds": [],
+ "events": [
+  {
+   "kind": "keep.freed",
+   "doc": "The Thorn Warden fell: the keep is free.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": [
+    {
+     "name": "kills",
+     "doc": "Foes felled.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 1,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "kills"
+     }
+    }
+   ]
+  }
+ ]
+}

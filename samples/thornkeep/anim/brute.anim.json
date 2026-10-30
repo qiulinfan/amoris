@@ -1,0 +1,547 @@
+{
+ "format": "amoris-animgraph",
+ "version": 1,
+ "skeleton": "models/chars/brute.glb",
+ "libraries": [
+  "models/anim/ual1.glb",
+  "models/anim/ual2.glb"
+ ],
+ "sockets": [
+  "hand_r",
+  "hand_l",
+  "Head",
+  "spine_03",
+  "pelvis"
+ ],
+ "params": {
+  "speed": 0,
+  "blocking": false,
+  "dead": false
+ },
+ "clips": {
+  "Sword_Regular_A": {
+   "notifies": [
+    {
+     "name": "swing",
+     "at": 0.08
+    },
+    {
+     "name": "hit",
+     "from": 0.12,
+     "to": 0.3
+    }
+   ]
+  },
+  "Sword_Regular_A_Rec": {
+   "notifies": [
+    {
+     "name": "chain",
+     "from": 0.0,
+     "to": 0.45
+    }
+   ]
+  },
+  "Sword_Regular_B": {
+   "notifies": [
+    {
+     "name": "swing",
+     "at": 0.1
+    },
+    {
+     "name": "hit",
+     "from": 0.14,
+     "to": 0.36
+    }
+   ]
+  },
+  "Sword_Regular_B_Rec": {
+   "notifies": [
+    {
+     "name": "chain",
+     "from": 0.0,
+     "to": 0.5
+    }
+   ]
+  },
+  "Sword_Regular_C": {
+   "notifies": [
+    {
+     "name": "swing",
+     "at": 0.45
+    },
+    {
+     "name": "hit",
+     "from": 0.5,
+     "to": 0.95
+    }
+   ]
+  },
+  "Sword_Attack_RM": {
+   "root_motion": true,
+   "notifies": [
+    {
+     "name": "swing",
+     "at": 0.48
+    },
+    {
+     "name": "hit",
+     "from": 0.52,
+     "to": 0.86
+    }
+   ]
+  },
+  "Sword_Dash_RM": {
+   "root_motion": true,
+   "notifies": [
+    {
+     "name": "swing",
+     "at": 0.4
+    },
+    {
+     "name": "hit",
+     "from": 0.42,
+     "to": 0.8
+    }
+   ]
+  },
+  "Sword_Regular_Combo": {
+   "notifies": [
+    {
+     "name": "swing",
+     "at": 0.3
+    },
+    {
+     "name": "hit",
+     "from": 0.34,
+     "to": 0.6
+    },
+    {
+     "name": "swing",
+     "at": 1.1
+    },
+    {
+     "name": "hit",
+     "from": 1.14,
+     "to": 1.4
+    },
+    {
+     "name": "swing",
+     "at": 1.95
+    },
+    {
+     "name": "hit",
+     "from": 2.0,
+     "to": 2.4
+    }
+   ]
+  },
+  "Melee_Hook": {
+   "notifies": [
+    {
+     "name": "swing",
+     "at": 0.1
+    },
+    {
+     "name": "hit",
+     "from": 0.15,
+     "to": 0.35
+    }
+   ]
+  },
+  "Shield_OneShot": {
+   "notifies": [
+    {
+     "name": "swing",
+     "at": 0.2
+    },
+    {
+     "name": "hit",
+     "from": 0.25,
+     "to": 0.45
+    }
+   ]
+  },
+  "Shield_Dash_RM": {
+   "root_motion": true,
+   "notifies": [
+    {
+     "name": "hit",
+     "from": 0.2,
+     "to": 0.8
+    }
+   ]
+  },
+  "Spell_Simple_Shoot": {
+   "notifies": [
+    {
+     "name": "release",
+     "at": 0.22
+    }
+   ]
+  },
+  "OverhandThrow": {
+   "notifies": [
+    {
+     "name": "release",
+     "at": 0.62
+    }
+   ]
+  },
+  "Roll_RM": {
+   "root_motion": true,
+   "notifies": [
+    {
+     "name": "evade",
+     "from": 0.04,
+     "to": 0.58
+    }
+   ]
+  },
+  "Hit_Knockback_RM": {
+   "root_motion": true
+  },
+  "Walk_Loop": {
+   "notifies": [
+    {
+     "name": "step",
+     "at": 0.1
+    },
+    {
+     "name": "step",
+     "at": 0.78
+    }
+   ]
+  },
+  "Jog_Fwd_Loop": {
+   "notifies": [
+    {
+     "name": "step",
+     "at": 0.05
+    },
+    {
+     "name": "step",
+     "at": 0.53
+    }
+   ]
+  },
+  "Sprint_Loop": {
+   "notifies": [
+    {
+     "name": "step",
+     "at": 0.05
+    },
+    {
+     "name": "step",
+     "at": 0.4
+    }
+   ]
+  }
+ },
+ "masks": {
+  "upper": [
+   {
+    "joint": "spine_01",
+    "weight": 0.6
+   },
+   {
+    "joint": "spine_02"
+   }
+  ]
+ },
+ "layers": [
+  {
+   "name": "base",
+   "start": "move",
+   "states": {
+    "move": {
+     "blend1d": {
+      "param": "speed",
+      "points": [
+       [
+        0,
+        "Idle_Shield_Loop"
+       ],
+       [
+        1.6,
+        "Walk_Loop"
+       ],
+       [
+        3.8,
+        "Jog_Fwd_Loop"
+       ],
+       [
+        6.2,
+        "Sprint_Loop"
+       ]
+      ]
+     }
+    },
+    "block": {
+     "clip": "Idle_Shield_Loop",
+     "loop": true,
+     "rate": 1.6
+    },
+    "dead": {
+     "clip": "Death01",
+     "loop": false
+    }
+   },
+   "transitions": [
+    {
+     "from": "*",
+     "to": "dead",
+     "when": [
+      [
+       "dead",
+       "==",
+       true
+      ]
+     ],
+     "fade": 0.15
+    },
+    {
+     "from": "move",
+     "to": "block",
+     "when": [
+      [
+       "blocking",
+       "==",
+       true
+      ]
+     ],
+     "fade": 0.12
+    },
+    {
+     "from": "block",
+     "to": "move",
+     "when": [
+      [
+       "blocking",
+       "==",
+       false
+      ]
+     ],
+     "fade": 0.2
+    }
+   ]
+  },
+  {
+   "name": "upper",
+   "mask": "upper",
+   "slot": "upper"
+  },
+  {
+   "name": "full",
+   "slot": "full"
+  }
+ ],
+ "montages": {
+  "light_a": {
+   "slot": "full",
+   "fade_in": 0.08,
+   "fade_out": 0.18,
+   "sections": [
+    {
+     "name": "a",
+     "clip": "Sword_Regular_A",
+     "next": "a_rec",
+     "rate": 1.1
+    },
+    {
+     "name": "a_rec",
+     "clip": "Sword_Regular_A_Rec"
+    }
+   ]
+  },
+  "light_b": {
+   "slot": "full",
+   "fade_in": 0.08,
+   "fade_out": 0.18,
+   "sections": [
+    {
+     "name": "b",
+     "clip": "Sword_Regular_B",
+     "next": "b_rec",
+     "rate": 1.1
+    },
+    {
+     "name": "b_rec",
+     "clip": "Sword_Regular_B_Rec"
+    }
+   ]
+  },
+  "light_c": {
+   "slot": "full",
+   "fade_in": 0.08,
+   "fade_out": 0.25,
+   "sections": [
+    {
+     "name": "c",
+     "clip": "Sword_Regular_C",
+     "rate": 1.15
+    }
+   ]
+  },
+  "heavy": {
+   "slot": "full",
+   "fade_in": 0.1,
+   "fade_out": 0.25,
+   "sections": [
+    {
+     "name": "heavy",
+     "clip": "Sword_Attack_RM"
+    }
+   ]
+  },
+  "dash": {
+   "slot": "full",
+   "fade_in": 0.06,
+   "fade_out": 0.25,
+   "sections": [
+    {
+     "name": "dash",
+     "clip": "Sword_Dash_RM"
+    }
+   ]
+  },
+  "combo3": {
+   "slot": "full",
+   "fade_in": 0.08,
+   "fade_out": 0.25,
+   "sections": [
+    {
+     "name": "combo",
+     "clip": "Sword_Regular_Combo"
+    }
+   ]
+  },
+  "hook": {
+   "slot": "full",
+   "fade_in": 0.08,
+   "fade_out": 0.18,
+   "sections": [
+    {
+     "name": "hook",
+     "clip": "Melee_Hook",
+     "next": "rec"
+    },
+    {
+     "name": "rec",
+     "clip": "Melee_Hook_Rec"
+    }
+   ]
+  },
+  "roll": {
+   "slot": "full",
+   "fade_in": 0.04,
+   "fade_out": 0.15,
+   "sections": [
+    {
+     "name": "roll",
+     "clip": "Roll_RM",
+     "rate": 1.2
+    }
+   ]
+  },
+  "hit_chest": {
+   "slot": "full",
+   "fade_in": 0.03,
+   "fade_out": 0.12,
+   "sections": [
+    {
+     "name": "hit",
+     "clip": "Hit_Chest"
+    }
+   ]
+  },
+  "hit_head": {
+   "slot": "full",
+   "fade_in": 0.03,
+   "fade_out": 0.12,
+   "sections": [
+    {
+     "name": "hit",
+     "clip": "Hit_Head"
+    }
+   ]
+  },
+  "knockback": {
+   "slot": "full",
+   "fade_in": 0.03,
+   "fade_out": 0.2,
+   "sections": [
+    {
+     "name": "hit",
+     "clip": "Hit_Knockback_RM"
+    }
+   ]
+  },
+  "guard_break": {
+   "slot": "full",
+   "fade_in": 0.04,
+   "fade_out": 0.2,
+   "sections": [
+    {
+     "name": "break",
+     "clip": "Idle_Shield_Break"
+    }
+   ]
+  },
+  "bash": {
+   "slot": "full",
+   "fade_in": 0.08,
+   "fade_out": 0.2,
+   "sections": [
+    {
+     "name": "bash",
+     "clip": "Shield_OneShot"
+    }
+   ]
+  },
+  "charge": {
+   "slot": "full",
+   "fade_in": 0.06,
+   "fade_out": 0.25,
+   "sections": [
+    {
+     "name": "charge",
+     "clip": "Shield_Dash_RM"
+    }
+   ]
+  },
+  "cast": {
+   "slot": "full",
+   "fade_in": 0.06,
+   "fade_out": 0.15,
+   "sections": [
+    {
+     "name": "cast",
+     "clip": "Spell_Simple_Shoot"
+    }
+   ]
+  },
+  "throw": {
+   "slot": "full",
+   "fade_in": 0.08,
+   "fade_out": 0.2,
+   "sections": [
+    {
+     "name": "throw",
+     "clip": "OverhandThrow",
+     "rate": 1.15
+    }
+   ]
+  },
+  "drink": {
+   "slot": "upper",
+   "fade_in": 0.15,
+   "fade_out": 0.2,
+   "sections": [
+    {
+     "name": "drink",
+     "clip": "Consume"
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,15 @@
+{"tick": 30, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "set", "controls": {"yaw": 0.0, "pitch": -0.15, "forward": 1.0}}]}}
+{"tick": 300, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "set", "controls": {"run": true}}]}}
+{"tick": 560, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "set", "controls": {"run": false}}]}}
+{"tick": 720, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "set", "controls": {"forward": 0.0, "pressed": 4}}]}}
+{"tick": 760, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "pulse", "control": "primary"}]}}
+{"tick": 778, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "pulse", "control": "primary"}]}}
+{"tick": 796, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "pulse", "control": "primary"}]}}
+{"tick": 814, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "pulse", "control": "primary"}]}}
+{"tick": 832, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "pulse", "control": "primary"}]}}
+{"tick": 850, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "pulse", "control": "primary"}]}}
+{"tick": 868, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "pulse", "control": "primary"}]}}
+{"tick": 886, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "pulse", "control": "primary"}]}}
+{"tick": 910, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "set", "controls": {"strafe": 1.0, "pressed": 1}}]}}
+{"tick": 940, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "set", "controls": {"strafe": 0.0, "held": 2}}]}}
+{"tick": 1020, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "set", "controls": {"held": 0, "pressed": 8}}]}}

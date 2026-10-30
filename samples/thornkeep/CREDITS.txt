@@ -1,0 +1,72 @@
+Thornkeep: credits and licences
+
+Original work (this repository's licence): the game rules (scripts/), the animation graphs and
+their generator (anim/, build_anims.py), the scene, the layout and their generators
+(build_scene.py, level.py), the keep modelled in build_level.py (curtain walls, towers, gates,
+stairs, columns, ruined houses, the keep's tower and throne, braziers, banners, thorn vines), the
+weapons and shield (build_props.py), the firs and the stave barrel (build_dressing.py), the Thorn
+Warden's armour (build_characters.py), the character assemblies, and all sounds (build_audio.py,
+synthesized).
+
+Characters and animation, by Quaternius (https://quaternius.com), licensed CC0 1.0
+(https://creativecommons.org/publicdomain/zero/1.0/; each pack's License.txt says so). Downloaded
+from the author's itch.io pages (https://quaternius.itch.io/) in their free Standard editions; not
+committed as sources (README.md says where build_characters.py reads them).
+
+- Universal Animation Library (Standard): https://quaternius.itch.io/universal-animation-library
+  (also https://quaternius.com/packs/universalanimationlibrary.html), its Unreal Engine FBX
+  used for the skeleton and the clips in models/anim/ual1.glb
+- Universal Animation Library 2 (Standard), from the same author's itch.io page
+  used for the clips in models/anim/ual2.glb
+- Universal Base Characters (Standard): https://quaternius.itch.io/universal-base-characters
+  used for the heads, eyes and hairstyles in models/chars/*.glb
+- Modular Character Outfits - Fantasy (Standard), from the same author's itch.io page
+  used for the outfits and their colour variants in models/chars/*.glb (the Warden's under its
+  original armour)
+
+Textures and models from Poly Haven (https://polyhaven.com), licensed CC0 1.0
+(https://polyhaven.com/license). Fetched with fetch_assets.py from the Poly Haven API; not
+committed as sources.
+
+- castle_wall_slates by Rob Tuytel: https://polyhaven.com/a/castle_wall_slates
+  used for curtain walls and towers (models/level.glb)
+- stone_brick_wall_001 by Dimitrios Savva, Rico Cilliers: https://polyhaven.com/a/stone_brick_wall_001
+  used for the houses' walls (models/level.glb)
+- mossy_cobblestone by Sơn Nguyễn: https://polyhaven.com/a/mossy_cobblestone
+  used for the bailey and the ward (models/level.glb)
+- medieval_blocks_03 by Rob Tuytel: https://polyhaven.com/a/medieval_blocks_03
+  used for stairs, gates, columns, the ring and the throne (models/level.glb)
+- roof_slates_02 by Rob Tuytel: https://polyhaven.com/a/roof_slates_02
+  used for roofs and tower cones (models/level.glb)
+- weathered_brown_planks by Dimitrios Savva, Rico Cilliers: https://polyhaven.com/a/weathered_brown_planks
+  used for beams and doors (models/level.glb) and the barrel's staves (models/dressing.glb#barrel)
+- rocky_trail by Amal Kumar: https://polyhaven.com/a/rocky_trail
+  used for the road (models/level.glb) and terrain paths (models/ground.glb#ground_trail)
+- rust_coarse_01 by Dimitrios Savva, Rico Cilliers: https://polyhaven.com/a/rust_coarse_01
+  used for the braziers' iron (models/level.glb)
+- forest_ground_04 by Rob Tuytel, Rico Cilliers: https://polyhaven.com/a/forest_ground_04
+  used for terrain: forest floor (models/ground.glb#ground_forest)
+- mossy_rock by Rob Tuytel: https://polyhaven.com/a/mossy_rock
+  used for terrain: steep ground (models/ground.glb#ground_rock)
+- wooden_crate_01 by James Ray Cock: https://polyhaven.com/a/wooden_crate_01
+  used for crates (models/dressing.glb#crate), decimated
+- treasure_chest by Rico Cilliers: https://polyhaven.com/a/treasure_chest
+  used for the chest by the throne (models/dressing.glb#chest), decimated
+- rock_moss_set_01, rock_moss_set_02 by Kless Gyzen: https://polyhaven.com/a/rock_moss_set_01,
+  https://polyhaven.com/a/rock_moss_set_02
+  used for rocks (models/dressing.glb#rock_a, #rock_b), one piece each, decimated
+- boulder_01 by Rico Cilliers: https://polyhaven.com/a/boulder_01
+  used for boulders (models/dressing.glb#boulder), decimated
+- dead_tree_trunk_02 by Jenelle van Heerden, Rico Cilliers: https://polyhaven.com/a/dead_tree_trunk_02
+  used for fallen trunks (models/dressing.glb#dead_trunk), decimated
+- tree_stump_01 by Rob Tuytel: https://polyhaven.com/a/tree_stump_01
+  used for stumps (models/dressing.glb#stump), decimated
+- dry_branches_medium_01 by Rico Cilliers: https://polyhaven.com/a/dry_branches_medium_01
+  used for fallen branches (models/dressing.glb#branches), one piece, decimated
+- fern_02 by Rob Tuytel, Rico Cilliers: https://polyhaven.com/a/fern_02
+  used for ferns (models/dressing.glb#fern), alpha folded into the colour, alpha-tested
+- grass_medium_01 by Rob Tuytel, Rico Cilliers: https://polyhaven.com/a/grass_medium_01
+  used for grass clumps (models/dressing.glb#grass), one piece, alpha-tested
+- fir_tree_01 by Rob Tuytel, Rico Cilliers: https://polyhaven.com/a/fir_tree_01
+  its bark and twig maps only, on the firs modelled in build_dressing.py (models/dressing.glb#fir_a,
+  #fir_b)

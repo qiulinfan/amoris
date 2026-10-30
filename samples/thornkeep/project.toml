@@ -1,0 +1,51 @@
+name = "Thornkeep"
+rate = 60
+seed = 1
+
+[animation]
+graphs = ["anim/sellsword.anim.json", "anim/brigand.anim.json", "anim/brute.anim.json", "anim/archer.anim.json", "anim/warden.anim.json"]
+
+# The fight's events play at their subject (build_audio.py synthesizes the clips; swings, steps,
+# blows and clangs pick variants in scripts/main.ts).
+[sounds]
+"fight.block" = "audio/block.wav"
+"fight.parry" = "audio/parry.wav"
+"fight.evade" = "audio/roll.wav"
+"fight.roll" = "audio/roll.wav"
+"fight.death" = "audio/death.wav"
+"fight.drink" = "audio/drink.wav"
+"fight.alert" = "audio/horn.wav"
+"fight.lock" = "audio/lock.wav"
+"fight.launch" = "audio/launch.wav"
+"fight.impact" = "audio/impact.wav"
+"fight.phase" = "audio/roar.wav"
+"keep.shrine" = "audio/shrine.wav"
+"keep.freed" = "audio/freed.wav"
+"sfx.swing1" = "audio/swing1.wav"
+"sfx.swing2" = "audio/swing2.wav"
+"sfx.swing3" = "audio/swing3.wav"
+"sfx.hit1" = "audio/hit1.wav"
+"sfx.hit2" = "audio/hit2.wav"
+"sfx.hit3" = "audio/hit3.wav"
+"sfx.clang1" = "audio/clang1.wav"
+"sfx.clang2" = "audio/clang2.wav"
+"sfx.clang3" = "audio/clang3.wav"
+"sfx.step1" = "audio/step1.wav"
+"sfx.step2" = "audio/step2.wav"
+"sfx.step3" = "audio/step3.wav"
+
+[player]
+perception = "perception.json"
+actions = "first_person"
+camera = "game"
+done_event = "keep.freed"
+controls = "WASD move · Mouse look · Shift sprint · LMB swing · E heavy · Space roll · RMB guard (parry on time) · Q lock · 1 bolt · 2 knives · 3 flask · Esc menu"
+buttons = [
+  { name = "dodge", keys = ["Space"] },
+  { name = "block", keys = ["MouseRight"] },
+  { name = "lock", keys = ["KeyQ", "MouseMiddle"] },
+  { name = "heavy", keys = ["KeyE"] },
+  { name = "bolt", keys = ["Digit1"] },
+  { name = "knives", keys = ["Digit2"] },
+  { name = "flask", keys = ["Digit3", "KeyC"] },
+]

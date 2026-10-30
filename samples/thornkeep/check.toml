@@ -1,0 +1,15 @@
+# The engine's determinism, fork and reload checks on the keep. The sellsword walks and runs up the
+# road through the seat's own controls, locks on to the gate's brigands, swings a combo, rolls,
+# guards and swings a heavy blow: the brains, the navigation grid, the animation graphs (montages,
+# notifies, root motion), the blade's swept hits and the camera's spring arm all run.
+[run]
+seeds = [1, 2]
+ticks = 1080
+inputs = "checks/inputs.jsonl"
+
+[fork]
+at = [300, 840]
+ticks = 120
+
+[reload]
+at = [120, 780]
