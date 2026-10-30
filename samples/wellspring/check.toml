@@ -1,0 +1,14 @@
+# The engine's determinism, fork and reload checks on the valley. The keeper walks to the village
+# well through the seat's own controls, takes the first bronze handle and reads the keepers'
+# stone; the water regions run dry until a sluice opens, and the day stays at its first stage.
+[run]
+seeds = [1, 2]
+ticks = 900
+inputs = "checks/inputs.jsonl"
+
+[fork]
+at = [240, 600]
+ticks = 120
+
+[reload]
+at = [120, 480]

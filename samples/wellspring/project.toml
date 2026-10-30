@@ -1,0 +1,17 @@
+name = "Wellspring"
+rate = 60
+seed = 1
+
+[sounds]
+"well.handle" = "audio/handle.wav"
+"well.fit" = "sfx:click"
+"well.turn" = "audio/turn.wav"
+"well.open" = "audio/open.wav"
+"well.reached" = "audio/reached.wav"
+"well.rung" = "audio/bell.wav"
+
+[player]
+perception = "perception.json"
+actions = "first_person"
+done_event = "well.finished"
+controls = "WASD walk · Mouse look · Shift run · Space jump / swim up · Left click use · Right click step off the raft · Esc menu"

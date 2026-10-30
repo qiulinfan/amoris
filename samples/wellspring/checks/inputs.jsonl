@@ -1,0 +1,9 @@
+{"tick": 30, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "set", "controls": {"yaw": -2.2883, "pitch": -0.35, "forward": 1.0}}]}}
+{"tick": 227, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "set", "controls": {"forward": 0.0}}]}}
+{"tick": 237, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "pulse", "control": "primary"}]}}
+{"tick": 257, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "set", "controls": {"yaw": 0.376, "forward": 1.0, "run": true}}]}}
+{"tick": 437, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "set", "controls": {"forward": 0.0, "run": false}}]}}
+{"tick": 457, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "set", "controls": {"yaw": -2.6, "pitch": -0.2}}, {"do": "pulse", "control": "primary"}]}}
+{"tick": 497, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "set", "controls": {"yaw": 0.6, "forward": 1.0}}]}}
+{"tick": 587, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "set", "controls": {"forward": 0.0, "strafe": 1.0}}]}}
+{"tick": 647, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "set", "controls": {"strafe": 0.0}}]}}

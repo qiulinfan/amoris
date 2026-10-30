@@ -1,0 +1,334 @@
+{
+ "observers": [
+  {
+   "name": "player",
+   "doc": "The keeper's own eyes in the valley.",
+   "sight": {
+    "range_m": 160,
+    "fov_deg": 72,
+    "eye_m": {
+     "x": 0,
+     "y": 0,
+     "z": 0
+    },
+    "occlusion": false
+   },
+   "positions": true,
+   "attention_m": 50,
+   "memory_s": 180,
+   "memory_capacity": 48,
+   "event_capacity": 64,
+   "budget_tokens": 400,
+   "instruments": [
+    "position_m",
+    "in_water",
+    "on_raft",
+    "handles_found",
+    "handles_carried",
+    "sluices_open",
+    "river_reached_lake",
+    "bell_rung"
+   ]
+  }
+ ],
+ "instruments": [
+  {
+   "name": "position_m",
+   "doc": "The eye position.",
+   "unit": {
+    "unit": "position"
+   },
+   "precision": 2,
+   "source": {
+    "from": "field",
+    "component": "Transform",
+    "path": "position"
+   }
+  },
+  {
+   "name": "in_water",
+   "doc": "The body overlaps water.",
+   "unit": {
+    "unit": "bool"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Walker",
+    "path": "in_liquid"
+   }
+  },
+  {
+   "name": "on_raft",
+   "doc": "The raft the keeper rides, 0 on foot.",
+   "unit": {
+    "unit": "count"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Walker",
+    "path": "mount"
+   }
+  },
+  {
+   "name": "handles_found",
+   "doc": "Bronze handles found, of three.",
+   "unit": {
+    "unit": "count"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Quest",
+    "path": "found"
+   }
+  },
+  {
+   "name": "handles_carried",
+   "doc": "Handles carried, not yet fitted.",
+   "unit": {
+    "unit": "count"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Quest",
+    "path": "handles"
+   }
+  },
+  {
+   "name": "sluices_open",
+   "doc": "Sluices fully open, of three.",
+   "unit": {
+    "unit": "count"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Quest",
+    "path": "opened"
+   }
+  },
+  {
+   "name": "river_reached_lake",
+   "doc": "The river's water has reached the lake.",
+   "unit": {
+    "unit": "bool"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Quest",
+    "path": "reached"
+   }
+  },
+  {
+   "name": "bell_rung",
+   "doc": "The shrine bell was rung: the end.",
+   "unit": {
+    "unit": "bool"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Quest",
+    "path": "rung"
+   }
+  }
+ ],
+ "kinds": [],
+ "events": [
+  {
+   "kind": "well.handle",
+   "doc": "The keeper took a bronze handle.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": [
+    {
+     "name": "found",
+     "doc": "Handles found.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 1,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "found"
+     }
+    }
+   ]
+  },
+  {
+   "kind": "well.fit",
+   "doc": "A handle was fitted to a sluice wheel.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": [
+    {
+     "name": "sluice",
+     "doc": "The sluice, 0 to 2.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 1,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "sluice"
+     }
+    }
+   ]
+  },
+  {
+   "kind": "well.turn",
+   "doc": "A sluice wheel turned a quarter.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": [
+    {
+     "name": "sluice",
+     "doc": "The sluice.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 1,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "sluice"
+     }
+    },
+    {
+     "name": "turns",
+     "doc": "Its quarter turns, of four.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 1,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "turns"
+     }
+    }
+   ]
+  },
+  {
+   "kind": "well.open",
+   "doc": "A sluice stands fully open.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": [
+    {
+     "name": "opened",
+     "doc": "Sluices open.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 1,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "opened"
+     }
+    }
+   ]
+  },
+  {
+   "kind": "well.reached",
+   "doc": "The river's water reached the lake.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": [
+    {
+     "name": "depth_m",
+     "doc": "The depth at the mouth.",
+     "unit": {
+      "unit": "metres"
+     },
+     "precision": 1,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "depth_m"
+     }
+    }
+   ]
+  },
+  {
+   "kind": "well.raft",
+   "doc": "The keeper boarded the raft.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": []
+  },
+  {
+   "kind": "well.ashore",
+   "doc": "The keeper stepped off the raft.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": []
+  },
+  {
+   "kind": "well.tablet",
+   "doc": "The keeper read a stone.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": [
+    {
+     "name": "tablet",
+     "doc": "Which stone.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 1,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "tablet"
+     }
+    }
+   ]
+  },
+  {
+   "kind": "well.rung",
+   "doc": "The shrine bell rang.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": []
+  },
+  {
+   "kind": "well.finished",
+   "doc": "The quest is done.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": [
+    {
+     "name": "time_s",
+     "doc": "Its time.",
+     "unit": {
+      "unit": "seconds"
+     },
+     "precision": 1,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "time_s"
+     }
+    }
+   ]
+  }
+ ]
+}

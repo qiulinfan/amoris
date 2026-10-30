@@ -24,6 +24,10 @@ site/demos/stress-*/
 samples/town-walk/models/third-party/
 samples/town-walk/lighting/town-probes.json
 
+# Blender working files are kept locally: each game's build_*.py scripts regenerate its models.
+samples/*/art/*.blend
+samples/*/art/*.blend1
+
 # Personal environment files (at every depth)
 .DS_Store
 .vscode/

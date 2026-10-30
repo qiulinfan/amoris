@@ -1,0 +1,45 @@
+Wellspring: credits and licences
+
+Original work (this repository's licence): the game rules (scripts/), the scene and its generators
+(build_scene.py, terrain.py, scatter.py, sky.py), every building and prop modelled in
+build_structures.py (sluice houses, gates, wheels, aqueduct, shrine, bell, raft, jetty, huts, well,
+trough, jars, steles, cairns, handles, lanterns), the grass tufts and patches and the game-ready
+conversions in build_models.py, the painted grass card and clouds (build_textures.py), the far
+mountains (terrain.py), and all sounds (build_audio.py, synthesized).
+
+Third-party sources, all from Poly Haven (https://polyhaven.com), licensed CC0 1.0
+(https://polyhaven.com/license, https://creativecommons.org/publicdomain/zero/1.0/).
+Fetched with fetch_assets.py from the Poly Haven API; not committed as sources.
+
+- rock_face_03 by Dario Barresi, Rico Cilliers: https://polyhaven.com/a/rock_face_03
+  used for fetched for the ground; no layer uses it now
+- grass_ground by Charlotte Baglioni: https://polyhaven.com/a/grass_ground
+  used for terrain: dry grassland (models/ground.glb#ground_grass)
+- dry_ground_rocks by Rob Tuytel: https://polyhaven.com/a/dry_ground_rocks
+  used for terrain: dry stony earth, moderate slopes and the lake shore (models/ground.glb#ground_dry)
+- dry_riverbed_rock by Amal Kumar: https://polyhaven.com/a/dry_riverbed_rock
+  used for the ground material set ground_riverbed (models/ground.glb), kept for authoring
+- namaqualand_boulder_02 by Greg Zaal, Rico Cilliers: https://polyhaven.com/a/namaqualand_boulder_02
+  used for boulders and seam scree (models/rocks.glb#boulder, models/scree.glb), decimated
+- namaqualand_cliff_02 by Dario Barresi, Rico Cilliers: https://polyhaven.com/a/namaqualand_cliff_02
+  used for cliff outcrops (models/rocks.glb#cliff), decimated
+- searsia_lucida by James Ray Cock, Jenelle van Heerden: https://polyhaven.com/a/searsia_lucida
+  used for shrubs (models/plants.glb#searsia_*), decimated, leaves alpha-tested
+- wild_rooibos_bush by James Ray Cock, Jenelle van Heerden: https://polyhaven.com/a/wild_rooibos_bush
+  used for shrubs (models/plants.glb#rooibos_*), leaves alpha-tested
+- othonna_cerarioides by James Ray Cock, Jenelle van Heerden: https://polyhaven.com/a/othonna_cerarioides
+  used for shrubs (models/plants.glb#othonna_*), decimated, leaves alpha-tested
+- quiver_tree_02 by Dario Barresi, Rico Cilliers: https://polyhaven.com/a/quiver_tree_02
+  used for quiver trees (models/plants.glb#quiver), decimated
+- rustic_stone_wall_02 by Amal Kumar: https://polyhaven.com/a/rustic_stone_wall_02
+  used for dry-stone walls of the huts, sluice piers, well and cairns (models/structures.glb)
+- sandstone_blocks_05 by Rob Tuytel: https://polyhaven.com/a/sandstone_blocks_05
+  used for ashlar of the aqueduct, shrine, lintels, steles and trough (models/structures.glb)
+- medieval_blocks_03 by Rob Tuytel: https://polyhaven.com/a/medieval_blocks_03
+  used for the shrine floor (models/structures.glb)
+- weathered_planks by Dario Barresi, Dimitrios Savva: https://polyhaven.com/a/weathered_planks
+  used for sluice gates, decks, raft, jetty, roof beams, bell frame (models/structures.glb)
+- rust_coarse_01 by Dimitrios Savva, Rico Cilliers: https://polyhaven.com/a/rust_coarse_01
+  used for iron wheels, grooves, lantern frames (models/structures.glb)
+- aerial_rocks_04 by Rob Tuytel: https://polyhaven.com/a/aerial_rocks_04
+  used for terrain: steep ground, warm-tinted, one tile per 24 m (models/ground.glb#ground_rock)
