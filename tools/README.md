@@ -16,6 +16,8 @@ does and how to run it.
 | `eval/` | Agent evaluations and their reports, with their offline tests (`python3 -m unittest discover -s tools/eval`) |
 | `neural/` | Training of neural assets; `gi/`'s tests run in its uv project (`cd tools/neural/gi && uv run python -m unittest test_train`) |
 | `splats/` | Gaussian-splat comparisons |
+| `capture/` | Continuous per-window screen recording on Windows (Windows Graphics Capture through ffmpeg) for recorded development sessions; its AGENTS.md says how |
+| `blender/` | A bridge that runs Python inside a running Blender GUI from another process (`gui_bridge.py`, `send.py`), so modelling happens in the window being watched |
 | `tests/` | The tools' own tests (`python3 -m unittest discover -s tools/tests`) |
 | `vscode/` | The VS Code attach configuration for the script debugger |
 
