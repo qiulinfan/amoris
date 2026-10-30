@@ -96,8 +96,92 @@ macro_rules! pulse {
     };
 }
 
+/// Writes the body's `Buttons` (inserting them), `pressed` or-ed into what this tick has.
+fn with_buttons(
+    world: &mut World,
+    body: EntityId,
+    f: impl FnOnce(&mut amoris_physics::Buttons),
+) -> Result<(), Problem> {
+    let e = amoris_sim::entity::require(world, body)?;
+    if world.get::<amoris_physics::Buttons>(e).is_none() {
+        world
+            .entity_mut(e)
+            .insert(amoris_physics::Buttons::default());
+    }
+    if let Some(mut b) = world.get_mut::<amoris_physics::Buttons>(e) {
+        let mut next = *b;
+        f(&mut next);
+        if *b != next {
+            *b = next;
+        }
+    }
+    Ok(())
+}
+
+fn mask(v: Option<&ControlValue>) -> Result<u32, Problem> {
+    let x = number(v)?;
+    amoris_sim::num::to_u32(x)
+        .map_err(|_| super::state::internal("first_person", "a button mask out of range"))
+}
+
+fn read_buttons(
+    world: &World,
+    body: EntityId,
+    f: fn(&amoris_physics::Buttons) -> u32,
+) -> Option<ControlValue> {
+    let e = amoris_sim::entity::entity(world, body)?;
+    Some(ControlValue::Number(f64::from(
+        world.get::<amoris_physics::Buttons>(e).map_or(0, f),
+    )))
+}
+
+/// The game's own buttons (`[player] buttons`, animation.md 6): bit i is the i-th button.
+fn button_controls() -> Vec<ControlDef> {
+    let kind = ControlKind::Axis {
+        min: 0.0,
+        max: 65535.0,
+        default: 0.0,
+    };
+    vec![
+        ControlDef {
+            name: "held".into(),
+            doc: "The game's buttons held now, a bit each (the project's [player] buttons, in order).".into(),
+            kind: kind.clone(),
+            channel: "body".into(),
+            binding: ControlBinding::Engine {
+                write: |w, b, v| {
+                    let m = mask(v)?;
+                    with_buttons(w, b, |x| x.held = m)
+                },
+                read: |w, b| read_buttons(w, b, |x| x.held),
+                writable: has_walker,
+            },
+        },
+        ControlDef {
+            name: "pressed".into(),
+            doc: "The game's buttons pressed since the last tick, a bit each; or-ed in, cleared after the tick.".into(),
+            kind,
+            channel: "body".into(),
+            binding: ControlBinding::Engine {
+                write: |w, b, v| {
+                    let m = mask(v)?;
+                    with_buttons(w, b, |x| x.pressed |= m)
+                },
+                read: |w, b| read_buttons(w, b, |x| x.pressed),
+                writable: has_walker,
+            },
+        },
+    ]
+}
+
 /// The first-person controls (voxels.md 6).
 pub fn controls() -> Vec<ControlDef> {
+    let mut all = base_controls();
+    all.extend(button_controls());
+    all
+}
+
+fn base_controls() -> Vec<ControlDef> {
     vec![
         axis!(
             "forward",

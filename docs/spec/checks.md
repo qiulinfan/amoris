@@ -429,9 +429,10 @@ For each seed and each fork point F, with K = `[fork] ticks` (charter 3.7):
 
 1. **Record**: a run with spec-persist's recorder on writes a replay file (the inputs as applied,
    per-tick hashes, the script bundle hash and the engine version, charter 7 item 13).
-2. **Verify in a fresh process**: `amoris replay --verify <file> --json`, which is spec-persist's
-   `verify` (replay.md 3.4), replays it; every tick's hash equals the recorded one, else
-   `replay.diverged {divergence}`, which names the first diverging tick (charter 3.3).
+2. **Verify in a fresh process**: `amoris replay --verify <file> --project <dir> --json`, which is
+   spec-persist's `verify` (replay.md 3.4), replays it with the project's animation library
+   (animation.md 7b); every tick's hash equals the recorded one, else `replay.diverged
+   {divergence}`, which names the first diverging tick (charter 3.3).
 3. **Localization**: the check writes a copy of the recording without the first recorded write at or
    after tick `ticks / 2` (an input of tick T, applied at boundary T-1) and verifies the copy; a
    divergence reported before T is `replay.divergence_too_early {reported, expected_at_least}`,

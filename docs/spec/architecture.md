@@ -430,8 +430,8 @@ application in `editor/`, specified in [editor.md](editor.md).
   `--json`); `play <project>` (`--seed`, `--speed`, `--walk` or `--fly`, `--vsync` or `--no-vsync`,
   `--bench`, `--width`, `--height`, `--capture` with `--capture-after`, `--mute`; `play start|stop`
   is the client's Play); `check <project>` (`--seeds`, `--only`, `--chain-only`,
-  `--snapshot-at <tick>`, `--out`, `--json`; checks.md 8.2); `replay --verify <file>` (checks.md
-  8.4); `hashes <project>` (11, choice 10); `version`; `serve <project>` (`--port`, `--editor`,
+  `--snapshot-at <tick>`, `--out`, `--json`; checks.md 8.2); `replay --verify <file>` (`--project
+  <dir>`: its animation library, animation.md 7b; checks.md 8.4); `hashes <project>` (11, choice 10); `version`; `serve <project>` (`--port`, `--editor`,
   `--seed`); `mcp <project>` (`--seed`, `--own`, `--seat`); and the client commands of server.md 8.
   Planned, not built: `new` (`--from <fixture>`, `--params <file>`; charter 5.4 has no scaffolding),
   `bench <workload>` (budgets.md 7), `gen` (`--out <dir>`, `--locks <project>`; checks.md 5.4),
@@ -550,27 +550,31 @@ application in `editor/`, specified in [editor.md](editor.md).
   their subject; clips from project files (wav, ogg, mp3, flac) or synthesized `sfx:` presets
   (`synth`); and the water's sound, bubbles rung from the spray's tally of its breaking, falling and
   splashing (`water`, water.md 59).
-- **Exports**: `Audio` (built by the native window, which hands it the render feed's `AudioView`s,
-  the listener and the game's sound events), `synth`, `water`.
+- **Exports**: `Audio` (the `playback` feature; built by the native window, which hands it the
+  render feed's `AudioView`s, the listener and the game's sound events), `synth`, `water`.
 - **Must not**: depend on any crate but `amoris-assets`: it reads the world only through the render
   feed (5). Without an audio device it skips everything silently.
-- **wasm32**: native only (kira through `cpal`); the browser plays no sound yet (charter 4.1's
-  WebAudio is planned).
+- **wasm32**: without `playback` (kira through `cpal`, native only) the crate is the synthesis
+  alone, `synth` and `water::WaterSynth`, which `amoris-viewport` builds for the player page. The
+  page plays the game's sound with its own WebAudio (`web/player.js`, web-export.md 3; charter,
+  2026-10-29).
 
 ### 4.20 `amoris-viewport`: the renderer in the browser
 
 - **Owns**: `amoris-render` compiled to WebAssembly for a page: the `wasm-bindgen` class `Viewport`,
   which draws a host's or the browser game's render feed on a canvas with WebGPU (`push_frame`,
   `render`), takes the model assets the page fetches as bytes, and answers the page's camera,
-  picking, overlays, selection, gizmo and first-person look. The page's glue
+  picking, overlays, selection, gizmo and first-person look, and what the player page's WebAudio
+  plays (`audio`, `position_of`, `sfx`, `water_sound`, through `amoris-audio`'s synthesis). The
+  page's glue
   (`web/viewport/amoris_web.js`, exporting `createViewport`, and `web/viewport/viewport.js`) owns
   the socket, the fetches and the animation-frame loop (editor.md 5).
 - **Build**: `tools/build_viewport.sh` builds it into `web/viewport/pkg`, which is committed: the
   editor's `/wasm/` (host-protocol.md 1), the browser pages and `cargo xtask export-web` serve that
   package. A change to the render feed's `FORMAT` or to the resident water's kernel key rebuilds and
   commits it in the same commit (AGENTS.md, Building), or viewports refuse what the host sends.
-- **Must not**: depend on any crate but `amoris-assets` and `amoris-render`: it reads the world only
-  through the render feed (5).
+- **Must not**: depend on any crate but `amoris-assets`, `amoris-render` and `amoris-audio` (its
+  synthesis): it reads the world only through the render feed (5).
 - **wasm32**: the `cdylib` is built for `wasm32-unknown-unknown`; natively the crate builds as an
   `rlib` of its target-independent part (`PageAssets`, its asset bridge).
 
@@ -587,6 +591,7 @@ flowchart BT
     interface[amoris-interface] --> sim
     interface --> physics
     script[amoris-script] --> sim
+    script --> assets
     script --> physics
     script --> interface
     link[amoris-link] --> sim
@@ -595,7 +600,7 @@ flowchart BT
     check[amoris-check] --> sim & persist & runtime & link
     render[amoris-render] --> assets
     audio[amoris-audio] --> assets
-    viewport[amoris-viewport] --> assets & render
+    viewport[amoris-viewport] --> assets & render & audio
     mcp[amoris-mcp] --> sim & link
     server[amoris-server] --> sim & link & mcp
     debug[amoris-debug] --> script & link
@@ -617,13 +622,13 @@ of every crate and is left out of the list and of the drawing's other arrows:
 | `amoris-persist` | sim | game | yes |
 | `amoris-physics` | sim, assets | game | yes |
 | `amoris-interface` | sim, physics | game | yes |
-| `amoris-script` | sim, physics, interface | game | yes (C through clang, section 8.1) |
+| `amoris-script` | sim, assets, physics, interface | game | yes (C through clang, section 8.1) |
 | `amoris-link` | sim, persist | link | yes |
 | `amoris-runtime` | sim, assets, persist, physics, interface, script, link | game | yes (without `GameThread`) |
 | `amoris-check` | sim, persist, runtime, link | game | yes |
 | `amoris-render` | assets | presenter | yes (WebGPU backend) |
-| `amoris-audio` | assets | presenter | no |
-| `amoris-viewport` | assets, render | presenter | yes |
+| `amoris-audio` | assets | presenter | yes (without `playback`: the synthesis alone) |
+| `amoris-viewport` | assets, render, audio | presenter | yes |
 | `amoris-mcp` | sim, link | tool | no |
 | `amoris-server` | sim, link, mcp | tool | no |
 | `amoris-debug` | script, link | tool | no |
@@ -638,7 +643,8 @@ What the groups mean:
   is headless too: it is what the tools and the app crates share with the game thread.
 - **presenter** crates read the world only through the render feed that `amoris-assets` defines
   (`amoris_assets::frame`), never a snapshot or the runtime, so `amoris-render` and `amoris-audio`
-  need no edge but assets, and `amoris-viewport` adds the renderer it compiles for the browser.
+  need no edge but assets, and `amoris-viewport` adds the renderer it compiles for the browser and
+  the audio crate's synthesis.
   `amoris-render` also holds the wgpu kernels of GPU water. They compute world state behind the
   service interface of `amoris-physics` (the opening of this file), and the app crates install
   them, so the edges run from `amoris-app` and `amoris-web` to the renderer and the runtime, never
@@ -790,6 +796,7 @@ compiler, and master found that an arm64 build fused `a * b + c` where WebAssemb
 | assets | `lod` | `import`, `amoris-render` | meshoptimizer: LOD chains and GPU vertex order (docs/spec/lod.md) |
 | render | `window` (default) | `amoris-app` | the native window's winit runner (`amoris_render::app`) |
 | render | `import` (default) | `amoris-app`, `amoris-viewport` | assets' `import` |
+| audio | `playback` | `amoris-app` | kira playback (`Audio`); without it the synthesis alone |
 | script | `transpile` | runtime's `transpile` | oxc in process |
 | runtime | `transpile` | `amoris-app`; check's `native`; the dev-dependencies of check and web | script's `transpile`: projects load from their TypeScript sources |
 | runtime | `thread` | `amoris-app` | `GameThread` (std threads; native) |
@@ -935,9 +942,10 @@ step can confirm it or change the layout.
    web size.
 5. **The environment interface for reinforcement learning**: a later crate (`amoris-env`, Python
    bindings over `Game`'s synchronous API), outside slice 0.
-6. **Audio**: closed. `amoris-audio` (4.19) is a native-only presenter that reads the render feed:
-   the `AudioSource` components, sound events with the project's `[sounds]` table, and the water's
-   sound.
+6. **Audio**: closed. `amoris-audio` (4.19) is a presenter that reads the render feed: the
+   `AudioSource` components, sound events with the project's `[sounds]` table, and the water's
+   sound, played by kira natively; the player page plays them with WebAudio from the viewport's
+   build of its synthesis (charter, 2026-10-29).
 7. **Slice 1: `Transform` and the physics components are in `amoris-physics`.** `Transform`,
    `Velocity`, `RigidBody`, `Collider`, `ExternalForce`, `Floater`, `Boat`, `Sail`, `Hull`, `Sea`
    and `Wind` are declared there, since `amoris-sim` had no `Transform` when physics was built and

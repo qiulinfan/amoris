@@ -252,6 +252,11 @@ fn island_radius(cx: &FactCx<'_>) -> Option<FactValue> {
         Shape::TriMesh { vertices, .. } => {
             vertices.iter().map(|p| horizontal(*p)).fold(0.0, math::max)
         }
+        s @ Shape::HeightField { .. } => s
+            .heightfield_points()
+            .iter()
+            .map(|p| horizontal(*p))
+            .fold(0.0, math::max),
         Shape::Compound { parts } => parts
             .iter()
             .map(|p| horizontal(p.position) + part_reach(&p.shape))

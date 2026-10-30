@@ -5,6 +5,10 @@
 // `player.act` controls and pulses of the seat, sent as the local human player. The camera is the
 // walker's, turned at once by the page's own look (the viewport's `first_person`).
 //
+// The page plays the game's sound with WebAudio as the native window plays it with amoris-audio:
+// the world's sound sources, the sound events (`sound`, or those the project's `[sounds]` names)
+// at their subjects and the water's own sound, with the viewport's `sfx:` presets and water synth.
+//
 // `cargo xtask export-web <project>` copies this page as index.html beside the module, the viewport
 // and the project's web package in game/; `?package=URL` loads another package.
 import { loadModule, start } from "./amoris.js";
@@ -60,6 +64,10 @@ class Input {
     this.slot = null;
     this.wheel = 0;
     this.slotSteps = 0;
+    // The game's own buttons (animation.md 6): mouse buttons held, and every key or button
+    // pressed since the last frame, by name.
+    this.mouse = new Set();
+    this.pressed = [];
     addEventListener("keydown", (e) => {
       if (e.code === "Escape" && this.unlocked) {
         this.release();
@@ -67,6 +75,7 @@ class Input {
         return;
       }
       if (!this.captured()) return;
+      if (!e.repeat) this.pressed.push(e.code);
       this.keys.add(e.code);
       if (e.code === "Space" && !e.repeat) this.jump = true;
       const digit = /^Digit([1-9])$/.exec(e.code);
@@ -74,8 +83,10 @@ class Input {
       if (e.code !== "Escape" && !e.metaKey && !e.ctrlKey) e.preventDefault();
     });
     addEventListener("keyup", (e) => this.keys.delete(e.code));
+    addEventListener("mouseup", (e) => this.mouse.delete(MOUSE[e.button]));
     addEventListener("blur", () => {
       this.keys.clear();
+      this.mouse.clear();
       if (this.unlocked) this.release();
     });
     document.addEventListener("pointerlockchange", () => {
@@ -85,6 +96,10 @@ class Input {
     });
     canvas.addEventListener("mousedown", (e) => {
       if (!this.captured()) return;
+      if (MOUSE[e.button]) {
+        this.mouse.add(MOUSE[e.button]);
+        this.pressed.push(MOUSE[e.button]);
+      }
       if (e.button === 0) {
         this.dragged = false;
         if (!this.unlocked) this.primary = true;
@@ -160,6 +175,8 @@ class Input {
       rise: captured && this.key("Space"),
       jump: this.jump, primary: this.primary, secondary: this.secondary,
       slot: this.slot, slotSteps: this.slotSteps, dx: this.dx, dy: this.dy,
+      held: captured ? [...this.keys, ...this.mouse] : [],
+      pressed: captured ? this.pressed.splice(0) : (this.pressed.length = 0, []),
     };
     this.jump = this.primary = this.secondary = false;
     this.slot = null;
@@ -169,10 +186,24 @@ class Input {
   }
 }
 
+/** Mouse buttons by `MouseEvent.button`, as a game's buttons name them. */
+const MOUSE = ["MouseLeft", "MouseMiddle", "MouseRight"];
+
+/** The mask of the game's buttons (each a list of key names) any of whose keys are in `names`. */
+function buttonMask(buttons, names) {
+  let m = 0;
+  buttons.slice(0, 16).forEach((keys, i) => {
+    if (keys.some((k) => names.includes(k))) m |= 1 << i;
+  });
+  return m;
+}
+
 /** The seat: each frame's input as `player.act` actions, sent when something changed. */
 class Seat {
-  constructor(amoris) {
+  constructor(amoris, buttons = []) {
     this.amoris = amoris;
+    this.buttons = buttons;
+    this.held = 0;
     this.sent = null;
     this.slot = 0;
     this.acts = 0;
@@ -199,12 +230,189 @@ class Seat {
         if (on) actions.push({ do: "pulse", control });
       }
     }
+    if (this.buttons.length) {
+      const held = buttonMask(this.buttons, input.held);
+      if (held !== this.held) {
+        this.held = held;
+        actions.push({ do: "set", controls: { held } });
+      }
+      const pressed = buttonMask(this.buttons, input.pressed);
+      if (pressed) actions.push({ do: "set", controls: { pressed } });
+    }
     if (!actions.length) return;
     this.acts++;
     this.amoris.command("player.act", { actions }, PLAYER).catch((e) => {
       this.refused++;
       console.warn("player.act refused:", e && e.message);
     });
+  }
+}
+
+/** An event's data as plain JSON: the worker streams amoris-sim's `PlainData` in its serde form
+ *  (`"Null"`, `{"Number": 1}`, `{"Object": [[key, value], ...]}`). */
+function plain(d) {
+  if (d === null || typeof d !== "object") return null;
+  if ("Object" in d) return Object.fromEntries(d.Object.map(([k, v]) => [k, plain(v)]));
+  if ("Array" in d) return d.Array.map(plain);
+  return d.Bool ?? d.Number ?? d.String ?? null;
+}
+
+/** The game's sound (crates/amoris-audio's `Audio`, in WebAudio). Silent until the first capture,
+ *  a user gesture, starts its context. */
+class Sound {
+  constructor(base, sounds) {
+    this.base = base;
+    this.sounds = sounds || {};
+    this.ctx = null;
+    this.clips = new Map(); // clip -> Promise<AudioBuffer | null>
+    this.sources = new Map(); // AudioSource id -> {clip, looped, node, gain, panner}
+    this.queue = [];
+    this.waterAt = 0;
+    this.played = 0;
+  }
+
+  start() {
+    if (!this.ctx) {
+      try {
+        this.ctx = new AudioContext({ latencyHint: "interactive" });
+      } catch (e) {
+        console.warn("no audio:", e.message);
+        return;
+      }
+      this.out = this.ctx.createDynamicsCompressor();
+      this.out.connect(this.ctx.destination);
+    }
+    this.ctx.resume().catch(() => {});
+  }
+
+  suspend() { this.ctx?.suspend().catch(() => {}); }
+
+  /** The clip an event plays: `sound`'s own, or the `[sounds]` entry for its name or `prefix.*`. */
+  clipOf(name, data) {
+    if (name === "sound") return typeof data?.clip === "string" ? data.clip : null;
+    if (this.sounds[name]) return this.sounds[name];
+    for (const [k, v] of Object.entries(this.sounds)) {
+      if (k.endsWith(".*") && name.startsWith(k.slice(0, -1))) return v;
+    }
+    return null;
+  }
+
+  buffer(raw, clip) {
+    if (!this.clips.has(clip)) {
+      let made;
+      if (clip.startsWith("sfx:")) {
+        const samples = raw.constructor.sfx(clip.slice(4));
+        let b = null;
+        if (samples.length) {
+          b = this.ctx.createBuffer(1, samples.length, raw.constructor.sfx_rate());
+          b.copyToChannel(samples, 0);
+        }
+        made = Promise.resolve(b);
+      } else {
+        made = fetch(new URL(clip, this.base))
+          .then((r) => { if (!r.ok) throw new Error(`${r.status}`); return r.arrayBuffer(); })
+          .then((bytes) => this.ctx.decodeAudioData(bytes));
+      }
+      this.clips.set(clip, made.catch((e) => { console.warn(`sound ${clip}:`, e.message); return null; }));
+    }
+    return this.clips.get(clip);
+  }
+
+  /** A gain into the mix, behind a panner when the sound has a place: kira's spatial track, heard
+   *  fully within 2 m and fading linearly to nothing at 120 m. */
+  voice(volume, at) {
+    const gain = this.ctx.createGain();
+    gain.gain.value = Math.max(0, volume);
+    let panner = null;
+    if (at) {
+      panner = new PannerNode(this.ctx, {
+        panningModel: "HRTF", distanceModel: "linear", refDistance: 2, maxDistance: 120, rolloffFactor: 1,
+        positionX: at[0], positionY: at[1], positionZ: at[2],
+      });
+      gain.connect(panner).connect(this.out);
+    } else gain.connect(this.out);
+    return { gain, panner };
+  }
+
+  events(records) {
+    for (const r of records) {
+      const e = r.event || {};
+      const data = plain(e.data) || {};
+      const clip = this.clipOf(e.kind, data);
+      if (clip) this.queue.push({ clip, subject: e.subject ?? null, volume: data.volume ?? 1, pitch: data.pitch ?? 1 });
+    }
+  }
+
+  /** Each drawn frame: the listener at the camera, the sources in line with the world's, the
+   *  events since, and the water's sound scheduled ahead. */
+  frame(raw) {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== "running") { this.queue.length = 0; return; }
+    const view = JSON.parse(raw.audio());
+    const l = ctx.listener;
+    const t = ctx.currentTime;
+    l.positionX.setValueAtTime(view.position[0], t);
+    l.positionY.setValueAtTime(view.position[1], t);
+    l.positionZ.setValueAtTime(view.position[2], t);
+    l.forwardX.setValueAtTime(view.forward[0], t);
+    l.forwardY.setValueAtTime(view.forward[1], t);
+    l.forwardZ.setValueAtTime(view.forward[2], t);
+    l.upX.setValueAtTime(view.up[0], t);
+    l.upY.setValueAtTime(view.up[1], t);
+    l.upZ.setValueAtTime(view.up[2], t);
+    const live = new Map(view.sources.filter((s) => s.playing).map((s) => [s.id, s]));
+    for (const [id, p] of this.sources) {
+      const s = live.get(id);
+      if (s && s.clip === p.clip && s.looped === p.looped) continue;
+      p.node?.stop();
+      p.gain.disconnect();
+      this.sources.delete(id);
+    }
+    for (const [id, s] of live) {
+      let p = this.sources.get(id);
+      if (!p) {
+        p = { clip: s.clip, looped: s.looped, node: null, ...this.voice(s.volume, s.spatial ? s.position : null) };
+        this.sources.set(id, p);
+        this.buffer(raw, s.clip).then((b) => {
+          if (!b || this.sources.get(id) !== p) return;
+          p.node = new AudioBufferSourceNode(ctx, { buffer: b, loop: s.looped, playbackRate: Math.max(0.01, s.pitch) });
+          p.node.connect(p.gain);
+          p.node.start();
+        });
+      }
+      p.gain.gain.setTargetAtTime(Math.max(0, s.volume), t, 0.05);
+      p.node?.playbackRate.setTargetAtTime(Math.max(0.01, s.pitch), t, 0.05);
+      if (p.panner) {
+        p.panner.positionX.setValueAtTime(s.position[0], t);
+        p.panner.positionY.setValueAtTime(s.position[1], t);
+        p.panner.positionZ.setValueAtTime(s.position[2], t);
+      }
+    }
+    for (const q of this.queue.splice(0)) {
+      const at = q.subject == null ? null : raw.position_of(q.subject);
+      const v = this.voice(q.volume, at && at.length ? at : null);
+      this.buffer(raw, q.clip).then((b) => {
+        if (!b) return v.gain.disconnect();
+        const node = new AudioBufferSourceNode(ctx, { buffer: b, playbackRate: Math.max(0.01, q.pitch) });
+        node.connect(v.gain);
+        node.onended = () => v.gain.disconnect();
+        node.start();
+        this.played++;
+      });
+    }
+    // The water: 2048-frame stereo blocks, kept 0.1 to 0.2 s ahead of the audio clock.
+    const n = 2048, ahead = n / ctx.sampleRate;
+    if (this.waterAt < t + 0.02) this.waterAt = t + 0.05;
+    while (this.waterAt < t + 0.1 + ahead) {
+      const pcm = raw.water_sound(n, ctx.sampleRate);
+      const b = ctx.createBuffer(2, n, ctx.sampleRate);
+      const left = b.getChannelData(0), right = b.getChannelData(1);
+      for (let i = 0; i < n; i++) { left[i] = pcm[2 * i]; right[i] = pcm[2 * i + 1]; }
+      const node = new AudioBufferSourceNode(ctx, { buffer: b });
+      node.connect(this.out);
+      node.start(this.waterAt);
+      this.waterAt += ahead;
+    }
   }
 }
 
@@ -219,7 +427,8 @@ export async function main() {
     loadModule(),
     fetchBytes(packageUrl, (n) => { if (total) progress(n / total); }),
   ]);
-  const { name, player_camera: camera, player_controls: controls } = JSON.parse(new TextDecoder().decode(pkg));
+  const { name, player_camera: camera, player_controls: controls, player_buttons: buttons, sounds } =
+    JSON.parse(new TextDecoder().decode(pkg));
   const gameCamera = camera === "game";
   if (controls) $("help").textContent = controls;
   document.title = name;
@@ -228,12 +437,19 @@ export async function main() {
   const amoris = start(module, pkg, { pacing: gameCamera ? "stepped" : { real_time: { speed: 1 } } });
   const canvas = $("view");
   const input = new Input(canvas);
-  const seat = new Seat(amoris);
+  const seat = new Seat(amoris, buttons || []);
+  const sound = new Sound(new URL(".", packageUrl), sounds);
+  amoris.onEvents((records) => sound.events(records));
   const state = (window.amorisPlayer = {
     loaded_ms: 0, ready_ms: 0, frames: 0, look: null, stats: null, samples: [],
-    amoris, input, seat, gameCamera,
+    amoris, input, seat, gameCamera, sound,
     /** Captures without pointer lock (the check page, where headless Chrome has no lock). */
-    forceCapture(on = true) { input.forced = on; return captureChanged(); },
+    forceCapture(on = true) {
+      input.forced = on;
+      if (on) sound.start();
+      else sound.suspend();
+      return captureChanged();
+    },
   });
   let ready = false;
   let viewReady = false;
@@ -284,6 +500,8 @@ export async function main() {
     return pacing;
   };
   input.onChange = () => {
+    if (input.captured()) sound.start();
+    else sound.suspend();
     captureChanged().catch((e) => console.warn("player pacing:", e.message));
   };
   const capture = () => {
@@ -302,6 +520,7 @@ export async function main() {
       const frame = input.take();
       const look = api.raw.first_person(frame.dx, frame.dy, frame.captured, gameCamera);
       state.look = look.length ? Array.from(look) : null;
+      sound.frame(api.raw);
       if (!state.look) return;
       seat.frame(frame, state.look);
     },

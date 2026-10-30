@@ -248,6 +248,10 @@ pub struct MaterialData {
     pub alpha_mode: AlphaMode,
     pub alpha_cutoff: f32,
     pub double_sided: bool,
+    /// KHR_texture_transform's scale on the base color texture, which every texture of the
+    /// material then takes (uniform: the x and y scales' mean); 1 without one.
+    #[serde(default = "unit_scale")]
+    pub uv_scale: f32,
 }
 
 impl Default for MaterialData {
@@ -271,6 +275,7 @@ impl Default for MaterialData {
             alpha_mode: AlphaMode::Opaque,
             alpha_cutoff: 0.5,
             double_sided: false,
+            uv_scale: 1.0,
         }
     }
 }

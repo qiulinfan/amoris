@@ -89,7 +89,8 @@ struct Material {
     roughness: f32,
     alpha_cutoff: f32,
     flags: u32,              // 1: alpha mask, 2: double sided, 4: unlit, 8: neural texture,
-                             // 16: alpha-blended (glTF BLEND, or a look's alpha below 1)
+                             // 16: alpha-blended (glTF BLEND, or a look's alpha below 1),
+                             // 32: a terrain layer (forward.wgsl `terrain_kept`)
     neural: u32,             // the neural texture's descriptor word (neural.rs)
     // Layers in the texture arrays; NO_TEXTURE when absent.
     base_color_tex: u32,
@@ -103,7 +104,7 @@ struct Material {
     transmission: f32,
     ior: f32,
     transmission_tex: u32,
-    _pad: u32,
+    uv_scale: f32,           // KHR_texture_transform's scale: every texture lookup's uv times it
 };
 
 // A point or spot light (64 bytes).

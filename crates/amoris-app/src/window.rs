@@ -116,7 +116,7 @@ impl Host for Play {
 
     fn walk_input(&mut self, input: WalkInput) {
         if let Some(walk) = self.walk.as_mut() {
-            walk.input = input;
+            walk.input = input.clone();
         }
         if let Some(seat) = self.seat.as_mut() {
             seat.take(input);
@@ -226,9 +226,16 @@ fn play_inner(raw: &[String]) -> Result<Outcome, Problem> {
             .player
             .as_ref()
             .is_some_and(|p| p.camera == amoris_runtime::player::PlayerCamera::Game);
+        let buttons = project
+            .manifest
+            .player
+            .as_ref()
+            .map(|p| p.buttons.iter().map(|b| b.keys.clone()).collect())
+            .unwrap_or_default();
         Some(SeatWalk::new(
             game.client(amoris_link::Source::Player(0))?,
             game_camera,
+            buttons,
         ))
     } else {
         None
@@ -295,10 +302,27 @@ struct SeatWalk {
     status: String,
     /// The game's rules pose the scene's active camera; the mouse still steers the seat.
     game_camera: bool,
+    /// The keys of each of the game's buttons (`[player] buttons`), and the held mask last sent.
+    buttons: Vec<Vec<String>>,
+    held: u32,
+}
+
+/// The mask of the game's buttons any of whose keys are among `names`.
+fn button_mask(buttons: &[Vec<String>], names: &[String]) -> u32 {
+    buttons
+        .iter()
+        .enumerate()
+        .take(16)
+        .filter(|(_, keys)| keys.iter().any(|k| names.contains(k)))
+        .fold(0, |m, (i, _)| m | (1 << i))
 }
 
 impl SeatWalk {
-    fn new(client: amoris_link::GameClient, game_camera: bool) -> SeatWalk {
+    fn new(
+        client: amoris_link::GameClient,
+        game_camera: bool,
+        buttons: Vec<Vec<String>>,
+    ) -> SeatWalk {
         SeatWalk {
             client,
             input: WalkInput::default(),
@@ -308,6 +332,8 @@ impl SeatWalk {
             sent: None,
             status: "Click to play — Esc exits".into(),
             game_camera,
+            buttons,
+            held: 0,
         }
     }
 
@@ -321,6 +347,7 @@ impl SeatWalk {
         p.slot_steps += input.slot_steps;
         p.look[0] += input.look[0];
         p.look[1] += input.look[1];
+        p.pressed.extend(input.pressed.iter().cloned());
         self.input = input;
     }
 
@@ -336,10 +363,20 @@ impl SeatWalk {
             return;
         }
         let mut camera = r.camera();
-        let (mut yaw, mut pitch) = self.look.unwrap_or_else(|| {
+        let seen = {
             let f = camera.rotation * Vec3::NEG_Z;
             ((-f.x).atan2(-f.z), f.y.clamp(-1.0, 1.0).asin())
-        });
+        };
+        let (mut yaw, mut pitch) = self.look.unwrap_or(seen);
+        // A game that poses the camera may turn it (a lock-on, animation.md 6): while the mouse is
+        // still, the seat takes the camera's look as its own (web.rs `first_person` does the same).
+        if self.game_camera && input.look == [0.0; 2] {
+            let dyaw = (seen.0 - yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+                - std::f32::consts::PI;
+            if dyaw.abs() > 0.02 || (seen.1 - pitch).abs() > 0.02 {
+                (yaw, pitch) = seen;
+            }
+        }
         let captured = self.input.captured;
         if captured {
             yaw -= input.look[0] * 0.003;
@@ -378,6 +415,26 @@ impl SeatWalk {
         ] {
             if on && captured {
                 actions.push(serde_json::json!({"do": "pulse", "control": control}));
+            }
+        }
+        // The game's own buttons (animation.md 6).
+        if !self.buttons.is_empty() {
+            let held = if captured {
+                button_mask(&self.buttons, &self.input.held)
+            } else {
+                0
+            };
+            if held != self.held {
+                self.held = held;
+                actions.push(serde_json::json!({"do": "set", "controls": {"held": held}}));
+            }
+            let pressed = if captured {
+                button_mask(&self.buttons, &input.pressed)
+            } else {
+                0
+            };
+            if pressed != 0 {
+                actions.push(serde_json::json!({"do": "set", "controls": {"pressed": pressed}}));
             }
         }
         if !actions.is_empty() {

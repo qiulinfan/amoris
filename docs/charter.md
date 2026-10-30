@@ -325,8 +325,13 @@ beta 功能，测试已移除（4.4）。
 盘与鼠标，没有手柄输入；`ts-rs` 不是依赖，脚本的 `.d.ts` 由组件注册表（`scripts.types`）与 prelude
 生成，事件、意图与错误记录的 `ts-rs` 派生还没有做（[script-host.md](spec/script-host.md) 14 第 17
 项）；`tracy-client` 不是依赖，性能分析由内建分析器承担（游戏线程的 `profile` 与编辑器的 Profiler，
-渲染器的 GPU 时间戳与 `AMORIS_TRACE` 写出的 Chrome Trace）；kira 只在原生构建的 `amoris-audio` 里，
-浏览器里还没有 WebAudio，也没有声音（[architecture.md](spec/architecture.md) 4.19 与 6）。
+渲染器的 GPU 时间戳与 `AMORIS_TRACE` 写出的 Chrome Trace）；kira 只在原生构建的 `amoris-audio` 里。
+
+2026-10-29 注记（Wellspring 的浏览器版需要声音）：浏览器的声音由播放页自己的 WebAudio 播放
+（`web/player.js`），不经 kira；`amoris-audio` 的 kira 播放成为 `playback` 特性（原生窗口启用），
+不带它时这个 crate 只剩合成部分（`sfx:` 预设与水声的 `WaterSynth`），由 `amoris-viewport` 编进
+浏览器，于是新增 `amoris-viewport` → `amoris-audio` 一条边，`amoris-audio` 也能构建为 `wasm32`
+（[architecture.md](spec/architecture.md) 4.19、4.20 与 5）。
 
 2026-10-25 版本注记：rmcp 由 3.5 升到 3.7。3.5.0 的 Streamable HTTP 服务端允许未认证的客户端无限撑大
 工具 schema 缓存，可远程拒绝服务（GHSA-4432-vg92-fqh6，3.6.0 修复）；3.7.0 另修了一个中危的 OAuth
@@ -1318,6 +1323,17 @@ ns，WebAssembly 23 到 30 ns，比 M5 慢 1.3 到 1.9 倍；blockcraft 的 256�
   replay。构建注入 source-based EngineVersion；Windows host 的启动、compiler 与 check 工具
   修复一同采用。此阶段不改变图形后端、渲染算法或 LOD/neural assets；采用后的检查独立记录。
 
+2026-10-30（所有者决定："如果引擎没有足够的骨骼动画支持能力, 那正好补上. 参考ue和godot"，为第三人称
+战斗游戏 Thornkeep）：角色动画进入模拟。之前模拟只推进 `Animator` 的时间、从不加载片段，姿态只在渲染
+器里算；战斗要读骨骼挂点、动画事件与根运动，所以和 Unreal、Godot 一样在游戏线程上求值。宿主在加载项
+目时原生解析 glTF 的骨架与片段（`AnimLibrary`），随编译好的脚本一起进入 `GameSetup` 与 web 包，浏览
+器 worker 不解析 glTF。动画图（状态机与交叉淡化、1D/2D 混合空间、带分段的 montage、骨骼遮罩
+层、notify、根运动）由 `amoris-assets` 的 `anim` 模块在模拟中确定性地求值（只用加减乘除与平方根，旋
+转用 nlerp），姿态经渲染流交给渲染器。同一批工作还加入脚本的物理查询 `ctx.physics`、第三人称弹簧臂
+`CameraRig`、 `Avatar`（站在 walker 脚下、朝运动方向转身、承接根运动），以及网格寻路
+`NavGrid`。`amoris-script` 新增依赖 `amoris-assets`（`ctx.anim` 读取并暂存动画图状态）。规格见
+[animation.md](spec/animation.md)。
+
 2026-10-16（所有者决定）：引擎现在叫 Amoris，过时的标识符一律改名：`pocket` 改为 `amoris`，`Pocket`
 改为 `Amoris`，`POCKET` 改为 `AMORIS`。范围是引擎自己的全部名字：crate 及其目录（如
 `amoris-sim`，Rust 路径 `amoris_sim`，契约的类型 crate `amoris-contract`）、原生可执行文件与 CLI
@@ -1367,8 +1383,8 @@ presenter、工具与入口（presenter 只经 `amoris-assets` 的渲染流读�
 | crate | 组 | 职责 |
 |---|---|---|
 | `amoris-render` | presenter | wgpu 渲染器，原生窗口（winit）与浏览器（经 `amoris-viewport`）共用，含 splat、神经纹理与光线追踪研究路径；以及原生宿主与浏览器 worker 安装的 GPU 水数值服务（wgpu 内核） |
-| `amoris-audio` | presenter | kira 音频（仅原生）：世界的声源与声音事件、合成音效，含水声 |
-| `amoris-viewport` | presenter | 浏览器里的渲染器（WebGPU）：cdylib，构建到提交的 `web/viewport/pkg`；编辑器视口、播放页与观战页用它画宿主的渲染流 |
+| `amoris-audio` | presenter | 音频：kira 播放（`playback` 特性，仅原生）世界的声源与声音事件；合成音效与水声（浏览器经 `amoris-viewport` 也用） |
+| `amoris-viewport` | presenter | 浏览器里的渲染器（WebGPU）：cdylib，构建到提交的 `web/viewport/pkg`；编辑器视口、播放页与观战页用它画宿主的渲染流；给播放页的 WebAudio 提供声源、合成音效与水声 |
 | `amoris-mcp` | tool | MCP 服务器（rmcp） |
 | `amoris-server` | tool | 宿主的服务器（axum，单个回环端口）：编辑器 WebSocket 与静态文件、HTTP 命令 API、资源、渲染流 `/render`、MCP HTTP |
 | `amoris-debug` | tool | 调试核心与 CDP 端点 |

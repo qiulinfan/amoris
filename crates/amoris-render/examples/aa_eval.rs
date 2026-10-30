@@ -302,6 +302,7 @@ fn hero_frame(tick: u64, clip: &str, full: bool) -> InstanceUpdate {
             time: (tick as f64 * DT * 2.0) as f32,
             rate: 2.0,
             looped: true,
+            ..AnimView::default()
         }),
     }
 }

@@ -18,7 +18,8 @@ use amoris_sim::order::{by_id, by_id_mut};
 use amoris_sim::sim::system_failed;
 use amoris_sim::voxels::Voxels;
 use amoris_sim::{EntityId, SimClock, SystemKey, TickOutput, TickPhase};
-use bevy_ecs::prelude::{Query, Res, ResMut, Resource, With, Without};
+use bevy_ecs::change_detection::DetectChanges;
+use bevy_ecs::prelude::{Query, Ref, Res, ResMut, Resource, With, Without};
 use rapier3d::prelude::{
     ActiveEvents, ColliderBuilder, ColliderHandle, ColliderSet, CollisionEvent, ContactPair,
     EventHandler, MassProperties, PhysicsWorld, RigidBodyBuilder, RigidBodyHandle, RigidBodySet,
@@ -121,6 +122,26 @@ pub fn entity_of(user_data: u128) -> Option<EntityId> {
     EntityId::new(u64::try_from(user_data & u128::from(u64::MAX)).unwrap_or(0))
 }
 
+/// Whether the body built from spec `spec` had a `RigidBody`, as remembered when this process built
+/// it: an entity that loses its `RigidBody` changes its body without a change on either component,
+/// and the spec (which hashes the `RigidBody` or its absence) tells it apart. Kept outside the
+/// solver's serialized state; a spec this process has not built (a restored solver) answers `None`
+/// and the caller compares the hashes instead, which gives the same verdict.
+fn bodied(spec: u64, built: Option<bool>) -> Option<bool> {
+    static KNOWN: std::sync::Mutex<std::collections::BTreeMap<u64, bool>> =
+        std::sync::Mutex::new(std::collections::BTreeMap::new());
+    let mut known = KNOWN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(has) = built {
+        if known.len() >= 65_536 {
+            known.clear();
+        }
+        known.insert(spec, has);
+    }
+    known.get(&spec).copied()
+}
+
 pub(crate) fn spec_of(user_data: u128) -> u64 {
     u64::try_from(user_data >> 64).unwrap_or(0)
 }
@@ -213,6 +234,27 @@ pub(crate) fn shared_shape(entity: EntityId, shape: &Shape) -> Result<SharedShap
             SharedShape::trimesh(v, indices.clone())
                 .map_err(|e| shape_problem(entity, &format!("the mesh cannot be built: {e:?}")))?
         }
+        Shape::HeightField {
+            size,
+            cell_m,
+            heights,
+        } => {
+            // parry's rows run along z and its columns along x, the array column-major; its
+            // field is centred on the shape's origin (`shape_offset` puts the corner back).
+            let (nx, nz) = (size[0] as usize + 1, size[1] as usize + 1);
+            let mut zx = vec![0.0f32; nx * nz];
+            for k in 0..nz {
+                for i in 0..nx {
+                    zx[k + i * nz] = geom::f32_of(heights[i + k * nx]);
+                }
+            }
+            let scale = geom::vec_in([
+                f64::from(size[0]) * cell_m,
+                1.0,
+                f64::from(size[1]) * cell_m,
+            ]);
+            SharedShape::heightfield(rapier3d::parry::utils::Array2::new(nz, nx, zx), scale)
+        }
         Shape::Compound { parts } => {
             let mut out = Vec::with_capacity(parts.len());
             for p in parts {
@@ -259,6 +301,19 @@ fn usable_mass(co: &rapier3d::prelude::Collider) -> bool {
     ok(mp.mass()) && ok(i.x) && ok(i.y) && ok(i.z)
 }
 
+/// Where a shape's own origin sits in its body's frame: a heightfield's centre, since parry centres
+/// the field and the component names its corner; the origin for every other shape.
+pub(crate) fn shape_offset(shape: &Shape) -> rapier3d::math::Vector {
+    match shape {
+        Shape::HeightField { size, cell_m, .. } => geom::vec_in([
+            0.5 * f64::from(size[0]) * cell_m,
+            0.0,
+            0.5 * f64::from(size[1]) * cell_m,
+        ]),
+        _ => geom::vec_in([0.0; 3]),
+    }
+}
+
 /// Builds the body and collider of one entity into the solver.
 fn insert(
     physics: &mut PhysicsWorld,
@@ -289,6 +344,7 @@ fn insert(
     }
     .pose(pose)
     .user_data(u128::from(entity.get()) | (u128::from(hash) << 64));
+    bodied(hash, Some(body.is_some()));
     if let Some(b) = body {
         rb = rb
             .linear_damping(geom::f32_of(b.linear_damping))
@@ -310,6 +366,7 @@ fn insert(
     // No density means no mass from the shape: Rapier's density 0 skips the shape's mass
     // properties entirely (numeric.md 5).
     let co = ColliderBuilder::new(shape)
+        .translation(shape_offset(&collider.shape))
         .density(geom::f32_of(collider.density.unwrap_or(0.0)))
         .friction(geom::f32_of(collider.friction))
         .restitution(geom::f32_of(collider.restitution))
@@ -402,8 +459,8 @@ type BodyItem<'a> = (
     &'a EntityId,
     Option<&'a mut Transform>,
     Option<&'a mut Velocity>,
-    Option<&'a RigidBody>,
-    &'a Collider,
+    Option<Ref<'a, RigidBody>>,
+    Ref<'a, Collider>,
     Option<&'a mut ExternalForce>,
     Option<&'a mut Boat>,
     Option<&'a Floater>,
@@ -478,10 +535,21 @@ pub(crate) fn step(
         while i < items.len() && *items[i].0 < id {
             i += 1;
         }
-        let current = (i < items.len() && *items[i].0 == id && items[i].1.is_some())
-            .then(|| spec_hash(items[i].3, items[i].4));
-        let same = match (current, world.bodies.get(handle)) {
-            (Some(h), Some(b)) => spec_of(b.user_data) == h,
+        let here = i < items.len() && *items[i].0 == id && items[i].1.is_some();
+        // A body's spec is hashed again only when its components changed: hashing a large
+        // TriMesh (a terrain's ground) every tick cost most of the step.
+        let same = match world.bodies.get(handle) {
+            Some(b) if here => {
+                let (_, _, _, body, collider, ..) = &items[i];
+                // A cache, not a rule: an unchanged component hashes to the spec it was built from,
+                // so skipping the hash gives the verdict hashing would (repeated snapshots trust
+                // change ticks the same way, persistence.md 4.3).
+                #[allow(clippy::disallowed_methods)]
+                let changed = collider.is_changed()
+                    || body.as_ref().is_some_and(|b| b.is_changed())
+                    || bodied(spec_of(b.user_data), None) != Some(body.is_some());
+                !changed || spec_of(b.user_data) == spec_hash(body.as_deref(), collider)
+            }
             _ => false,
         };
         if same {
@@ -519,7 +587,7 @@ pub(crate) fn step(
         };
         let handle = match slot {
             Some(h) => *h,
-            None => match insert(world, id, tf, vel.as_deref(), *body, collider) {
+            None => match insert(world, id, tf, vel.as_deref(), body.as_deref(), collider) {
                 Ok(h) => h,
                 Err(p) => {
                     report(id, p);

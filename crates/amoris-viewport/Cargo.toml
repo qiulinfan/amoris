@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 amoris-assets = { workspace = true, features = ["import"] }
 amoris-render = { workspace = true, features = ["import"] }
+amoris-audio.workspace = true
 wgpu.workspace = true
 glam.workspace = true
 log = "0.4"

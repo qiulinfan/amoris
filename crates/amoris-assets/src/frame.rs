@@ -52,8 +52,9 @@ pub struct Look {
     pub visible: bool,
 }
 
-/// A skeletal animation's state for drawing.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// A skeletal animation's state for drawing: a clip at a time (`Animator`), or the pose the
+/// simulation evaluated (`AnimGraph`, animation.md 5).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AnimView {
     pub clip: String,
     /// Seconds into the clip at this tick.
@@ -61,6 +62,14 @@ pub struct AnimView {
     /// Seconds of clip per second of simulation (for interpolation between ticks).
     pub rate: f32,
     pub looped: bool,
+    /// The skeleton's joints' local transforms at this tick, ten numbers each (translation,
+    /// rotation x y z w, scale), in the file's node order; empty for a clip.
+    pub pose: Vec<f32>,
+    /// The tick's length, seconds (a pose is interpolated from the previous tick's over it).
+    pub tick_s: f32,
+    /// The previous tick's pose, kept by the renderer (never sent).
+    #[serde(skip)]
+    pub prev: Vec<f32>,
 }
 
 /// One drawn entity's change: its pose, its look, its animation, or any of these.

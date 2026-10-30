@@ -187,6 +187,7 @@ fn load_frame(root: &Path) -> Result<(RenderFrame, Vec<String>), String> {
                     time: animation.time as f32,
                     rate: 0.0,
                     looped: animation.looped,
+                    ..AnimView::default()
                 }),
             });
         }

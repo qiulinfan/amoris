@@ -109,6 +109,7 @@ fn mixed_skinned() -> RenderFrame {
                 time: 0.3 * i as f32,
                 rate: 1.0,
                 looped: true,
+                ..AnimView::default()
             }),
         });
     }

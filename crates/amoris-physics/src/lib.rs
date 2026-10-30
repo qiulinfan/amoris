@@ -24,12 +24,14 @@
     clippy::cast_precision_loss
 )]
 
+pub mod avatar;
 pub mod board;
 pub mod boat;
 pub mod body;
 mod cache;
 mod forces;
 pub mod geom;
+pub mod nav;
 pub mod probe;
 pub mod query;
 mod readings;
@@ -45,6 +47,7 @@ pub mod walk;
 pub mod walker;
 pub mod water;
 
+pub use avatar::{Avatar, CameraRig, Facing};
 pub use board::Board;
 pub use boat::{Boat, BuoyPoint, Floater, Hull, Sail, Trim, best_sheet};
 pub use body::{
@@ -57,7 +60,7 @@ pub use sea::{GRAVITY, Rain, Sea, SeaLook, Water, Wave, WaveField, Wind};
 pub use solver::{BodyIndex, ContactLog, Physics, RebuiltSolver};
 pub use terrain::{Terrain, TerrainFeature, TerrainLayer, TerrainLook};
 pub use vessel::{Hole, Vessel};
-pub use walker::Walker;
+pub use walker::{Buttons, Walker};
 pub use water::{
     BedSource, Edge, Style, WaterDrain, WaterLook, WaterRegion, WaterScratch, WaterSource,
     WaterSteps, WaterTile,
@@ -99,6 +102,10 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     ComponentRegistry::register::<Wind>(w, None)?;
     ComponentRegistry::register::<Rain>(w, None)?;
     ComponentRegistry::register::<Walker>(w, None)?;
+    ComponentRegistry::register::<avatar::Avatar>(w, None)?;
+    ComponentRegistry::register::<walker::Buttons>(w, None)?;
+    ComponentRegistry::register::<nav::NavGrid>(w, None)?;
+    ComponentRegistry::register::<avatar::CameraRig>(w, None)?;
     ComponentRegistry::register::<Board>(w, None)?;
     ComponentRegistry::register::<amoris_sim::voxels::Voxels>(w, None)?;
     ComponentRegistry::register::<WaterRegion>(w, None)?;
@@ -116,6 +123,7 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     let mut water_system = IntoSystem::into_system(water::water);
     water_system.initialize(w);
     let always = RunCondition::Always;
+    sim.add_system("anim.graph", TickPhase::Forces, always, avatar::animate)?;
     sim.add_system("physics.wind", TickPhase::Forces, always, forces::wind)?;
     sim.add_exclusive(
         "physics.water",
@@ -209,6 +217,12 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
             )),
         },
     )?;
+    sim.add_system(
+        "physics.separate",
+        TickPhase::Physics,
+        always,
+        walker::separate,
+    )?;
     sim.add_system("physics.step", TickPhase::Physics, always, solver::step)?;
     sim.add_system(
         "physics.contacts",
@@ -217,6 +231,14 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
         solver::contacts,
     )?;
     sim.add_system("physics.mount", TickPhase::Physics, always, board::mount)?;
+    sim.add_system(
+        "physics.avatar",
+        TickPhase::Physics,
+        always,
+        avatar::avatars,
+    )?;
+    sim.add_system("anim.attach", TickPhase::Finish, always, avatar::attach)?;
+    sim.add_system("camera.rig", TickPhase::Finish, always, avatar::rigs)?;
     sim.add_system(
         "physics.walk.clear",
         TickPhase::Finish,

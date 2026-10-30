@@ -83,9 +83,18 @@ export default game({ components: [Crew, Tally, Log, Cargo], systems: [muster, l
 
 `components.d.ts` lists the engine components scripts can use (`Transform`, `Boat`, `Walker`,
 `UiText`'s text, size, colour, offset and visibility, ...). A game may also animate a look through
-`Model` (scale, colour, emission, visibility), a `Light` (kind, colour, intensity, cone) and the
-`Environment` (sky colour, ambient, fog, exposure, bloom); the mesh and material paths a `Model`
-was built with are part of those fields too.
+`Model` (scale, colour, emission, visibility), a `Light` (kind, colour, intensity, cone), a
+`ParticleEmitter` (rate, bursts, whether it emits, lifetime, speed, spread, acceleration, size,
+colours) and the `Environment` (sky colour, ambient, fog, exposure, bloom); the mesh and material
+paths a `Model` was built with are part of those fields too.
+
+Characters (docs/spec/animation.md): a body's `AnimGraph` names its graph and is driven through
+`ctx.anim` (parameters, montages and their sections, its notifies' events, socket poses); an
+`Avatar` stands a posed body on its `Walker` and turns it toward its motion, its look or a target;
+an `Attach` rides an entity on a body's joint; a game's `[player] buttons` arrive as the walker's
+`Buttons`; a `CameraRig` holds a camera on a spring arm behind a walker, and a script raises its
+`shake` on a blow. `ctx.physics` casts rays, spheres and sweeps, and `ctx.nav` finds paths on a
+`NavGrid`.
 
 ## Systems and queries
 

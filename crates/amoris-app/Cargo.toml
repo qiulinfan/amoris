@@ -30,7 +30,7 @@ tokio.workspace = true
 ureq.workspace = true
 # The script debugger (docs/spec/debugger.md): amoris serve's DebugHub and CDP endpoint.
 amoris-debug.workspace = true
-amoris-audio.workspace = true
+amoris-audio = { workspace = true, features = ["playback"] }
 
 # The engine source hash of crates/engine_version.rs (versions.md 3.1).
 [build-dependencies]

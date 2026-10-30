@@ -19,6 +19,11 @@ pub const FLAG_NEURAL: u32 = 8;
 /// Material flag: alpha-blended (glTF BLEND, or a look whose alpha is below 1): drawn by the
 /// transparent stage (transparent.rs).
 pub const FLAG_BLEND: u32 = 16;
+/// Material flag: a terrain layer's (terrain.rs): texture coordinates from the world's x and z,
+/// and the mesh's texture coordinates the interval of the layer's share that the forward pass
+/// keeps (forward.wgsl `terrain_kept`). Always alpha-masked, with no alpha cutoff, so the layer is
+/// drawn by the pipelines that may discard.
+pub const FLAG_TERRAIN: u32 = 32;
 /// The size of every texture layer.
 pub const TEX_SIZE: u32 = 1024;
 
@@ -43,7 +48,8 @@ pub struct MaterialGpu {
     /// KHR_materials_ior.
     pub ior: f32,
     pub transmission_tex: u32,
-    pub _pad: u32,
+    /// The scale every texture coordinate of the material takes (KHR_texture_transform).
+    pub uv_scale: f32,
 }
 
 impl Default for MaterialGpu {
@@ -63,7 +69,7 @@ impl Default for MaterialGpu {
             transmission: 0.0,
             ior: 1.5,
             transmission_tex: NO_TEXTURE,
-            _pad: 0,
+            uv_scale: 1.0,
         }
     }
 }
@@ -75,10 +81,12 @@ struct Key {
     /// The look's transmission and IOR overrides.
     transmission: Option<u32>,
     ior: Option<u32>,
+    terrain: bool,
 }
 
 fn key(look: &Look) -> Key {
     Key {
+        terrain: crate::terrain::is_layer_mesh(&look.mesh),
         material: look.material.clone(),
         bits: [
             look.color[0].to_bits(),
@@ -123,6 +131,7 @@ fn asset_row(m: &MaterialData) -> MaterialGpu {
         } | if m.double_sided { 2 } else { 0 },
         transmission: m.transmission.clamp(0.0, 1.0),
         ior: m.ior,
+        uv_scale: m.uv_scale,
         ..MaterialGpu::default()
     };
     if m.alpha_mode == AlphaMode::Opaque {
@@ -350,6 +359,11 @@ impl MaterialPool {
             },
             look,
         );
+        let mut row = row;
+        if k.terrain {
+            row.flags |= FLAG_TERRAIN | 1;
+            row.alpha_cutoff = 0.0;
+        }
         let id = self.rows.len() as u32;
         self.rows.push(row);
         self.by_key.insert(k, id);

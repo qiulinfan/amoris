@@ -260,6 +260,14 @@ impl Game {
         })?;
         amoris_physics::plugin(&mut sim)?;
         amoris_assets::plugin(&mut sim)?;
+        let rigs = amoris_assets::anim::AnimRigs::build(&setup.animation).map_err(|e| {
+            Problem::new(
+                "project.invalid",
+                format!("The animation does not bind: {e}."),
+                amoris_contract::detail([("message", serde_json::json!(e))]),
+            )
+        })?;
+        sim.world_mut().insert_resource(rigs);
         engine::install_script_components(sim.world_mut())?;
         crate::player::install(&mut sim, setup.player.as_ref())?;
         amoris_script::install(&mut sim, setup.limits)?;
@@ -1561,6 +1569,16 @@ impl Game {
         replay: &Replay,
         configure: impl FnOnce(GameBuilder) -> GameBuilder,
     ) -> Result<Game, Problem> {
+        Self::for_replay_animated(replay, Default::default(), configure)
+    }
+
+    /// A replay of a game whose graphs play clips: the clips are the project's animation library,
+    /// which a replay does not embed (animation.md 7b), so whoever replays it supplies the library.
+    pub fn for_replay_animated(
+        replay: &Replay,
+        animation: Arc<amoris_assets::anim::AnimLibrary>,
+        configure: impl FnOnce(GameBuilder) -> GameBuilder,
+    ) -> Result<Game, Problem> {
         let start = replay.start(0).ok_or_else(|| {
             amoris_persist::error::bundle_unavailable("", "the replay has no start snapshot")
         })?;
@@ -1579,6 +1597,7 @@ impl Game {
             lint_off: false,
             // The start snapshot carries the player declarations, if any (`crate::player`).
             player: None,
+            animation,
         };
         configure(GameBuilder::new(Arc::new(setup))).build_empty(&set)
     }

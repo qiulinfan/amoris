@@ -563,7 +563,11 @@ For `rapier3d` 0.36.0 with `parry3d` 0.31.1, read from their sources:
   components. Any other collider is written inline: a fixed one whose `Collider` a boundary write
   changed before the next step rebuilt it, and one whose shape came into the solver another way
   (decoded inline from a snapshot this engine did not write, say). So the bytes stay a function of
-  the world's state, and a world restored from them encodes them again. Decoding refuses a slot by
+  the world's state, and a world restored from them encodes them again. The encoder keeps each
+  body's verdict (its components hash to its spec or not) per world and entity with the
+  `RigidBody`'s and `Collider`'s change ticks, and hashes the components again only when either
+  changed; `physics.step` does the same for the spec a body carries (2026-10-29: hashing a large
+  terrain's ground every snapshot and every step cost 70 ms a tick each). Decoding refuses a slot by
   reference on a collider that is not its fixed body's own, or that names another spec, or whose key
   the table holds for components of another spec. The slots are written and read by wrapping
   bincode's serializer and deserializer around Rapier's derived `serde` in two layers that follow

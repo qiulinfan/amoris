@@ -4,9 +4,11 @@
 //! through QuickJS-ng's C frames; script-sandbox.md 4.3), and reaches the world through the call
 //! state installed for the call (else `script.no_system`).
 
+pub mod anim;
 pub mod console;
 pub mod events;
 pub mod harden;
+pub mod physics;
 pub mod query;
 pub mod rng;
 pub mod timing;
@@ -93,6 +95,16 @@ const NATIVES: &[(&str, Native, bool)] = &[
     ("waterSurface", water::surface, false),
     ("waterVelocity", water::velocity, false),
     ("waterAdd", water::add, true),
+    ("physicsRay", physics::ray, false),
+    ("navPath", physics::nav_path, false),
+    ("navNearest", physics::nav_nearest, false),
+    ("animSet", anim::set, true),
+    ("animParam", anim::param, false),
+    ("animCommand", anim::command, true),
+    ("animState", anim::info, false),
+    ("animSocket", anim::socket, false),
+    ("physicsSweep", physics::sweep, false),
+    ("physicsSphere", physics::sphere, false),
     ("waterRemove", water::remove, true),
 ];
 

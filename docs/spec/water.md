@@ -2744,9 +2744,9 @@ forward -z, up +y, right +x.
   board, at the seat and the Walker's eye height standing or 0.4 m lying; when the deck's up axis
   falls below 0.25 the board throws its rider into the water and counts a wipeout.
 - **Fixed colliders.** Walkers collide with fixed colliders as with voxel volumes: a box swept
-  through Rapier's broad phase, climbing slopes and ledges up to 0.4 m, so a TriMesh terrain carries
-  a walker on land and a swimmer on its bed. The sweep leaves out the colliders with no body, the
-  block volumes' chunks (voxels.md 5.1), which the walker meets on their grid.
+  through Rapier's broad phase, climbing slopes and ledges up to 0.4 m, so a terrain's heightfield
+  carries a walker on land and a swimmer on its bed. The sweep leaves out the colliders with no
+  body, the block volumes' chunks (voxels.md 5.1), which the walker meets on their grid.
 - **Treading water.** In a region's water, held `rise` keeps the swimmer's eye 0.3 m over the
   surface, at most at swim speed (rise at four times the eye's height error a second), unless a lift
   at a wall carries it up faster, so climbing out still works. Before, held rise drove a swimmer up
@@ -4193,13 +4193,33 @@ scene is 779 KB beside a 726 KB mesh and the script that made them.
     step: a fall.
   - All of it is `amoris_sim::math`, so every machine works out the same heights.
 - `physics.terrain` (Forces, after `physics.board`) stands bodies and walkers on the terrain: a
-  fixed `Collider` triangle mesh of its heights, made again when the terrain's hash
-  (`TerrainGround`) changes. The paused edit world makes none, so a scene keeps only the features.
-- Drawn (`TerrainView` in the feed; the renderer's terrain.rs), each cell takes the first of
+  fixed `Collider` heightfield of its heights (`Shape::HeightField`, parry's, split across the same
+  diagonal the renderer draws), made again when the terrain's hash (`TerrainGround`) changes. The
+  paused edit world makes none, so a scene keeps only the features. Until 2026-10-29 it was a
+  triangle mesh: at 640 x 720 cells the mesh's tree took 11 s to build at a Play's first tick and
+  its spec, hashed every step and every snapshot, cost 70 ms a tick each (Wellspring); the
+  heightfield builds in milliseconds and keeps a sixth of the state.
+- Drawn (`TerrainView` in the feed; the renderer's terrain.rs), each triangle takes the first of
   `look.layers` it is steeper (1 - the normal's y) and lower than where the layer says, else the
-  last, and each layer is one mesh drawn as an ordinary instance (ids from 2^59), so shadows,
-  culling and picking take it. A click finds the ground under it by marching the ray over the
-  heights from where it enters the terrain's box.
+  last, both moved by a coarse value noise of its place (16 m and 6 m lattices, slope by up to 0.05,
+  height by up to 2 m: presentation only), so a layer's edge wanders as ground does instead of
+  following a contour line, in half-cell steps along the diagonals. Each layer is one mesh drawn as
+  an ordinary instance (ids from 2^59), so shadows, culling and picking take it. The layers blend
+  across their edges (2026-10-29, Wellspring): each corner's share of each layer is the part of the
+  triangles within 3 cells of it that the layer takes, a triangle goes to every layer with a share
+  at one of its corners, and each copy's corners carry, as their texture coordinates, the interval
+  of [0, 1) its layer holds there (the shares laid end to end in layer order, the last reaching
+  exactly 1). The layer's material row is flagged a terrain's (materials.rs `FLAG_TERRAIN`, drawn
+  alpha-masked with no cutoff): forward.wgsl `terrain_kept` draws a pixel in the one copy whose
+  interpolated interval holds a three-octave value noise of the pixel's place (2.5 m, 0.9 m and
+  0.3 m), so one ground gives way to the next in patches over a few metres, every pixel drawn once
+  and in no order of the draws; the copies' depths are equal, so the depth-only and shadow passes
+  draw them all. Texture coordinates are the world's x and z in metres, scaled by the layer
+  material's `KHR_texture_transform` (so a texture can tile at its true size), and tangents follow
+  from the heights' gradient. A terrain sent
+  again unchanged (every full frame sends each whole) is not meshed again: the renderer keeps each
+  terrain's meshes by a hash of what they were made from. A click finds the ground under it by
+  marching the ray over the heights from where it enters the terrain's box.
 
 ### 65.2 Water on it
 
@@ -4233,8 +4253,9 @@ step of the history (editor.md 6.1).
   step in its bed stays a step; slopes and hills add; the spline passes through its points; a pour
   fills its basin to the level and runs down a channel only where the channel's bed lies under it.
 - `cargo test -p amoris-render --lib terrain`: a shelf, a wall and a floor mesh into rock, sand and
-  grass; the layers' instances map back to the terrain; a click from above or at a slant finds the
-  floor or the shelf it reaches, not the box's top.
+  grass, and near their edges the layers share triangles; at every corner the layers' intervals
+  cover [0, 1) once, with no gap or overlap; the layers' instances map back to the terrain; a click
+  from above or at a slant finds the floor or the shelf it reaches, not the box's top.
 - `cargo test -p amoris-runtime --features transpile --test terrain`: before any tick the valley's
   feed carries its terrain and both regions previewed (5726 wet columns over the lake's, 2325 over
   the falls'), and the ground lowered by half a metre sends both again, wetter.
@@ -4251,7 +4272,8 @@ The cost is in [liquids.md](../bench/liquids.md) 17.
 
 Limits:
 
-- A layer changes at a cell's edge, with no blending between layers.
+- Layers blend by which one draws a pixel, not by mixing their colours: the patches' edges are
+  sharp up close.
 - A pour fills to one level; the water of a river comes from upstream.
 - A terrain is whole: any change works out its heights, its collider and the previews again
   (about 9 ms each over the valley's 384 x 192 cells).

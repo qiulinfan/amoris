@@ -40,6 +40,17 @@ const WALL_LIFT: f64 = 0.6;
 const HEAD_OUT_M: f64 = 0.3;
 const TREAD_RATE: f64 = 4.0;
 
+/// The game's own buttons on a seat's body (animation.md 6; Unreal's input actions, Godot's input
+/// map): the project names them and their keys (`[player] buttons`), the window and the page set
+/// a bit per button. `held`: the buttons down now; `pressed`: those pressed since the last tick,
+/// cleared after it.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct Buttons {
+    pub held: u32,
+    pub pressed: u32,
+}
+
 /// A first-person character (voxels.md 5.2). Its entity's `Transform` is the eye.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
@@ -338,7 +349,7 @@ fn contact(w: &Walker, eye: [f64; 3], volumes: &[Volume], pools: &[Pool]) -> Con
 #[cfg(test)]
 fn advance(w: &mut Walker, eye: [f64; 3], dt: f64, volumes: &[Volume], pools: &[Pool]) -> [f64; 3] {
     let wet = contact(w, eye, volumes, pools);
-    advance_contact(w, eye, dt, volumes, None, wet)
+    advance_contact(w, eye, dt, volumes, None, wet, None)
 }
 
 /// The gap a walker keeps from fixed colliders, metres, and the highest step it climbs onto one.
@@ -397,6 +408,7 @@ fn advance_contact(
     volumes: &[Volume],
     physics: Option<&Physics>,
     wet: Contact,
+    drive: Option<[f64; 2]>,
 ) -> [f64; 3] {
     let (mut f, mut s) = (
         math::clamp(w.forward, -1.0, 1.0),
@@ -414,6 +426,11 @@ fn advance_contact(
     let (sy, cy) = math::sin_cos(w.yaw);
     let mut vx = (-sy * f + cy * s) * speed;
     let mut vz = (-cy * f - sy * s) * speed;
+    // An avatar's root motion moves the body instead of the controls (animation.md 6).
+    if let Some([dx, dz]) = drive {
+        vx = dx / dt;
+        vz = dz / dt;
+    }
     if wet.body {
         vx += wet.push[0];
         vz += wet.push[1];
@@ -494,6 +511,7 @@ type WaterItem<'a> = (
 
 /// `physics.walk`: moves every walker, in id order, against every volume. A swimmer in a region
 /// with WaterDisplacement queues the volume its body holds under the free surface (water.md 46).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn walk(
     clock: Res<SimClock>,
     mut walkers: Query<(&EntityId, &mut Walker, &mut Transform)>,
@@ -505,8 +523,14 @@ pub(crate) fn walk(
         &mut crate::water::displacement::WaterDisplacement,
     )>,
     physics: Option<Res<Physics>>,
+    avatars: Query<(
+        &EntityId,
+        &crate::avatar::Avatar,
+        &amoris_assets::anim::AnimState,
+    )>,
 ) -> Result<(), amoris_contract::Problem> {
     let dt = clock.dt();
+    let drives = crate::avatar::drives(&avatars);
     let volumes: Vec<Volume> = by_id(&volumes)
         .map(|(_, voxels, tf)| Volume {
             origin: tf.map_or([0.0; 3], |t| t.position),
@@ -583,7 +607,16 @@ pub(crate) fn walk(
         }
         w.yaw = math::wrap_angle(w.yaw);
         w.pitch = math::clamp(w.pitch, -MAX_PITCH, MAX_PITCH);
-        let eye = advance_contact(&mut w, tf.position, dt, &volumes, physics.as_deref(), wet);
+        let drive = drives.get(id).copied();
+        let eye = advance_contact(
+            &mut w,
+            tf.position,
+            dt,
+            &volumes,
+            physics.as_deref(),
+            wet,
+            drive,
+        );
         if let (Some(column), Some((region, origin, cell))) = (field, owner)
             && column[1] > 0.0
         {
@@ -617,14 +650,99 @@ pub(crate) fn walk(
     Ok(())
 }
 
+/// `physics.separate` (Physics, after the walk): walkers do not stand in one another. Each
+/// overlapping pair (their boxes' footprints as circles, their heights overlapping) is pushed apart
+/// along the line between them, half the overlap each, in id order; a push that would put a
+/// walker into a fixed collider is left out for that walker.
+pub(crate) fn separate(
+    mut walkers: Query<(&EntityId, &Walker, &mut Transform)>,
+    physics: Option<Res<Physics>>,
+) {
+    let mut all: Vec<(EntityId, Walker, [f64; 3])> = by_id(&walkers)
+        .filter(|(_, w, _)| w.mount.is_none())
+        .map(|(id, w, t)| (*id, *w, t.position))
+        .collect();
+    let mut moved = false;
+    for i in 0..all.len() {
+        for j in (i + 1)..all.len() {
+            let (a, b) = (&all[i], &all[j]);
+            let (fa, fb) = (a.2[1] - a.1.eye_m, b.2[1] - b.1.eye_m);
+            if fa + a.1.height_m <= fb || fb + b.1.height_m <= fa {
+                continue;
+            }
+            let (dx, dz) = (b.2[0] - a.2[0], b.2[2] - a.2[2]);
+            let d = math::sqrt(dx * dx + dz * dz);
+            let reach = a.1.half_width_m + b.1.half_width_m;
+            if d >= reach {
+                continue;
+            }
+            // Coincident walkers part along +x.
+            let (ux, uz) = if d > 1e-9 {
+                (dx / d, dz / d)
+            } else {
+                (1.0, 0.0)
+            };
+            let push = 0.5 * (reach - d);
+            for (k, sign) in [(i, -1.0), (j, 1.0)] {
+                let w = all[k].1;
+                let p = all[k].2;
+                let next = [p[0] + sign * ux * push, p[1], p[2] + sign * uz * push];
+                let free = physics.as_deref().is_none_or(|ph| {
+                    let (lo, hi) = w.bounds(next);
+                    !overlaps_fixed(ph, lo, hi)
+                });
+                if free {
+                    all[k].2 = next;
+                    moved = true;
+                }
+            }
+        }
+    }
+    if !moved {
+        return;
+    }
+    for (id, _, mut t) in by_id_mut(&mut walkers) {
+        if let Some((_, _, p)) = all.iter().find(|x| x.0 == *id)
+            && t.position != *p
+        {
+            t.position = *p;
+        }
+    }
+}
+
+/// Whether a box from `lo` to `hi` overlaps a fixed collider.
+fn overlaps_fixed(physics: &Physics, lo: [f64; 3], hi: [f64; 3]) -> bool {
+    let centre: [f64; 3] = std::array::from_fn(|a| 0.5 * (lo[a] + hi[a]));
+    let half: [f64; 3] =
+        std::array::from_fn(|a| math::max(0.5 * (hi[a] - lo[a]) - COLLIDER_GAP_M, 0.01));
+    let shape = rapier3d::parry::shape::Cuboid::new(geom::vec_in(half));
+    let pose = rapier3d::math::Pose::from_translation(geom::vec_in(centre));
+    let with_body = |_, co: &rapier3d::prelude::Collider| co.parent().is_some();
+    physics
+        .world
+        .intersect_shape(
+            pose,
+            &shape,
+            rapier3d::prelude::QueryFilter::only_fixed().predicate(&with_body),
+        )
+        .next()
+        .is_some()
+}
+
 /// `physics.walk.clear`: ends the tick's pulses, so each acts in exactly one tick.
-pub(crate) fn clear(mut walkers: Query<&mut Walker>) {
+pub(crate) fn clear(mut walkers: Query<&mut Walker>, mut buttons: Query<&mut Buttons>) {
     #[allow(clippy::disallowed_methods)] // per-entity writes: the order changes nothing
     for mut w in walkers.iter_mut() {
         if w.jump || w.primary || w.secondary {
             w.jump = false;
             w.primary = false;
             w.secondary = false;
+        }
+    }
+    #[allow(clippy::disallowed_methods)] // per-entity writes: the order changes nothing
+    for mut b in buttons.iter_mut() {
+        if b.pressed != 0 {
+            b.pressed = 0;
         }
     }
 }

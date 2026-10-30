@@ -41,7 +41,7 @@ web = true
 
 [crate.amoris-script]
 group = "game"
-deps = ["amoris-sim", "amoris-physics", "amoris-interface"]
+deps = ["amoris-sim", "amoris-assets", "amoris-physics", "amoris-interface"]
 web = true
 
 [crate.amoris-link]
@@ -68,11 +68,11 @@ web = true
 [crate.amoris-audio]
 group = "presenter"
 deps = ["amoris-assets"]
-web = false
+web = true
 
 [crate.amoris-viewport]
 group = "presenter"
-deps = ["amoris-assets", "amoris-render"]
+deps = ["amoris-assets", "amoris-render", "amoris-audio"]
 web = true
 
 [crate.amoris-mcp]

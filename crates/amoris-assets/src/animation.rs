@@ -141,6 +141,60 @@ pub fn global_pose(asset: &ModelAsset, clip: Option<&AnimationClip>, time: f32) 
         .collect()
 }
 
+/// Global matrices of every skeleton node for local poses given as ten numbers a node (translation,
+/// rotation, scale; animation.md 5), mixed from `prev` to `pose` by `u`. `None` when the pose is
+/// not one of this file's skeleton.
+pub fn global_pose_from(
+    asset: &ModelAsset,
+    prev: &[f32],
+    pose: &[f32],
+    u: f32,
+) -> Option<Vec<Mat4>> {
+    let n = asset.skeleton.len();
+    if pose.len() != n * 10 || prev.len() != pose.len() {
+        return None;
+    }
+    let local: Vec<Mat4> = (0..n)
+        .map(|i| {
+            let (a, b) = (&prev[i * 10..i * 10 + 10], &pose[i * 10..i * 10 + 10]);
+            let t = Vec3::new(a[0], a[1], a[2]).lerp(Vec3::new(b[0], b[1], b[2]), u);
+            let (qa, qb) = (
+                Quat::from_xyzw(a[3], a[4], a[5], a[6]),
+                Quat::from_xyzw(b[3], b[4], b[5], b[6]),
+            );
+            let qb = if qa.dot(qb) < 0.0 { -qb } else { qb };
+            let r = qa.lerp(qb, u).normalize();
+            let s = Vec3::new(a[7], a[8], a[9]).lerp(Vec3::new(b[7], b[8], b[9]), u);
+            Mat4::from_scale_rotation_translation(s, r, t)
+        })
+        .collect();
+    let mut global: Vec<Option<Mat4>> = vec![None; n];
+    fn resolve(
+        i: usize,
+        asset: &ModelAsset,
+        local: &[Mat4],
+        global: &mut Vec<Option<Mat4>>,
+        depth: usize,
+    ) -> Mat4 {
+        if let Some(m) = global[i] {
+            return m;
+        }
+        let m = match asset.skeleton[i].parent {
+            Some(p) if p != i && p < local.len() && depth < local.len() => {
+                resolve(p, asset, local, global, depth + 1) * local[i]
+            }
+            _ => local[i],
+        };
+        global[i] = Some(m);
+        m
+    }
+    Some(
+        (0..n)
+            .map(|i| resolve(i, asset, &local, &mut global, 0))
+            .collect(),
+    )
+}
+
 /// The joint matrices of skin `skin` for a pose (`global_pose`), relative to the mesh's node
 /// (`mesh_global`, the node the skinned mesh hangs from: its inverse cancels the node's own
 /// transform, as glTF requires).

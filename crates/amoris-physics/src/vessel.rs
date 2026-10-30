@@ -232,6 +232,7 @@ fn shape_points(shape: &Shape) -> Result<Vec<V3>, String> {
         })?,
         Shape::ConvexHull { points } => points.clone(),
         Shape::TriMesh { vertices, .. } => vertices.clone(),
+        Shape::HeightField { .. } => shape.heightfield_points(),
         Shape::Compound { parts } => {
             let mut points = Vec::new();
             for p in parts {
@@ -279,6 +280,7 @@ fn shape_bounds(shape: &Shape) -> (V3, V3) {
         }),
         Shape::ConvexHull { points } => bounds(points.iter()),
         Shape::TriMesh { vertices, .. } => bounds(vertices.iter()),
+        Shape::HeightField { .. } => bounds(shape.heightfield_points().iter()),
         Shape::Compound { parts } => {
             let mut corners = Vec::with_capacity(8 * parts.len());
             for p in parts {

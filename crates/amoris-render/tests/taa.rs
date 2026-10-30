@@ -954,6 +954,7 @@ fn skinned_entity(time: f32, rate: f32, full: bool) -> InstanceUpdate {
             time,
             rate,
             looped: false,
+            ..AnimView::default()
         }),
     }
 }

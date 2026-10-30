@@ -92,12 +92,15 @@ where
 /// Every engine component a scene or `world_edit` can name (`Name` is the entity's own `name`);
 /// the first three are the player layer's (perception.md: who observes, what can be perceived,
 /// what blocks sight).
-pub fn engine_components() -> [EngineComponent; 41] {
+pub fn engine_components() -> [EngineComponent; 48] {
     [
         entry::<amoris_interface::perception::Observer>(),
         entry::<amoris_interface::perception::Perceivable>(),
         entry::<amoris_interface::perception::Occluder>(),
         entry::<Animator>(),
+        entry::<amoris_assets::anim::AnimGraph>(),
+        entry::<amoris_assets::anim::AnimState>(),
+        entry::<amoris_assets::anim::Attach>(),
         entry::<AudioSource>(),
         entry::<Board>(),
         entry::<Boat>(),
@@ -120,6 +123,10 @@ pub fn engine_components() -> [EngineComponent; 41] {
         entry::<Velocity>(),
         entry::<Vessel>(),
         entry::<Walker>(),
+        entry::<amoris_physics::Avatar>(),
+        entry::<amoris_physics::Buttons>(),
+        entry::<amoris_physics::nav::NavGrid>(),
+        entry::<amoris_physics::CameraRig>(),
         entry::<Wind>(),
         entry::<Rain>(),
         voxels_entry(),
@@ -666,6 +673,343 @@ fn walker_fns() -> EngineFns<Walker> {
     }
 }
 
+fn anim_graph_schema() -> Result<ComponentSchema, Problem> {
+    let d = amoris_assets::anim::AnimGraph::default();
+    schema(
+        "AnimGraph",
+        amoris_assets::anim::AnimGraph::VERSION,
+        "The animation graph an entity's model plays (animation.md 3); drive it with ctx.anim.",
+        vec![
+            (
+                "graph",
+                FieldType::Str,
+                FieldValue::Str(d.graph.into()),
+                "A graph file of the project's [animation] graphs.",
+            ),
+            (
+                "playing",
+                FieldType::Bool,
+                FieldValue::Bool(true),
+                "Whether the graph advances.",
+            ),
+            (
+                "speed",
+                FieldType::F64,
+                FieldValue::F64(1.0),
+                "Its playback rate (hit stop sets it low for a few ticks).",
+            ),
+        ],
+    )
+}
+
+fn anim_graph_fns() -> EngineFns<amoris_assets::anim::AnimGraph> {
+    fn write(g: &mut amoris_assets::anim::AnimGraph, v: &ProjectValues) {
+        (g.playing, g.speed) = (v.nums[0] != 0.0, v.nums[1]);
+        if let Some(s) = v.strs.first() {
+            g.graph = s.to_string();
+        }
+    }
+    EngineFns {
+        read: |g| ProjectValues {
+            nums: [bit(g.playing), g.speed].into(),
+            strs: Box::new([g.graph.as_str().into()]),
+        },
+        write,
+        make: |v| {
+            let mut g = amoris_assets::anim::AnimGraph::default();
+            write(&mut g, v);
+            g
+        },
+    }
+}
+
+fn attach_schema() -> Result<ComponentSchema, Problem> {
+    schema(
+        "Attach",
+        amoris_assets::anim::Attach::VERSION,
+        "Held at another entity's joint (a sword in a hand); the engine places it each tick.",
+        vec![
+            (
+                "to",
+                FieldType::Entity,
+                FieldValue::Entity(None),
+                "The entity holding it.",
+            ),
+            (
+                "joint",
+                FieldType::Str,
+                FieldValue::Str("".into()),
+                "The holder's joint.",
+            ),
+            (
+                "position",
+                FieldType::Vec3,
+                FieldValue::Vec3([0.0; 3]),
+                "Offset in the joint's frame, metres.",
+            ),
+            (
+                "rotation",
+                FieldType::Quat,
+                FieldValue::Quat([0.0, 0.0, 0.0, 1.0]),
+                "Turn in the joint's frame.",
+            ),
+        ],
+    )
+}
+
+fn attach_fns() -> EngineFns<amoris_assets::anim::Attach> {
+    fn write(a: &mut amoris_assets::anim::Attach, v: &ProjectValues) {
+        let n = &v.nums;
+        a.to = amoris_sim::EntityId::from_f64(n[0]).ok();
+        a.position = v3(n, 1);
+        a.rotation = [n[4], n[5], n[6], n[7]];
+        if let Some(s) = v.strs.first() {
+            a.joint = s.to_string();
+        }
+    }
+    EngineFns {
+        read: |a| ProjectValues {
+            nums: [
+                a.to.map_or(0.0, |id| id.to_f64()),
+                a.position[0],
+                a.position[1],
+                a.position[2],
+                a.rotation[0],
+                a.rotation[1],
+                a.rotation[2],
+                a.rotation[3],
+            ]
+            .into(),
+            strs: Box::new([a.joint.as_str().into()]),
+        },
+        write,
+        make: |v| {
+            let mut a = amoris_assets::anim::Attach::default();
+            write(&mut a, v);
+            a
+        },
+    }
+}
+
+const FACINGS: [&str; 4] = ["motion", "look", "target", "fixed"];
+
+fn avatar_schema() -> Result<ComponentSchema, Problem> {
+    let d = amoris_physics::Avatar::default();
+    let n = |name, value, doc| (name, FieldType::F64, FieldValue::F64(value), doc);
+    schema(
+        "Avatar",
+        amoris_physics::Avatar::VERSION,
+        "A visible body at a walker's feet that turns toward where it goes (animation.md 6).",
+        vec![
+            (
+                "walker",
+                FieldType::Entity,
+                FieldValue::Entity(None),
+                "The walker it stands for.",
+            ),
+            (
+                "facing",
+                FieldType::Enum(FACINGS.map(Box::from).into()),
+                FieldValue::Enum(0),
+                "How it turns: toward its motion, its look, its target, or not at all.",
+            ),
+            (
+                "target",
+                FieldType::Entity,
+                FieldValue::Entity(None),
+                "What it faces when facing is target.",
+            ),
+            n(
+                "turn_rate",
+                d.turn_rate,
+                "The fastest it turns, radians a second.",
+            ),
+            (
+                "root_motion",
+                FieldType::Bool,
+                FieldValue::Bool(true),
+                "Whether its graph's root motion moves the walker while it has any.",
+            ),
+            n(
+                "yaw",
+                0.0,
+                "Which way it faces, as a walker's yaw. Engine-written.",
+            ),
+            n(
+                "speed",
+                0.0,
+                "Its horizontal speed over the last tick, m/s. Engine-written.",
+            ),
+            (
+                "local",
+                FieldType::Vec2,
+                FieldValue::Vec2([0.0; 2]),
+                "That motion in its own frame: x to its right, y ahead, m/s. Engine-written.",
+            ),
+            (
+                "last",
+                FieldType::Vec3,
+                FieldValue::Vec3([0.0; 3]),
+                "Where it stood after the last tick. Engine-written.",
+            ),
+        ],
+    )
+}
+
+fn avatar_fns() -> EngineFns<amoris_physics::Avatar> {
+    fn write(a: &mut amoris_physics::Avatar, v: &ProjectValues) {
+        let n = &v.nums;
+        a.walker = amoris_sim::EntityId::from_f64(n[0]).ok();
+        a.facing = if n[1] == 1.0 {
+            amoris_physics::Facing::Look
+        } else if n[1] == 2.0 {
+            amoris_physics::Facing::Target
+        } else if n[1] == 3.0 {
+            amoris_physics::Facing::Fixed
+        } else {
+            amoris_physics::Facing::Motion
+        };
+        a.target = amoris_sim::EntityId::from_f64(n[2]).ok();
+        (a.turn_rate, a.root_motion, a.yaw, a.speed) = (n[3], n[4] != 0.0, n[5], n[6]);
+        a.local = [n[7], n[8]];
+        a.last = v3(n, 9);
+    }
+    EngineFns {
+        read: |a| {
+            let facing = match a.facing {
+                amoris_physics::Facing::Motion => 0.0,
+                amoris_physics::Facing::Look => 1.0,
+                amoris_physics::Facing::Target => 2.0,
+                amoris_physics::Facing::Fixed => 3.0,
+            };
+            nums(&[
+                a.walker.map_or(0.0, |id| id.to_f64()),
+                facing,
+                a.target.map_or(0.0, |id| id.to_f64()),
+                a.turn_rate,
+                bit(a.root_motion),
+                a.yaw,
+                a.speed,
+                a.local[0],
+                a.local[1],
+                a.last[0],
+                a.last[1],
+                a.last[2],
+            ])
+        },
+        write,
+        make: |v| {
+            let mut a = amoris_physics::Avatar::default();
+            write(&mut a, v);
+            a
+        },
+    }
+}
+
+fn camera_rig_schema() -> Result<ComponentSchema, Problem> {
+    let d = amoris_physics::CameraRig::default();
+    let n = |name, value, doc| (name, FieldType::F64, FieldValue::F64(value), doc);
+    schema(
+        "CameraRig",
+        amoris_physics::CameraRig::VERSION,
+        "A camera on a spring arm behind a walker's look, pulled in short of walls (animation.md 6).",
+        vec![
+            (
+                "target",
+                FieldType::Entity,
+                FieldValue::Entity(None),
+                "The walker whose look it follows.",
+            ),
+            n(
+                "pivot_m",
+                d.pivot_m,
+                "The arm's pivot over the walker's feet, metres.",
+            ),
+            n(
+                "shoulder_m",
+                d.shoulder_m,
+                "The camera's offset to the right, metres.",
+            ),
+            n("distance_m", d.distance_m, "The arm's length, metres."),
+            n(
+                "min_distance_m",
+                d.min_distance_m,
+                "The shortest it is pulled to, metres.",
+            ),
+            n(
+                "probe_m",
+                d.probe_m,
+                "How far from what it meets the camera stays, metres.",
+            ),
+            n(
+                "return_mps",
+                d.return_mps,
+                "How fast it lengthens again, m/s.",
+            ),
+            (
+                "look_at",
+                FieldType::Entity,
+                FieldValue::Entity(None),
+                "An entity it turns toward (lock-on).",
+            ),
+            n("length_m", d.length_m, "Its length now. Engine-written."),
+            n(
+                "shake",
+                d.shake,
+                "Shake, 0 to 1: raise it on a blow; it falls by shake_decay a second.",
+            ),
+            n(
+                "shake_decay",
+                d.shake_decay,
+                "How fast the shake falls, a second.",
+            ),
+            n("shake_m", d.shake_m, "The full shake's tremble, metres."),
+            n(
+                "shake_rad",
+                d.shake_rad,
+                "The full shake's turn of the look, radians.",
+            ),
+        ],
+    )
+}
+
+fn camera_rig_fns() -> EngineFns<amoris_physics::CameraRig> {
+    fn write(r: &mut amoris_physics::CameraRig, v: &ProjectValues) {
+        let n = &v.nums;
+        r.target = amoris_sim::EntityId::from_f64(n[0]).ok();
+        (r.pivot_m, r.shoulder_m, r.distance_m, r.min_distance_m) = (n[1], n[2], n[3], n[4]);
+        (r.probe_m, r.return_mps) = (n[5], n[6]);
+        r.look_at = amoris_sim::EntityId::from_f64(n[7]).ok();
+        r.length_m = n[8];
+        (r.shake, r.shake_decay, r.shake_m, r.shake_rad) = (n[9], n[10], n[11], n[12]);
+    }
+    EngineFns {
+        read: |r| {
+            nums(&[
+                r.target.map_or(0.0, |id| id.to_f64()),
+                r.pivot_m,
+                r.shoulder_m,
+                r.distance_m,
+                r.min_distance_m,
+                r.probe_m,
+                r.return_mps,
+                r.look_at.map_or(0.0, |id| id.to_f64()),
+                r.length_m,
+                r.shake,
+                r.shake_decay,
+                r.shake_m,
+                r.shake_rad,
+            ])
+        },
+        write,
+        make: |v| {
+            let mut r = amoris_physics::CameraRig::default();
+            write(&mut r, v);
+            r
+        },
+    }
+}
+
 fn board_schema() -> Result<ComponentSchema, Problem> {
     let d = Board::default();
     let n = |name, value, doc| (name, FieldType::F64, FieldValue::F64(value), doc);
@@ -859,6 +1203,99 @@ fn ui_text_schema() -> Result<ComponentSchema, Problem> {
             ),
         ],
     )
+}
+
+fn ui_bar_schema() -> Result<ComponentSchema, Problem> {
+    let d = UiBar::default();
+    let v4 = |name, value: [f64; 4], doc| (name, FieldType::Vec4, FieldValue::Vec4(value), doc);
+    schema(
+        "UiBar",
+        UiBar::VERSION,
+        "A bar on the screen (a health or stamina bar); its anchor stays as the scene sets it.",
+        vec![
+            (
+                "value",
+                FieldType::F64,
+                FieldValue::F64(d.value),
+                "How full, out of max.",
+            ),
+            (
+                "max",
+                FieldType::F64,
+                FieldValue::F64(d.max),
+                "A full bar's value.",
+            ),
+            (
+                "size",
+                FieldType::Vec2,
+                FieldValue::Vec2(d.size),
+                "Logical pixels.",
+            ),
+            v4("color", d.color, "sRGB with alpha: the filled part."),
+            v4("back", d.back, "sRGB with alpha: the background."),
+            (
+                "offset",
+                FieldType::Vec2,
+                FieldValue::Vec2(d.offset),
+                "Logical pixels from the anchor.",
+            ),
+            (
+                "world_offset",
+                FieldType::Vec3,
+                FieldValue::Vec3(d.world_offset),
+                "Metres above the entity, for an entity-anchored bar.",
+            ),
+            (
+                "visible",
+                FieldType::Bool,
+                FieldValue::Bool(true),
+                "Whether it is drawn.",
+            ),
+        ],
+    )
+}
+
+fn ui_bar_fns() -> EngineFns<UiBar> {
+    fn write(u: &mut UiBar, v: &ProjectValues) {
+        let n = &v.nums;
+        (u.value, u.max) = (n[0], n[1]);
+        u.size = [n[2], n[3]];
+        u.color = [n[4], n[5], n[6], n[7]];
+        u.back = [n[8], n[9], n[10], n[11]];
+        u.offset = [n[12], n[13]];
+        u.world_offset = v3(n, 14);
+        u.visible = n[17] != 0.0;
+    }
+    EngineFns {
+        read: |u| {
+            nums(&[
+                u.value,
+                u.max,
+                u.size[0],
+                u.size[1],
+                u.color[0],
+                u.color[1],
+                u.color[2],
+                u.color[3],
+                u.back[0],
+                u.back[1],
+                u.back[2],
+                u.back[3],
+                u.offset[0],
+                u.offset[1],
+                u.world_offset[0],
+                u.world_offset[1],
+                u.world_offset[2],
+                bit(u.visible),
+            ])
+        },
+        write,
+        make: |v| {
+            let mut u = UiBar::default();
+            write(&mut u, v);
+            u
+        },
+    }
 }
 
 fn ui_text_fns() -> EngineFns<UiText> {
@@ -1121,6 +1558,132 @@ fn light_fns() -> EngineFns<Light> {
     }
 }
 
+fn particle_emitter_schema() -> Result<ComponentSchema, Problem> {
+    let d = ParticleEmitter::default();
+    let f = |name, value: f64, doc| (name, FieldType::F64, FieldValue::F64(value), doc);
+    schema(
+        "ParticleEmitter",
+        ParticleEmitter::VERSION,
+        "GPU particles at an entity (spray, smoke, sparks, a falling stream): presentation only.",
+        vec![
+            f("rate", d.rate, "Particles per second while emitting."),
+            (
+                "burst",
+                FieldType::U32,
+                FieldValue::U32(d.burst),
+                "Particles released at once when burst_id changes.",
+            ),
+            (
+                "burst_id",
+                FieldType::U32,
+                FieldValue::U32(d.burst_id),
+                "Change it (any value) to fire the burst again.",
+            ),
+            (
+                "emitting",
+                FieldType::Bool,
+                FieldValue::Bool(d.emitting),
+                "Whether it emits at `rate`.",
+            ),
+            f("lifetime", d.lifetime, "Seconds a particle lives."),
+            f(
+                "speed",
+                d.speed,
+                "Initial speed, m/s, along the entity's +y.",
+            ),
+            f(
+                "spread_deg",
+                d.spread_deg,
+                "The cone about +y particles leave in.",
+            ),
+            (
+                "acceleration",
+                FieldType::Vec3,
+                FieldValue::Vec3(d.acceleration),
+                "m/s^2 (gravity is [0, -9.8, 0]; smoke rises).",
+            ),
+            f("drag", d.drag, "Fraction of velocity lost per second."),
+            (
+                "size",
+                FieldType::Vec2,
+                FieldValue::Vec2(d.size),
+                "Size at birth and at death, metres.",
+            ),
+            (
+                "color_start",
+                FieldType::Vec4,
+                FieldValue::Vec4(d.color_start),
+                "Linear colour and alpha at birth.",
+            ),
+            (
+                "color_end",
+                FieldType::Vec4,
+                FieldValue::Vec4(d.color_end),
+                "Linear colour and alpha at death.",
+            ),
+            f("radius", d.radius, "Emit from a sphere of this radius."),
+        ],
+    )
+}
+
+fn particle_emitter_fns() -> EngineFns<ParticleEmitter> {
+    fn read(p: &ParticleEmitter) -> ProjectValues {
+        let (a, s, c, e) = (p.acceleration, p.size, p.color_start, p.color_end);
+        nums(&[
+            p.rate,
+            f64::from(p.burst),
+            f64::from(p.burst_id),
+            bit(p.emitting),
+            p.lifetime,
+            p.speed,
+            p.spread_deg,
+            a[0],
+            a[1],
+            a[2],
+            p.drag,
+            s[0],
+            s[1],
+            c[0],
+            c[1],
+            c[2],
+            c[3],
+            e[0],
+            e[1],
+            e[2],
+            e[3],
+            p.radius,
+        ])
+    }
+    fn write(p: &mut ParticleEmitter, v: &ProjectValues) {
+        let n = &v.nums;
+        // Slots of a u32 field hold whole numbers in range (the schema checks writes).
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let u = |x: f64| x as u32;
+        p.rate = n[0];
+        p.burst = u(n[1]);
+        p.burst_id = u(n[2]);
+        p.emitting = n[3] != 0.0;
+        p.lifetime = n[4];
+        p.speed = n[5];
+        p.spread_deg = n[6];
+        p.acceleration = v3(n, 7);
+        p.drag = n[10];
+        p.size = [n[11], n[12]];
+        p.color_start = [n[13], n[14], n[15], n[16]];
+        p.color_end = [n[17], n[18], n[19], n[20]];
+        p.radius = n[21];
+    }
+    EngineFns {
+        read,
+        write,
+        make: |v| {
+            let mut p = ParticleEmitter::default();
+            write(&mut p, v);
+            p
+        },
+    }
+}
+
 fn environment_schema() -> Result<ComponentSchema, Problem> {
     let d = Environment::default();
     schema(
@@ -1335,6 +1898,31 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     ComponentRegistry::register::<Wind>(world, Some(wind_schema()?))?;
     ComponentRegistry::register::<Rain>(world, Some(rain_schema()?))?;
     ComponentRegistry::register::<Walker>(world, Some(walker_schema()?))?;
+    ComponentRegistry::register::<amoris_physics::Avatar>(world, Some(avatar_schema()?))?;
+    ComponentRegistry::register::<amoris_physics::nav::NavGrid>(world, None)?;
+    ComponentRegistry::register::<amoris_physics::Buttons>(
+        world,
+        Some(schema(
+            "Buttons",
+            amoris_physics::Buttons::VERSION,
+            "The game's buttons on a seat's body, a bit each in the order of [player] buttons.",
+            vec![
+                (
+                    "held",
+                    FieldType::U32,
+                    FieldValue::U32(0),
+                    "The buttons down now.",
+                ),
+                (
+                    "pressed",
+                    FieldType::U32,
+                    FieldValue::U32(0),
+                    "Those pressed since the last tick.",
+                ),
+            ],
+        )?),
+    )?;
+    ComponentRegistry::register::<amoris_physics::CameraRig>(world, Some(camera_rig_schema()?))?;
     ComponentRegistry::register::<Voxels>(world, None)?;
     ComponentRegistry::register::<WaterRegion>(world, None)?;
     ComponentRegistry::register::<WaterResident>(world, None)?;
@@ -1413,10 +2001,16 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     ComponentRegistry::register::<Environment>(world, Some(environment_schema()?))?;
     ComponentRegistry::register::<Splat>(world, None)?;
     ComponentRegistry::register::<Animator>(world, None)?;
+    ComponentRegistry::register::<amoris_assets::anim::AnimGraph>(
+        world,
+        Some(anim_graph_schema()?),
+    )?;
+    ComponentRegistry::register::<amoris_assets::anim::AnimState>(world, None)?;
+    ComponentRegistry::register::<amoris_assets::anim::Attach>(world, Some(attach_schema()?))?;
     ComponentRegistry::register::<UiText>(world, Some(ui_text_schema()?))?;
-    ComponentRegistry::register::<UiBar>(world, None)?;
+    ComponentRegistry::register::<UiBar>(world, Some(ui_bar_schema()?))?;
     ComponentRegistry::register::<AudioSource>(world, None)?;
-    ComponentRegistry::register::<ParticleEmitter>(world, None)?;
+    ComponentRegistry::register::<ParticleEmitter>(world, Some(particle_emitter_schema()?))?;
     let after = names(world);
     if before != after {
         return Err(Problem::new(
@@ -1435,9 +2029,29 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     register_engine::<Wind>(world, wind_fns())?;
     register_engine::<Rain>(world, rain_fns())?;
     register_engine::<Walker>(world, walker_fns())?;
+    register_engine::<amoris_physics::Avatar>(world, avatar_fns())?;
+    register_engine::<amoris_physics::Buttons>(
+        world,
+        EngineFns {
+            read: |b| nums(&[f64::from(b.held), f64::from(b.pressed)]),
+            write: |b, v| {
+                b.held = amoris_sim::num::to_u32(v.nums[0]).unwrap_or(0);
+                b.pressed = amoris_sim::num::to_u32(v.nums[1]).unwrap_or(0);
+            },
+            make: |v| amoris_physics::Buttons {
+                held: amoris_sim::num::to_u32(v.nums[0]).unwrap_or(0),
+                pressed: amoris_sim::num::to_u32(v.nums[1]).unwrap_or(0),
+            },
+        },
+    )?;
+    register_engine::<amoris_physics::CameraRig>(world, camera_rig_fns())?;
+    register_engine::<amoris_assets::anim::AnimGraph>(world, anim_graph_fns())?;
+    register_engine::<amoris_assets::anim::Attach>(world, attach_fns())?;
     register_engine::<UiText>(world, ui_text_fns())?;
+    register_engine::<UiBar>(world, ui_bar_fns())?;
     register_engine::<Model>(world, model_fns())?;
     register_engine::<Light>(world, light_fns())?;
+    register_engine::<ParticleEmitter>(world, particle_emitter_fns())?;
     register_engine::<Environment>(world, environment_fns())?;
     register_engine::<WaterSource>(world, flow_fns!(WaterSource))?;
     register_engine::<WaterDrain>(world, flow_fns!(WaterDrain))?;
@@ -1554,6 +2168,34 @@ mod tests {
         let mut out = Light::default();
         (fns.write)(&mut out, &v);
         assert_eq!(out, l);
+    }
+
+    #[test]
+    fn a_particle_emitter_slots_round_trip() {
+        let p = ParticleEmitter {
+            rate: 240.0,
+            burst: 12,
+            burst_id: 3,
+            emitting: false,
+            lifetime: 2.5,
+            speed: 4.0,
+            spread_deg: 8.0,
+            acceleration: [0.5, -9.8, 0.0],
+            drag: 0.1,
+            size: [0.3, 0.9],
+            color_start: [0.8, 0.9, 1.0, 0.7],
+            color_end: [0.9, 0.95, 1.0, 0.0],
+            radius: 0.4,
+        };
+        let fns = particle_emitter_fns();
+        let v = (fns.read)(&p);
+        assert_eq!(
+            v.nums.len(),
+            usize::from(particle_emitter_schema().unwrap().slots())
+        );
+        let mut out = ParticleEmitter::default();
+        (fns.write)(&mut out, &v);
+        assert_eq!(out, p);
     }
 
     #[test]

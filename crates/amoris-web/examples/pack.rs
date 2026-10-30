@@ -19,9 +19,11 @@ fn pack(project: &str, out: &str) -> Result<serde_json::Value, Problem> {
     let p = Project::load(std::path::Path::new(project))?;
     let setup = Arc::new(p.setup(false)?);
     let mut package = Package::from_setup(&setup, p.manifest.seed);
+    package.sounds = p.manifest.sounds.clone();
     if let Some(player) = &p.manifest.player {
         package.player_camera = player.camera;
         package.player_controls = player.controls.clone();
+        package.player_buttons = player.buttons.iter().map(|b| b.keys.clone()).collect();
     }
     let bytes = package.to_bytes();
     std::fs::write(out, &bytes).map_err(|e| {

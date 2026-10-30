@@ -165,6 +165,12 @@ pub(crate) enum Command {
         column: (usize, usize),
         m3: f64,
     },
+    /// An animation graph's parameter or montage request (animation.md 4).
+    Anim {
+        id: EntityId,
+        param: Option<(String, f64)>,
+        command: Option<amoris_assets::anim::AnimCommand>,
+    },
 }
 
 /// A column handed to the script, kept to compare after the call.
@@ -312,6 +318,9 @@ pub(crate) fn apply(
                 {
                     *v = *volume;
                 }
+            }
+            Command::Anim { id, param, command } => {
+                crate::natives::anim::apply(world, id, param, command);
             }
             Command::Water { id, column, m3 } => {
                 if let Some(e) = entity::entity(world, id)

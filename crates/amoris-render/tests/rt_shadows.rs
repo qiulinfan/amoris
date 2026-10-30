@@ -124,6 +124,7 @@ fn raise(time: f32) -> AnimView {
         time,
         rate: 0.0,
         looped: false,
+        ..AnimView::default()
     }
 }
 

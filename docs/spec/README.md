@@ -33,6 +33,7 @@ their code is under `spikes/`.
 | [budgets.md](budgets.md) | spec-arch | 3.10 and 12 item 2 (benchmarks on reference hardware and their reference figures, reported and never a pass condition), with the figures slice 0 measured |
 | [metal-gi.md](metal-gi.md) | metal | Charter 4.4 (world-space probe baking, SHaRC, ReSTIR exploration and learned diffuse fields), with measured limits in docs/bench/metal-gi.md |
 | [path-tracing-nrc.md](path-tracing-nrc.md) | metal, rt | Charter 4.4 (static surface path tracing and the online NRC toy, on every backend with ray queries since 2026-10-09), measured in docs/bench/path-tracing-nrc.md |
+| [animation.md](animation.md) | thornkeep | Charter 4.2 and 5.1 (2026-10-30: character animation in the simulation after Unreal and Godot: graphs, montages, notifies, root motion, sockets; script physics queries; the third-person rig; navigation) |
 | [rt-shadows.md](rt-shadows.md) | rt | Charter 4.4 (Pioneer 2026-10-09: opt-in ray-traced sun shadows in the interactive renderer), measured in docs/bench/rt-shadows.md |
 | [neural-textures.md](neural-textures.md) | neural | Charter 4.4 (Pioneer 2026-10-09: neural texture compression: the `.ntex` file, the GPU trainer, the forward pass's decoder), measured in docs/bench/neural-textures.md |
 | [shared/contract/README.md](../../shared/contract/README.md) | spec-contract | 6.1 and 6.2 (the shared contract, its versioning and record), seats and roles, the game definition, conformance checks |

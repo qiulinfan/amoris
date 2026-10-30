@@ -302,6 +302,19 @@ impl Skinning {
             };
             let pose = poses.entry(p.entity).or_insert_with(|| {
                 let a = anims.get(&p.entity);
+                // A pose the simulation evaluated (animation.md 5), between its last two ticks.
+                if let Some(a) = a.filter(|a| !a.pose.is_empty()) {
+                    let u = if a.tick_s > 0.0 {
+                        (1.0 + since_tick_s / a.tick_s).clamp(0.0, 1.0)
+                    } else {
+                        1.0
+                    };
+                    if let Some(g) =
+                        amoris_assets::animation::global_pose_from(&p.asset, &a.prev, &a.pose, u)
+                    {
+                        return g;
+                    }
+                }
                 let clip = a
                     .and_then(|a| find_clip(&p.asset, &a.clip))
                     .or_else(|| p.asset.animations.first());

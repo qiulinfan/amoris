@@ -87,6 +87,10 @@ fn convert(
             },
             alpha_cutoff: m.alpha_cutoff().unwrap_or(0.5),
             double_sided: m.double_sided(),
+            uv_scale: pbr
+                .base_color_texture()
+                .and_then(|t| t.texture_transform())
+                .map_or(1.0, |t| 0.5 * (t.scale()[0] + t.scale()[1])),
         });
     }
     // glTF mesh index -> our mesh indices (one per primitive).

@@ -343,6 +343,73 @@ export class Query<W extends ComponentName = ComponentName, F extends string = s
 /** Three cell coordinates, or a point or direction in metres. */
 export type Triple = readonly [number, number, number];
 
+/** What a physics query met (docs/spec/animation.md 7): an entity with a collider, or a walker. */
+export interface PhysicsHit {
+    readonly entity: Entity;
+    /** How far along the ray or the sweep, metres. */
+    readonly distance: number;
+    readonly point: Triple;
+    readonly normal: Triple;
+}
+
+/** What a physics query leaves out: these entities, and the walkers when `walkers` is false. */
+export interface PhysicsOptions {
+    readonly exclude?: readonly Entity[];
+    readonly walkers?: boolean;
+}
+
+/** Physics queries over the colliders and the walkers (as upright capsules), as the last step left
+ * them (docs/spec/animation.md 7). */
+export interface PhysicsAccess {
+    /** The first thing a ray from `from` along `dir` meets within `maxM`, or null. */
+    ray(from: Triple, dir: Triple, maxM: number, options?: PhysicsOptions): PhysicsHit | null;
+    /** The first thing a ball of `radius` meets moving from `from` to `to`, or null. */
+    sweep(from: Triple, to: Triple, radius: number, options?: PhysicsOptions): PhysicsHit | null;
+    /** The entities a ball overlaps, ascending by id. */
+    sphere(center: Triple, radius: number, options?: PhysicsOptions): readonly Entity[];
+}
+
+/** Navigation over a `NavGrid`'s walkable floors (docs/spec/animation.md 8). */
+export interface NavAccess {
+    /** Waypoints from `from` to `to`, or null when no way joins them. The first query bakes the grid. */
+    path(grid: Entity, from: Triple, to: Triple): readonly Triple[] | null;
+    /** The walkable point nearest `at` within `radius` metres, or null. */
+    nearest(grid: Entity, at: Triple, radius: number): Triple | null;
+}
+
+/** A joint's place in the world after the last tick's animation. */
+export interface AnimSocket {
+    readonly position: Triple;
+    readonly rotation: readonly [number, number, number, number];
+}
+
+/** What an animation graph plays: each layer's state, and the montage playing, if any. */
+export interface AnimInfo {
+    readonly layers: readonly { readonly state: string; readonly time: number }[];
+    readonly montage: { readonly name: string; readonly section: string; readonly time: number } | null;
+}
+
+/** An entity's animation graph (`AnimGraph`; docs/spec/animation.md 4): its parameters, its
+ * montages and its sockets. Requests apply at the next evaluation (Forces, this tick). */
+export interface AnimAccess {
+    /** Sets a parameter (a boolean is stored as 1 or 0). */
+    set(e: Entity, name: string, value: number | boolean): void;
+    /** A parameter's value (0 if unset). */
+    param(e: Entity, name: string): number;
+    /** Plays a montage from its first section, or `section`. */
+    play(e: Entity, montage: string, options?: { readonly section?: string; readonly rate?: number }): void;
+    /** The section after the current one (a combo's next swing). */
+    next(e: Entity, section: string): void;
+    /** Goes to a section now. */
+    jump(e: Entity, section: string): void;
+    /** Fades the playing montages out over `fade` seconds. */
+    stop(e: Entity, fade?: number): void;
+    /** The graph's state, or null before its first evaluation. */
+    state(e: Entity): AnimInfo | null;
+    /** A socket's place in the world (the graph's `sockets`), or null. */
+    socket(e: Entity, joint: string): AnimSocket | null;
+}
+
 /** Where a ray met a block (docs/spec/voxels.md 4). */
 export interface VoxelHit {
     /** The cell hit, in the volume's grid. */
@@ -456,6 +523,12 @@ export interface SystemContext {
     readonly voxels: VoxelAccess;
     /** Water regions. */
     readonly water: WaterAccess;
+    /** Rays, sweeps and overlaps over colliders and walkers. */
+    readonly physics: PhysicsAccess;
+    /** Animation graphs. */
+    readonly anim: AnimAccess;
+    /** Paths over navigation grids. */
+    readonly nav: NavAccess;
 }
 
 function annotate(err: unknown, entity: number): unknown {
@@ -494,6 +567,41 @@ const voxels: VoxelAccess = Object.freeze({
         maxM: number,
         options?: { readonly solidOnly?: boolean },
     ): VoxelHit | null => host.voxelsRaycast(volume, from, dir, maxM, options?.solidOnly === true),
+});
+
+const physics: PhysicsAccess = Object.freeze({
+    ray: (from: Triple, dir: Triple, maxM: number, options?: PhysicsOptions): PhysicsHit | null =>
+        host.physicsRay(from, dir, maxM, options),
+    sweep: (from: Triple, to: Triple, radius: number, options?: PhysicsOptions): PhysicsHit | null =>
+        host.physicsSweep(from, to, radius, options),
+    sphere: (center: Triple, radius: number, options?: PhysicsOptions): readonly Entity[] =>
+        host.physicsSphere(center, radius, options),
+});
+
+const nav: NavAccess = Object.freeze({
+    path: (grid: Entity, from: Triple, to: Triple): readonly Triple[] | null => host.navPath(grid, from, to),
+    nearest: (grid: Entity, at: Triple, radius: number): Triple | null => host.navNearest(grid, at, radius),
+});
+
+const anim: AnimAccess = Object.freeze({
+    set: (e: Entity, name: string, value: number | boolean): void => {
+        host.animSet(e, name, value);
+    },
+    param: (e: Entity, name: string): number => host.animParam(e, name),
+    play: (e: Entity, montage: string, options?: { readonly section?: string; readonly rate?: number }): void => {
+        host.animCommand(e, "play", montage, options?.section ?? "", options?.rate ?? 1, 0);
+    },
+    next: (e: Entity, section: string): void => {
+        host.animCommand(e, "next", "", section, 0, 0);
+    },
+    jump: (e: Entity, section: string): void => {
+        host.animCommand(e, "jump", "", section, 0, 0);
+    },
+    stop: (e: Entity, fade?: number): void => {
+        host.animCommand(e, "stop", "", "", 0, fade ?? 0.2);
+    },
+    state: (e: Entity): AnimInfo | null => host.animState(e),
+    socket: (e: Entity, joint: string): AnimSocket | null => host.animSocket(e, joint),
 });
 
 const water: WaterAccess = Object.freeze({
@@ -556,6 +664,9 @@ export function __context(info: CallInfo): SystemContext {
         intent: (actor: Entity, kind: string, params?: Data): void => host.intent(actor, kind, params),
         voxels,
         water,
+        physics,
+        anim,
+        nav,
     }) as SystemContext;
 }
 

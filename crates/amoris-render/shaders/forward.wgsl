@@ -225,34 +225,36 @@ fn antialiased_roughness(n: vec3f, roughness: f32) -> f32 {
 
 fn surface(in: VsOut, facing: bool) -> Surface {
     let m = materials[in.material];
+    // A terrain layer's texture runs over the world's x and z, a unit a metre (terrain.rs).
+    let uv = select(in.uv, in.world.xz, (m.flags & 32u) != 0u) * m.uv_scale;
     // Explicit gradients: the material (and so whether a texture exists) varies per pixel, and
     // implicit derivatives need uniform control flow. Per output pixel at a render scale below 1.
-    let du = dpdx(in.uv) * view.texture_lod.x;
-    let dv = dpdy(in.uv) * view.texture_lod.y;
+    let du = dpdx(uv) * view.texture_lod.x;
+    let dv = dpdy(uv) * view.texture_lod.y;
     var s: Surface;
     var base = m.base_color;
     if (m.base_color_tex != NO_TEXTURE) {
-        base *= textureSampleGrad(tex_srgb, tex_sampler, in.uv, m.base_color_tex, du, dv);
+        base *= textureSampleGrad(tex_srgb, tex_sampler, uv, m.base_color_tex, du, dv);
     }
     s.albedo = base.rgb;
     s.alpha = base.a;
     s.metallic = m.metallic;
     s.roughness = m.roughness;
     if (m.metal_rough_tex != NO_TEXTURE) {
-        let mr = textureSampleGrad(tex_linear, tex_sampler, in.uv, m.metal_rough_tex, du, dv);
+        let mr = textureSampleGrad(tex_linear, tex_sampler, uv, m.metal_rough_tex, du, dv);
         s.roughness *= mr.g;
         s.metallic *= mr.b;
     }
     var tn = vec3f(0.0);
     let mapped = m.normal_tex != NO_TEXTURE;
     if (mapped) {
-        tn = textureSampleGrad(tex_linear, tex_sampler, in.uv, m.normal_tex, du, dv).xyz * 2.0 - 1.0;
+        tn = textureSampleGrad(tex_linear, tex_sampler, uv, m.normal_tex, du, dv).xyz * 2.0 - 1.0;
     }
     let n = shading_normal(in, facing, tn, mapped);
     s.n = n;
     s.emissive = m.emissive;
     if (m.emissive_tex != NO_TEXTURE) {
-        s.emissive *= textureSampleGrad(tex_srgb, tex_sampler, in.uv, m.emissive_tex, du, dv).rgb;
+        s.emissive *= textureSampleGrad(tex_srgb, tex_sampler, uv, m.emissive_tex, du, dv).rgb;
     }
     s.roughness = antialiased_roughness(n, s.roughness);
     s.occlusion = 1.0;
@@ -326,8 +328,38 @@ fn fs(in: VsOut, @builtin(front_facing) facing: bool) -> SceneOut {
 }
 
 // Alpha-tested materials only: the one entry point with `discard`.
+// A terrain's layers share the triangles along their edges (terrain.rs `mesh`): each copy's uv is
+// the interval of [0, 1) its layer holds there, and a pixel is drawn by the one copy whose
+// interval holds this noise of the pixel's place in the world. The noise is value noise of three
+// octaves (2.5 m, 0.9 m and 0.3 m), so one ground gives way to the next in patches and specks.
+fn terrain_lattice(i: vec2i) -> f32 {
+    return unit_from_hash(pcg_hash(bitcast<u32>(i.x) ^ pcg_hash(bitcast<u32>(i.y))));
+}
+
+fn terrain_value(p: vec2f) -> f32 {
+    let f = floor(p);
+    let u = p - f;
+    let s = u * u * (3.0 - 2.0 * u);
+    let i = vec2i(f);
+    let a = mix(terrain_lattice(i), terrain_lattice(i + vec2i(1, 0)), s.x);
+    let b = mix(terrain_lattice(i + vec2i(0, 1)), terrain_lattice(i + vec2i(1, 1)), s.x);
+    return mix(a, b, s.y);
+}
+
+fn terrain_kept(in: VsOut) -> bool {
+    let p = in.world.xz;
+    let n = 0.55 * terrain_value(p / 2.5) + 0.3 * terrain_value(p / 0.9 + 31.0)
+        + 0.15 * terrain_value(p / 0.3 - 57.0);
+    // Stretched from the octaves' bunching around a half toward the whole interval.
+    let c = clamp(0.5 + (n - 0.5) * 2.2, 0.0, 0.99999);
+    return c >= in.uv.x && c < in.uv.y;
+}
+
 @fragment
 fn fs_masked(in: VsOut, @builtin(front_facing) facing: bool) -> SceneOut {
+    if ((materials[in.material].flags & 32u) != 0u && !terrain_kept(in)) {
+        discard;
+    }
     let s = surface(in, facing);
     if (s.alpha < materials[in.material].alpha_cutoff) {
         discard;
@@ -468,8 +500,8 @@ fn transparent(in: VsOut, s: Surface, du: vec2f, dv: vec2f) -> vec4f {
     }
     var transmission = m.transmission;
     if (m.transmission_tex != NO_TEXTURE) {
-        transmission *= textureSampleGrad(tex_linear, tex_sampler, in.uv, m.transmission_tex, du,
-            dv).r;
+        transmission *= textureSampleGrad(tex_linear, tex_sampler, in.uv * m.uv_scale,
+            m.transmission_tex, du * m.uv_scale, dv * m.uv_scale).r;
     }
     let dielectric = 1.0 - s.metallic;
     var color = s.albedo + s.emissive;
@@ -590,7 +622,7 @@ fn fs_shadow_masked(in: MaskedShadowOut) {
     let m = materials[in.material];
     var a = m.base_color.a;
     if (m.base_color_tex != NO_TEXTURE) {
-        a *= textureSampleLevel(tex_srgb, tex_sampler, in.uv, m.base_color_tex, 0.0).a;
+        a *= textureSampleLevel(tex_srgb, tex_sampler, in.uv * m.uv_scale, m.base_color_tex, 0.0).a;
     }
     // A transparent material casts as alpha-masked (materials.rs `variant`): what transmits is
     // not opaque. 0 for every other material.
@@ -636,11 +668,12 @@ fn vs_depth_masked(v: VsIn, @builtin(instance_index) ii: u32) -> DepthOut {
 @fragment
 fn fs_depth_masked(in: DepthOut) {
     let m = materials[in.material];
-    let du = dpdx(in.uv) * view.texture_lod.x;
-    let dv = dpdy(in.uv) * view.texture_lod.y;
+    let uv = in.uv * m.uv_scale;
+    let du = dpdx(uv) * view.texture_lod.x;
+    let dv = dpdy(uv) * view.texture_lod.y;
     var a = m.base_color.a;
     if (m.base_color_tex != NO_TEXTURE) {
-        a *= textureSampleGrad(tex_srgb, tex_sampler, in.uv, m.base_color_tex, du, dv).a;
+        a *= textureSampleGrad(tex_srgb, tex_sampler, uv, m.base_color_tex, du, dv).a;
     }
     if (a < m.alpha_cutoff) {
         discard;

@@ -43,7 +43,9 @@
 //! above 2 kHz).
 
 use std::f32::consts::TAU;
+#[cfg(feature = "playback")]
 use std::sync::Arc;
+#[cfg(feature = "playback")]
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// The kinds of source, in the renderer's tally's order (falls, rapids, bursts, breaking,
@@ -510,20 +512,24 @@ impl WaterSynth {
     }
 }
 
+#[cfg(feature = "playback")]
 /// The water sound's latest sources, shared with kira's audio thread.
 struct Shared {
     values: [AtomicU32; KINDS * 3],
 }
 
+#[cfg(feature = "playback")]
 /// Plays a `WaterSynth` through kira; set its sources with the handle.
 pub struct WaterSoundData {
     pub seed: u32,
 }
 
+#[cfg(feature = "playback")]
 pub struct WaterHandle {
     shared: Arc<Shared>,
 }
 
+#[cfg(feature = "playback")]
 impl WaterHandle {
     pub fn set(&self, sources: &[WaterSource; KINDS]) {
         for (k, s) in sources.iter().enumerate() {
@@ -534,12 +540,14 @@ impl WaterHandle {
     }
 }
 
+#[cfg(feature = "playback")]
 struct WaterSound {
     synth: WaterSynth,
     shared: Arc<Shared>,
     frames: Vec<[f32; 2]>,
 }
 
+#[cfg(feature = "playback")]
 impl kira::sound::SoundData for WaterSoundData {
     type Error = std::convert::Infallible;
     type Handle = WaterHandle;
@@ -557,6 +565,7 @@ impl kira::sound::SoundData for WaterSoundData {
     }
 }
 
+#[cfg(feature = "playback")]
 impl kira::sound::Sound for WaterSound {
     fn process(&mut self, out: &mut [kira::Frame], dt: f64, _info: &kira::info::Info) {
         let rate = (1.0 / dt).round() as f32;

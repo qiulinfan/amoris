@@ -72,6 +72,19 @@ pub struct PlayerManifest {
     /// A plain-text control legend for the browser player's loading and pause veil.
     #[serde(default)]
     pub controls: Option<String>,
+    /// The game's own buttons and their keys (animation.md 6): bit i of the seat's `held` and
+    /// `pressed` controls is the i-th; at most 16. Keys are the page's `KeyboardEvent.code` names
+    /// (`KeyQ`, `Space`, `Digit1`, `ShiftLeft`) or `MouseLeft`, `MouseRight`, `MouseMiddle`.
+    #[serde(default)]
+    pub buttons: Vec<ButtonDef>,
+}
+
+/// One of the game's buttons.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ButtonDef {
+    pub name: String,
+    pub keys: Vec<String>,
 }
 
 /// How a first-person seat's native window and browser player aim their camera.

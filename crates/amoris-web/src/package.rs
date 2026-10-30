@@ -42,6 +42,21 @@ pub struct Package {
     /// The project's control legend, shown before a human captures the mouse.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub player_controls: Option<String>,
+    /// The keys of each of the game's own buttons (`[player] buttons`, animation.md 6), in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub player_buttons: Vec<Vec<String>>,
+    /// Presentation only: the project's `[sounds]`, event name (or `prefix.*`) to clip, which the
+    /// player page plays as the native window does.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub sounds: std::collections::BTreeMap<String, String>,
+    /// The animation graphs and the skeletons and clips they play, read natively
+    /// (docs/spec/animation.md 2): the worker never parses a glTF file.
+    #[serde(default, skip_serializing_if = "is_empty_animation")]
+    pub animation: amoris_assets::anim::AnimLibrary,
+}
+
+fn is_empty_animation(a: &amoris_assets::anim::AnimLibrary) -> bool {
+    a.graphs.is_empty()
 }
 
 fn invalid(message: String) -> Problem {
@@ -66,6 +81,9 @@ impl Package {
             player: setup.player.clone(),
             player_camera: Default::default(),
             player_controls: None,
+            player_buttons: Vec::new(),
+            sounds: Default::default(),
+            animation: (*setup.animation).clone(),
         }
     }
 
@@ -100,6 +118,7 @@ impl Package {
             limits: Default::default(),
             lint_off: false,
             player: self.player.clone(),
+            animation: std::sync::Arc::new(self.animation.clone()),
         })
     }
 }

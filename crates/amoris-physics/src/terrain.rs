@@ -317,25 +317,15 @@ pub(crate) fn ground(
     }
 }
 
-/// The terrain's ground as a triangle mesh in its entity's frame.
+/// The terrain's ground as a heightfield in its entity's frame: the corners' heights, split into
+/// triangles across the same diagonal the renderer draws.
 pub fn collider(t: &Terrain) -> Collider {
-    let [nx, nz] = t.corners();
-    let h = t.heights();
-    let vertices = h
-        .iter()
-        .enumerate()
-        .map(|(n, y)| [metres(n % nx, t.cell_m), *y, metres(n / nx, t.cell_m)])
-        .collect();
-    let row = u32::try_from(nx).unwrap_or(u32::MAX);
-    let mut indices = Vec::with_capacity(2 * (nx - 1) * (nz - 1));
-    for k in 0..t.size[1] {
-        for i in 0..t.size[0] {
-            let a = i + row * k;
-            indices.push([a, a + row, a + 1]);
-            indices.push([a + 1, a + row, a + row + 1]);
-        }
-    }
-    Collider::new(Shape::TriMesh { vertices, indices }).with_friction(0.7, 0.0)
+    Collider::new(Shape::HeightField {
+        size: t.size,
+        cell_m: t.cell_m,
+        heights: t.heights(),
+    })
+    .with_friction(0.7, 0.0)
 }
 
 /// The coordinate of corner `i` of cells `cell` metres wide.
@@ -477,6 +467,83 @@ fn carve(h: &mut [f64], corners: [usize; 2], cell: f64, path: &[[f64; 3]], width
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )] // points on the grid
+    fn the_heightfield_ground_meets_rays_where_the_drawn_triangles_are() {
+        use rapier3d::parry::query::Ray;
+        let mut t = Terrain {
+            size: [40, 30],
+            cell_m: 1.5,
+            base_m: 4.0,
+            features: vec![
+                TerrainFeature::Noise {
+                    amplitude_m: 2.0,
+                    wavelength_m: 13.0,
+                    seed: 3,
+                },
+                TerrainFeature::Hill {
+                    at: [20.0, 15.0],
+                    radius_m: 14.0,
+                    height_m: 5.0,
+                },
+            ],
+            look: TerrainLook::default(),
+        };
+        t.features.push(TerrainFeature::Slope {
+            toward_deg: 30.0,
+            grade: 0.1,
+        });
+        let collider = collider(&t);
+        let shape =
+            crate::solver::shared_shape(EntityId::new(1).unwrap(), &collider.shape).unwrap();
+        let offset = crate::solver::shape_offset(&collider.shape);
+        let h = t.heights();
+        let nx = t.corners()[0];
+        // Off the grid lines: a vertical ray exactly along a cell edge can pass between parry's
+        // triangles (the walker sweeps a box, which cannot).
+        for (x, z) in [
+            (0.3, 0.2),
+            (7.7, 3.1),
+            (21.4, 15.9),
+            (33.3, 40.1),
+            (59.2, 44.6),
+            (12.4, 30.7),
+        ] {
+            // The triangle under (x, z): split across the (i + 1, k) to (i, k + 1) diagonal.
+            let (gx, gz) = (x / t.cell_m, z / t.cell_m);
+            let (i, k) = (
+                (gx as usize).min(t.size[0] as usize - 1),
+                (gz as usize).min(t.size[1] as usize - 1),
+            );
+            let (tx, tz) = (gx - i as f64, gz - k as f64);
+            let at = |i: usize, k: usize| h[i + nx * k];
+            let want = if tx + tz <= 1.0 {
+                at(i, k) + tx * (at(i + 1, k) - at(i, k)) + tz * (at(i, k + 1) - at(i, k))
+            } else {
+                at(i + 1, k + 1)
+                    + (1.0 - tx) * (at(i, k + 1) - at(i + 1, k + 1))
+                    + (1.0 - tz) * (at(i + 1, k) - at(i + 1, k + 1))
+            };
+            let origin = crate::geom::vec_in([x, 50.0, z]) - offset;
+            let ray = Ray::new(origin, crate::geom::vec_in([0.0, -1.0, 0.0]));
+            let toi = shape.cast_local_ray(&ray, 100.0, true).unwrap_or_else(|| {
+                panic!(
+                    "the ray at ({x}, {z}) misses the ground; its box is {:?}",
+                    shape.compute_local_aabb()
+                )
+            });
+            let got = 50.0 - f64::from(toi);
+            assert!(
+                (got - want).abs() < 2e-3,
+                "at ({x}, {z}): {got} against {want}"
+            );
+        }
+    }
 
     fn flat(size: [u32; 2], cell: f64, base: f64) -> Terrain {
         Terrain {

@@ -207,15 +207,53 @@ pub enum Shape {
     Compound {
         parts: Vec<Part>,
     },
+    /// A heightfield on the x-z plane from its corner at the body's origin: `size` cells of
+    /// `cell_m` metres along x and z, `heights` at the cells' corners, x fastest. Each cell splits
+    /// into two triangles across its (x + 1, z) to (x, z + 1) diagonal. A terrain's ground
+    /// (water.md 65): a fixed body only. Far smaller than the same ground as a triangle mesh, and
+    /// built without a bounding-volume tree.
+    HeightField {
+        size: [u32; 2],
+        cell_m: f64,
+        heights: Vec<f64>,
+    },
 }
 
 impl Shape {
+    /// A heightfield's corners as points in the body's frame, x fastest; empty for other shapes.
+    pub fn heightfield_points(&self) -> Vec<V3> {
+        let Shape::HeightField {
+            size,
+            cell_m,
+            heights,
+        } = self
+        else {
+            return Vec::new();
+        };
+        let nx = size[0] as usize + 1;
+        heights
+            .iter()
+            .enumerate()
+            .map(|(n, y)| {
+                let (i, k) = (n % nx, n / nx);
+                [
+                    f64::from(u32::try_from(i).unwrap_or(u32::MAX)) * cell_m,
+                    *y,
+                    f64::from(u32::try_from(k).unwrap_or(u32::MAX)) * cell_m,
+                ]
+            })
+            .collect()
+    }
+
     /// Whether Rapier would compute this shape's mass properties with the platform's math
     /// (numeric.md 5): hulls, meshes and compounds.
     pub fn platform_mass(&self) -> bool {
         matches!(
             self,
-            Shape::ConvexHull { .. } | Shape::TriMesh { .. } | Shape::Compound { .. }
+            Shape::ConvexHull { .. }
+                | Shape::TriMesh { .. }
+                | Shape::Compound { .. }
+                | Shape::HeightField { .. }
         )
     }
 
@@ -227,6 +265,7 @@ impl Shape {
             Shape::ConvexHull { .. } => "ConvexHull",
             Shape::TriMesh { .. } => "TriMesh",
             Shape::Compound { .. } => "Compound",
+            Shape::HeightField { .. } => "HeightField",
         }
     }
 }
@@ -401,6 +440,28 @@ fn check_shape(shape: &Shape) -> Result<(), String> {
             {
                 return Err(format!(
                     "a triangle names a vertex past the {n} the mesh has"
+                ));
+            }
+            Ok(())
+        }
+        Shape::HeightField {
+            size,
+            cell_m,
+            heights,
+        } => {
+            let corners = (size[0] as usize + 1) * (size[1] as usize + 1);
+            if size[0] == 0 || size[1] == 0 || *cell_m <= 0.0 || !geom::finite32(&[*cell_m; 3]) {
+                return Err(
+                    "a heightfield needs at least one cell along x and z and a positive \
+                            cell edge"
+                        .into(),
+                );
+            }
+            if heights.len() != corners || !heights.iter().all(|h| geom::finite32(&[*h; 3])) {
+                return Err(format!(
+                    "a heightfield of {} x {} cells needs {corners} heights, finite in the \
+                     solver's f32",
+                    size[0], size[1]
                 ));
             }
             Ok(())

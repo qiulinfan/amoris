@@ -65,11 +65,14 @@ impl Subject {
             name: dir.display().to_string().replace('\\', "/"),
             dir: dir.to_path_buf(),
             config,
-            setup,
             inputs,
             branch,
             build: Arc::new(|setup, seed| Game::new(setup.clone(), seed)),
-            replay_build: Arc::new(Game::for_replay),
+            replay_build: {
+                let animation = setup.animation.clone();
+                Arc::new(move |replay| Game::for_replay_animated(replay, animation.clone(), |b| b))
+            },
+            setup,
         })
     }
 

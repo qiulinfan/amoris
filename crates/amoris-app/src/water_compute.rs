@@ -32,8 +32,10 @@ pub fn configure(builder: GameBuilder) -> GameBuilder {
 #[allow(dead_code)] // This module is also shared with the GPU example and integration test.
 pub fn configure_subject(subject: &mut amoris_check::Subject) {
     subject.build = Arc::new(|setup, seed| builder(setup.clone(), seed).build());
-    subject.replay_build =
-        Arc::new(|replay| amoris_runtime::Game::for_replay_with(replay, configure));
+    let animation = subject.setup.animation.clone();
+    subject.replay_build = Arc::new(move |replay| {
+        amoris_runtime::Game::for_replay_animated(replay, animation.clone(), configure)
+    });
 }
 
 #[derive(Clone, Default)]

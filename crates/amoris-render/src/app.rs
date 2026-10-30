@@ -45,7 +45,7 @@ pub trait Host {
 
 /// One frame of native first-person controls. Motion is a unit-length horizontal input;
 /// look deltas are relative mouse pixels and jump is a press edge, never a held key.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct WalkInput {
     pub motion: [f32; 2],
     pub look: [f32; 2],
@@ -64,6 +64,11 @@ pub struct WalkInput {
     pub slot_steps: i32,
     /// Space held while captured (swimming up).
     pub rise: bool,
+    /// Every key and mouse button held while captured, by name (`KeyQ`, `Space`, `MouseRight`):
+    /// what a game's own buttons are bound to (animation.md 6).
+    pub held: Vec<String>,
+    /// Those pressed since the last input, by name.
+    pub pressed: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -109,6 +114,19 @@ struct WalkControls {
     slot: Option<u8>,
     slot_steps: i32,
     wheel: f32,
+    /// Mouse buttons held while captured, and presses since the last input, by name.
+    mouse: HashSet<&'static str>,
+    pressed: Vec<String>,
+}
+
+/// A mouse button's name for a game's buttons.
+fn mouse_name(button: MouseButton) -> Option<&'static str> {
+    match button {
+        MouseButton::Left => Some("MouseLeft"),
+        MouseButton::Right => Some("MouseRight"),
+        MouseButton::Middle => Some("MouseMiddle"),
+        _ => None,
+    }
 }
 
 impl WalkControls {
@@ -116,6 +134,8 @@ impl WalkControls {
         let _ = window.set_cursor_grab(CursorGrabMode::None);
         window.set_cursor_visible(true);
         self.keys.clear();
+        self.mouse.clear();
+        self.pressed.clear();
         self.look = [0.0; 2];
         self.jump = false;
         self.reset = false;
@@ -160,6 +180,15 @@ impl WalkControls {
             slot: self.slot.take(),
             slot_steps: std::mem::take(&mut self.slot_steps),
             rise: self.captured && key(KeyCode::Space),
+            held: if self.captured {
+                let mut h: Vec<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
+                h.extend(self.mouse.iter().map(|m| (*m).to_owned()));
+                h.sort();
+                h
+            } else {
+                Vec::new()
+            },
+            pressed: std::mem::take(&mut self.pressed),
         }
     }
 }
@@ -494,6 +523,9 @@ impl<H: Host> ApplicationHandler for App<H> {
                             walk.gi_toggle = true;
                         }
                         if down && walk.captured {
+                            if !event.repeat {
+                                walk.pressed.push(format!("{code:?}"));
+                            }
                             walk.keys.insert(code);
                             if code == KeyCode::Space && !event.repeat {
                                 walk.jump = true;
@@ -534,6 +566,7 @@ impl<H: Host> ApplicationHandler for App<H> {
                     && let Some(st) = self.state.as_mut()
                     && let Some(walk) = st.walk.as_mut()
                 {
+                    let was = walk.captured;
                     match button {
                         // The first click captures the mouse; later ones act.
                         MouseButton::Left if !walk.captured => walk.capture(&st.window),
@@ -541,6 +574,16 @@ impl<H: Host> ApplicationHandler for App<H> {
                         MouseButton::Right if walk.captured => walk.secondary = true,
                         _ => {}
                     }
+                    if was && let Some(name) = mouse_name(button) {
+                        walk.mouse.insert(name);
+                        walk.pressed.push(name.to_owned());
+                    }
+                }
+                if state == ElementState::Released
+                    && let Some(walk) = self.state.as_mut().and_then(|s| s.walk.as_mut())
+                    && let Some(name) = mouse_name(button)
+                {
+                    walk.mouse.remove(name);
                 }
                 if button == MouseButton::Right
                     && let Some(fly) = self.state.as_mut().and_then(|s| s.fly.as_mut())
@@ -663,6 +706,8 @@ mod tests {
             slot: Some(3),
             slot_steps: -1,
             wheel: 0.0,
+            mouse: HashSet::new(),
+            pressed: vec!["KeyE".to_owned()],
         };
         let input = controls.input(1.0);
         assert!(input.primary && !input.secondary);
@@ -672,8 +717,10 @@ mod tests {
         assert!(input.gi_toggle);
         assert_eq!(input.look, [10.0, -3.0]);
         assert_eq!(input.dt_s, 0.1);
+        assert_eq!(input.pressed, ["KeyE"]);
         let next = controls.input(1.0 / 60.0);
         assert!(!next.primary && next.slot.is_none() && next.slot_steps == 0);
+        assert!(next.pressed.is_empty());
         assert!(!next.jump && !next.reset);
         assert!(!next.gi_toggle);
         assert_eq!(next.look, [0.0; 2]);

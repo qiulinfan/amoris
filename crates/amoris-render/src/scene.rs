@@ -493,7 +493,14 @@ impl Scene {
     /// Applies one entity's update; adds the slots it re-places that are not listed at this tick
     /// yet to `moving`.
     fn update(&mut self, u: InstanceUpdate, resolve: &mut dyn Resolve, moving: &mut Vec<u32>) {
-        if let Some(a) = u.anim {
+        if let Some(mut a) = u.anim {
+            // A pose is drawn between the previous tick's and this one's.
+            if !a.pose.is_empty() {
+                a.prev = match self.anims.get(&u.id) {
+                    Some(old) if old.pose.len() == a.pose.len() => old.pose.clone(),
+                    _ => a.pose.clone(),
+                };
+            }
             self.anims.insert(u.id, a);
         }
         let e = match self.entities.entry(u.id) {

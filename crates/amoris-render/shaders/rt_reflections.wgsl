@@ -48,13 +48,17 @@ fn rt_reflect(origin: vec3f, direction: vec3f) -> RtHit {
     if (dot(n, direction) > 0.0) {
         n = -n;
     }
+    if ((m.flags & 32u) != 0u) {
+        // A terrain layer's texture runs over the world (forward.wgsl `surface`).
+        uv = (origin + direction * hit.t).xz;
+    }
     var albedo = m.base_color.rgb;
     if (m.base_color_tex != NO_TEXTURE) {
-        albedo *= textureSampleLevel(tex_srgb, tex_sampler, uv, m.base_color_tex, 0.0).rgb;
+        albedo *= textureSampleLevel(tex_srgb, tex_sampler, uv * m.uv_scale, m.base_color_tex, 0.0).rgb;
     }
     var emissive = m.emissive;
     if (m.emissive_tex != NO_TEXTURE) {
-        emissive *= textureSampleLevel(tex_srgb, tex_sampler, uv, m.emissive_tex, 0.0).rgb;
+        emissive *= textureSampleLevel(tex_srgb, tex_sampler, uv * m.uv_scale, m.emissive_tex, 0.0).rgb;
     }
     let p = origin + direction * hit.t;
     var color = emissive;

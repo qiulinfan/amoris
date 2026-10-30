@@ -53,6 +53,8 @@ pub struct Viewport {
     look: Option<(f32, f32)>,
     /// Controlled compute/readback QA, separate from the browser game worker.
     water_probe: Option<amoris_render::water_samples::WaterSamples>,
+    /// The water's sound for the page's WebAudio (`water_sound`), once asked for.
+    water_sound: Option<amoris_audio::water::WaterSynth>,
 }
 
 #[wasm_bindgen]
@@ -103,6 +105,7 @@ impl Viewport {
             last_stats: "{}".into(),
             look: None,
             water_probe: None,
+            water_sound: None,
         })
     }
 
@@ -318,10 +321,20 @@ impl Viewport {
             return Vec::new();
         }
         let mut camera = r.camera();
-        let (mut yaw, mut pitch) = self.look.unwrap_or_else(|| {
+        let seen = {
             let f = camera.rotation * Vec3::NEG_Z;
             ((-f.x).atan2(-f.z), f.y.clamp(-1.0, 1.0).asin())
-        });
+        };
+        let (mut yaw, mut pitch) = self.look.unwrap_or(seen);
+        // A game that poses the camera may turn it (a lock-on, animation.md 6): while the mouse is
+        // still, the seat takes the camera's look as its own, so the next movement starts there.
+        if game_camera && dx == 0.0 && dy == 0.0 {
+            let dyaw = (seen.0 - yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+                - std::f32::consts::PI;
+            if dyaw.abs() > 0.02 || (seen.1 - pitch).abs() > 0.02 {
+                (yaw, pitch) = seen;
+            }
+        }
         if captured {
             yaw -= dx * 0.003;
             pitch = (pitch - dy * 0.003).clamp(-1.55, 1.55);
@@ -890,6 +903,64 @@ impl Viewport {
 }
 
 /// `stats` (a JSON object) with `"skipped": true`: a call that drew nothing.
+/// What the page's WebAudio plays (web/player.js; natively, amoris-audio's `Audio` in the window):
+/// the world's sound sources, `sfx:` presets and the water's sound.
+#[wasm_bindgen]
+impl Viewport {
+    /// The listener at the camera the last frame was drawn from (`position`, `forward`, `up`) and
+    /// the world's sound sources (the render feed's `AudioView`s), as JSON.
+    pub fn audio(&self) -> String {
+        let cam = self.renderer.camera();
+        serde_json::json!({
+            "position": cam.position.to_array(),
+            "forward": (cam.rotation * Vec3::NEG_Z).to_array(),
+            "up": (cam.rotation * Vec3::Y).to_array(),
+            "sources": self.renderer.scene.audio,
+        })
+        .to_string()
+    }
+
+    /// Where an entity is drawn (a sound event's subject), or nothing for one not drawn.
+    pub fn position_of(&self, entity: f64) -> Vec<f32> {
+        self.renderer
+            .scene
+            .position_of(entity as u64)
+            .map_or_else(Vec::new, |p| p.to_vec())
+    }
+
+    /// The mono samples of an `sfx:` preset (`spec` without the prefix) at `sfx_rate()`, or
+    /// nothing for an unknown preset.
+    pub fn sfx(spec: &str) -> Vec<f32> {
+        amoris_audio::synth::synth(spec).unwrap_or_default()
+    }
+
+    pub fn sfx_rate() -> u32 {
+        amoris_audio::synth::RATE
+    }
+
+    /// The next `frames` of the water's sound at `rate` Hz, interleaved stereo, from the latest
+    /// tally of what the water sounds like from the camera (the renderer's `water_acoustics`,
+    /// turned on by the first call). The page schedules the blocks ahead of its audio clock.
+    pub fn water_sound(&mut self, frames: u32, rate: u32) -> Vec<f32> {
+        use amoris_audio::water::{KINDS, WaterSource, WaterSynth};
+        self.renderer.set_water_acoustics(true);
+        let synth = self
+            .water_sound
+            .get_or_insert_with(|| WaterSynth::new(rate, 0x5eed));
+        if let Some(heard) = self.renderer.water_acoustics() {
+            let sources: [WaterSource; KINDS] = std::array::from_fn(|k| WaterSource {
+                rate: heard.kinds[k].rate,
+                left: heard.kinds[k].left,
+                right: heard.kinds[k].right,
+            });
+            synth.set(sources);
+        }
+        let mut out = vec![[0.0f32; 2]; frames as usize];
+        synth.render(&mut out);
+        out.into_iter().flatten().collect()
+    }
+}
+
 fn skipped(stats: &str) -> String {
     match stats.strip_suffix('}') {
         Some(head) if head.len() > 1 => format!("{head},\"skipped\":true}}"),

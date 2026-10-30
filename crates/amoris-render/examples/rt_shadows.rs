@@ -83,6 +83,7 @@ fn scene() -> Scene {
                     time: 0.37 * i as f32,
                     rate: 1.0,
                     looped: true,
+                    ..AnimView::default()
                 }),
             });
         }

@@ -83,6 +83,13 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
         .component::<Wind>()
         .component::<Rain>()
         .component::<Walker>()
+        .component::<crate::avatar::Avatar>()
+        .component::<crate::walker::Buttons>()
+        .component::<crate::nav::NavGrid>()
+        .ignore::<crate::nav::NavCache>(
+            "baked navigation grids, rebuilt from the colliders at their next query",
+        )
+        .component::<crate::avatar::CameraRig>()
         .component::<crate::board::Board>()
         .component::<amoris_sim::voxels::Voxels>()
         .component::<WaterRegion>()
@@ -329,8 +336,52 @@ fn fixed_slot(
         return None;
     }
     let e = index?.get(id)?;
-    let same = spec_hash(world.get::<RigidBody>(e), world.get::<Collider>(e)?) == spec;
+    let same = verified(world, e, spec)?;
     same.then_some((spec, key))
+}
+
+/// Whether entity `e`'s `RigidBody` and `Collider` hash to `spec`. Hashing a large fixed shape (a
+/// terrain's ground) for every snapshot cost more than the rest of the tick, so a verdict is kept
+/// per world and entity with the components' change ticks and holds while neither changes.
+fn verified(world: &World, e: bevy_ecs::entity::Entity, spec: u64) -> Option<bool> {
+    type Verdicts =
+        std::collections::BTreeMap<bevy_ecs::entity::Entity, ([u32; 2], bool, u64, bool)>;
+    // By world (a few: the game's and its forks'), then by entity.
+    static KEPT: std::sync::Mutex<Vec<(bevy_ecs::world::WorldId, Verdicts)>> =
+        std::sync::Mutex::new(Vec::new());
+    let entity = world.get_entity(e).ok()?;
+    let collider = entity.get_change_ticks::<Collider>()?.changed.get();
+    let body = entity.get_change_ticks::<RigidBody>();
+    let ticks = (
+        [collider, body.map_or(0, |t| t.changed.get())],
+        body.is_some(),
+    );
+    let mut kept = KEPT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let id = world.id();
+    let at = match kept.iter().position(|(w, _)| *w == id) {
+        Some(at) => at,
+        None => {
+            if kept.len() >= 16 {
+                kept.clear();
+            }
+            kept.push((id, Verdicts::new()));
+            kept.len() - 1
+        }
+    };
+    let kept = &mut kept[at].1;
+    if let Some(&(t, has_body, s, same)) = kept.get(&e)
+        && (t, has_body, s) == (ticks.0, ticks.1, spec)
+    {
+        return Some(same);
+    }
+    let same = spec_hash(world.get::<RigidBody>(e), world.get::<Collider>(e)?) == spec;
+    if kept.len() >= 4096 {
+        kept.clear();
+    }
+    kept.insert(e, (ticks.0, ticks.1, spec, same));
+    Some(same)
 }
 
 fn encode_problem(reason: String) -> Problem {
@@ -524,6 +575,31 @@ impl Persisted for Collider {
         t.trace_type::<Shape>(s)?;
         t.trace_type::<Self>(s).map(|_| ())
     }
+}
+
+impl Persisted for crate::avatar::Avatar {
+    const NAME: &'static str = "Avatar";
+    const VERSION: u32 = 1;
+
+    fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
+        t.trace_type::<crate::avatar::Facing>(s)?;
+        t.trace_type::<Self>(s).map(|_| ())
+    }
+}
+
+impl Persisted for crate::nav::NavGrid {
+    const NAME: &'static str = "NavGrid";
+    const VERSION: u32 = 1;
+}
+
+impl Persisted for crate::walker::Buttons {
+    const NAME: &'static str = "Buttons";
+    const VERSION: u32 = 1;
+}
+
+impl Persisted for crate::avatar::CameraRig {
+    const NAME: &'static str = "CameraRig";
+    const VERSION: u32 = 1;
 }
 
 impl Persisted for Walker {

@@ -8,8 +8,9 @@ description = "The game: composition, command application at tick boundaries, th
 
 [features]
 # TypeScript compiled in process (amoris-script's oxc), for loading projects from disk and hot
-# updates; the shipped web build receives compiled scripts (architecture.md 7.4).
-transpile = ["amoris-script/transpile"]
+# updates, and the animation's glTF files read (animation.md 2); the shipped web build receives
+# compiled scripts and the animation library (architecture.md 7.4).
+transpile = ["amoris-script/transpile", "amoris-assets/import"]
 # GameThread: the game on its own std thread (native; threads.md 3).
 thread = []
 

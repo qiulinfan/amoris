@@ -30,6 +30,14 @@ fn karis(c: vec3f) -> f32 {
     return 1.0 / (1.0 + luminance(c));
 }
 
+// A colour the bloom may take: a non-finite one (a NaN or an infinity that some pass left in one
+// pixel) is dropped to black, since the downsample chain would spread it into a block of the
+// screen. Finite colours pass unchanged.
+fn finite3(c: vec3f) -> vec3f {
+    let ok = all(c == c) && all(abs(c) <= vec3f(65504.0));
+    return select(vec3f(0.0), c, ok);
+}
+
 @fragment
 fn fs_down(in: FsIn) -> @location(0) vec4f {
     let t = pp.texel.xy;
@@ -48,7 +56,11 @@ fn fs_down(in: FsIn) -> @location(0) vec4f {
     let l = textureSample(src, src_sampler, uv + t * vec2f(-1.0, 1.0)).rgb;
     let m = textureSample(src, src_sampler, uv + t * vec2f(1.0, 1.0)).rgb;
     if (pp.texel.w > 0.5) {
-        // Karis average per group of four on the first downsample.
+        // Karis average per group of four on the first downsample, of finite samples only.
+        let a = finite3(a); let b = finite3(b); let c = finite3(c); let d = finite3(d);
+        let e = finite3(e); let f = finite3(f); let g = finite3(g); let h = finite3(h);
+        let i = finite3(i); let j = finite3(j); let k = finite3(k); let l = finite3(l);
+        let m = finite3(m);
         let g0 = (a + b + d + e) * 0.25;
         let g1 = (b + c + e + f) * 0.25;
         let g2 = (d + e + g + h) * 0.25;

@@ -79,8 +79,16 @@ plays another package and `?gpu_minimal=` takes the viewport's list (webgpu-base
 `window.amorisPlayer` exposes the state the check reads (`ready_ms`, `look`, `stats`, `samples`, the
 game's handle) and `forceCapture()`, which plays without the lock that headless Chrome lacks.
 
-What the page leaves out of the native window: audio (`amoris-audio` and the `[sounds]` table have
-no browser path; Blockcraft has no sounds), the `--fly` and collision-camera `--walk` of games
+The page plays the game's sound with WebAudio as the native window plays it with `amoris-audio`
+(architecture.md 4.19): the world's `AudioSource`s from their entities' positions, sound events
+(`sound`, or any event the package's `sounds`, the project's `[sounds]`, names) once at their
+subjects, both heard by a listener at the camera through kira's distances (full within 2 m, fading
+linearly to nothing at 120 m); clip files are fetched beside the package, `sfx:` presets and the
+water's own sound come from the viewport (`sfx`, `water_sound`, the renderer's acoustic tally
+turned on by the page). The context starts at the first capture, a user gesture, and is suspended
+while the mouse is released. `window.amorisPlayer.sound` holds it (`ctx`, `played`).
+
+What the page leaves out of the native window: the `--fly` and collision-camera `--walk` of games
 without a first-person seat (such a game is drawn from its scene camera and takes no input), the
 GI toggle, and the second Escape that exits. A game's saves and snapshots stay in the worker's
 memory.

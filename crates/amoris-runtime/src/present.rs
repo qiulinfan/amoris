@@ -55,6 +55,9 @@ pub struct Extractor {
     waters: HashMap<Entity, SentWater>,
     /// Each terrain's id, as last sent (water.md 65.1).
     terrains: HashMap<Entity, u64>,
+    /// Each terrain's drawn heights by its hash: a full frame (each new subscriber, each reset)
+    /// sends every terrain whole, and working a large terrain's heights out again takes long.
+    heights: HashMap<u64, Vec<f32>>,
     /// The points stirring the water as last sent (water.md 57).
     stirs: Vec<StirView>,
 }
@@ -88,14 +91,24 @@ fn water_look(r: &WaterRegion) -> WaterLookView {
     }
 }
 
-/// A terrain as drawn: its heights and layers (water.md 65.1).
-fn terrain_view(id: u64, t: &Terrain, origin: [f64; 3]) -> TerrainView {
+/// A terrain as drawn: its heights and layers (water.md 65.1), the heights from `cache` when the
+/// terrain is unchanged since they were worked out.
+fn terrain_view(
+    cache: &mut HashMap<u64, Vec<f32>>,
+    id: u64,
+    t: &Terrain,
+    origin: [f64; 3],
+) -> TerrainView {
+    let heights = cache
+        .entry(t.hash())
+        .or_insert_with(|| t.heights().into_iter().map(f).collect())
+        .clone();
     TerrainView {
         id,
         origin: f3(origin),
         cell_m: f(t.cell_m),
         size: t.size,
-        heights: t.heights().into_iter().map(f).collect(),
+        heights,
         layers: t
             .look
             .layers
@@ -353,6 +366,7 @@ type InstanceRow = (
     Ref<'static, Transform>,
     Ref<'static, Model>,
     Opt<Animator>,
+    Opt<amoris_assets::anim::AnimPose>,
 );
 type UiRow = (Opt<Transform>, Opt<UiText>, Opt<UiBar>);
 type UiFilter = Or<(With<UiText>, With<UiBar>)>;
@@ -447,12 +461,30 @@ fn pose(t: &Transform, scale: [f64; 3]) -> Pose {
     }
 }
 
+/// The pose a graph evaluated this tick (animation.md 5), ten numbers a joint.
+fn posed(p: &amoris_assets::anim::AnimPose, tick_s: f64) -> AnimView {
+    AnimView {
+        pose: p
+            .joints
+            .iter()
+            .flat_map(|x| {
+                [
+                    x.t[0], x.t[1], x.t[2], x.r[0], x.r[1], x.r[2], x.r[3], x.s[0], x.s[1], x.s[2],
+                ]
+            })
+            .collect(),
+        tick_s: f(tick_s),
+        ..AnimView::default()
+    }
+}
+
 fn anim(a: &Animator) -> AnimView {
     AnimView {
         clip: a.clip.clone(),
         time: f(a.time),
         rate: if a.playing { f(a.speed) } else { 0.0 },
         looped: a.looped,
+        ..AnimView::default()
     }
 }
 
@@ -538,10 +570,17 @@ impl Extractor {
         let (tick, t_s, dt_s) = Self::clock(world);
         self.drawn.clear();
         let mut instances = Vec::new();
-        let mut q = world.query::<(Entity, &EntityId, &Transform, &Model, Option<&Animator>)>();
+        let mut q = world.query::<(
+            Entity,
+            &EntityId,
+            &Transform,
+            &Model,
+            Option<&Animator>,
+            Option<&amoris_assets::anim::AnimPose>,
+        )>();
         let mut rows: Vec<(u64, Entity, InstanceUpdate)> = q
             .iter(world)
-            .map(|(e, id, t, m, a)| {
+            .map(|(e, id, t, m, a, p)| {
                 (
                     id.get(),
                     e,
@@ -549,7 +588,7 @@ impl Extractor {
                         id: id.get(),
                         pose: Some(pose(t, m.scale)),
                         look: Some(look(m)),
-                        anim: a.map(anim),
+                        anim: p.map(|p| posed(p, dt_s)).or_else(|| a.map(anim)),
                     },
                 )
             })
@@ -627,8 +666,11 @@ impl Extractor {
         let mut q = world.query::<(Entity, &EntityId, &Terrain, Option<&Transform>)>();
         let mut rows: Vec<_> = q.iter(world).collect();
         rows.sort_unstable_by_key(|r| r.1.get());
+        let hashes: Vec<u64> = rows.iter().map(|r| r.2.hash()).collect();
+        self.heights.retain(|h, _| hashes.contains(h));
         for (e, id, t, at) in rows {
             frame.terrain.push(terrain_view(
+                &mut self.heights,
                 id.get(),
                 t,
                 at.map_or([0.0; 3], |t| t.position),
@@ -667,10 +709,12 @@ impl Extractor {
             return frame;
         };
         let w: &World = world;
-        for (e, id, t, m, a) in q.instances.iter(w) {
+        let (_, _, dt_s) = Self::clock(w);
+        for (e, id, t, m, a, p) in q.instances.iter(w) {
             let new = !self.drawn.contains_key(&e);
             let look_changed = new || m.is_changed();
-            let anim_changed = a.as_ref().is_some_and(|a| new || a.is_changed());
+            let anim_changed = a.as_ref().is_some_and(|a| new || a.is_changed())
+                || p.as_ref().is_some_and(|p| new || p.is_changed());
             if new || t.is_changed() || look_changed || anim_changed {
                 if new {
                     self.drawn.insert(e, id.get());
@@ -680,7 +724,7 @@ impl Extractor {
                     pose: Some(pose(&t, m.scale)),
                     look: look_changed.then(|| look(&m)),
                     anim: if anim_changed {
-                        a.map(|a| anim(&a))
+                        p.map(|p| posed(&p, dt_s)).or_else(|| a.map(|a| anim(&a)))
                     } else {
                         None
                     },
@@ -824,9 +868,12 @@ impl Extractor {
                 .collect();
             rows.sort_unstable_by_key(|r| r.1);
             for (e, id, t, at) in rows {
-                frame
-                    .terrain
-                    .push(terrain_view(id, &t, at.map_or([0.0; 3], |t| t.position)));
+                frame.terrain.push(terrain_view(
+                    &mut self.heights,
+                    id,
+                    &t,
+                    at.map_or([0.0; 3], |t| t.position),
+                ));
                 self.terrains.insert(e, id);
                 grounds = true;
             }

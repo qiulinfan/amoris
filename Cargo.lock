@@ -290,6 +290,7 @@ dependencies = [
 name = "amoris-script"
 version = "0.1.0"
 dependencies = [
+ "amoris-assets",
  "amoris-contract",
  "amoris-physics",
  "amoris-sim",
@@ -347,6 +348,7 @@ name = "amoris-viewport"
 version = "0.1.0"
 dependencies = [
  "amoris-assets",
+ "amoris-audio",
  "amoris-render",
  "glam 0.33.12",
  "js-sys",

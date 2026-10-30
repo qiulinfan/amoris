@@ -213,6 +213,8 @@ fn child() -> Child {
                         "replay".into(),
                         "--verify".into(),
                         replay.display().to_string(),
+                        "--project".into(),
+                        dir,
                         "--json".into(),
                     ],
                     &[0, 1],
@@ -342,17 +344,18 @@ fn chain_only(dir: &Path, seeds: Option<&[u64]>, args: &Args) -> Outcome {
     }
 }
 
-/// `amoris replay --verify <file> [--json]`: replays the recording in this process and compares
-/// every tick's hash (replay.md 3.4).
+/// `amoris replay --verify <file> [--project <dir>] [--json]`: replays the recording in this process
+/// and compares every tick's hash (replay.md 3.4). A recording whose graphs play clips needs its
+/// project's animation library, which `--project` loads (animation.md 7b).
 pub fn replay(raw: &[String]) -> Outcome {
-    let args = match Args::parse(raw, &[("verify", true), ("json", false)]) {
+    let args = match Args::parse(raw, &[("verify", true), ("project", true), ("json", false)]) {
         Ok(a) => a,
         Err(p) => return problem_out(&p, 2),
     };
     let Some(path) = args.value("verify") else {
         return problem_out(
             &crate::cli::usage(
-                "amoris replay --verify <file> [--json]".into(),
+                "amoris replay --verify <file> [--project <dir>] [--json]".into(),
                 "verify",
                 &["verify"],
             ),
@@ -372,8 +375,19 @@ pub fn replay(raw: &[String]) -> Outcome {
             );
         }
     };
+    let animation = match args.value("project") {
+        Some(dir) => match amoris_runtime::Project::load(std::path::Path::new(dir)) {
+            Ok(p) => p.animation.clone(),
+            Err(p) => return problem_out(&p, 1),
+        },
+        None => Default::default(),
+    };
     match verify_bytes_with(&bytes, |replay| {
-        amoris_runtime::Game::for_replay_with(replay, crate::water_compute::configure)
+        amoris_runtime::Game::for_replay_animated(
+            replay,
+            animation.clone(),
+            crate::water_compute::configure,
+        )
     }) {
         Ok(s) => {
             let code = if s.identical { 0 } else { 1 };

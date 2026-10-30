@@ -39,6 +39,19 @@ pub struct Manifest {
     /// (tools/package_game.py). Absent: the Amoris icon.
     #[serde(default)]
     pub icon: Option<String>,
+    /// The game's animation graphs (docs/spec/animation.md 2): the host loads them and the
+    /// skeletons and clip libraries they name with the project.
+    #[serde(default)]
+    pub animation: Option<AnimationManifest>,
+}
+
+/// `[animation]` of `project.toml`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AnimationManifest {
+    /// Graph files (`anim/hero.anim.json`), by project path.
+    #[serde(default)]
+    pub graphs: Vec<String>,
 }
 
 fn default_rate() -> u32 {
@@ -65,6 +78,8 @@ pub struct GameSetup {
     /// The player declarations the world starts with (docs/spec/player.md), if the game has
     /// players.
     pub player: Option<crate::player::PlayerSpec>,
+    /// The animation graphs and the skeletons and clips they play (animation.md 2).
+    pub animation: std::sync::Arc<amoris_assets::anim::AnimLibrary>,
 }
 
 /// A project read from disk.
@@ -76,6 +91,8 @@ pub struct Project {
     pub source: ScriptSource,
     /// `[player]` with its perception file read and checked.
     pub player: Option<crate::player::PlayerSpec>,
+    /// `[animation]`'s graphs with the files they name, read and bound.
+    pub animation: std::sync::Arc<amoris_assets::anim::AnimLibrary>,
 }
 
 /// `project.missing_file {path}` or `project.unreadable {path, error}`.
@@ -136,12 +153,14 @@ impl Project {
             }
             None => None,
         };
+        let animation = std::sync::Arc::new(load_animation(root, manifest.animation.as_ref())?);
         Ok(Project {
             root: root.to_path_buf(),
             manifest,
             scene,
             source,
             player,
+            animation,
         })
     }
 
@@ -157,8 +176,54 @@ impl Project {
             limits: ScriptLimits::default(),
             lint_off,
             player: self.player.clone(),
+            animation: self.animation.clone(),
         })
     }
+}
+
+fn anim_invalid(path: &str, message: String) -> Problem {
+    Problem::new(
+        "project.invalid",
+        format!("{path}: {message}."),
+        detail([("path", json!(path)), ("message", json!(message))]),
+    )
+}
+
+/// `[animation]`'s graphs read, the files they name loaded, every graph bound (animation.md 2).
+fn load_animation(
+    root: &Path,
+    manifest: Option<&AnimationManifest>,
+) -> Result<amoris_assets::anim::AnimLibrary, Problem> {
+    let mut lib = amoris_assets::anim::AnimLibrary::default();
+    let Some(m) = manifest else { return Ok(lib) };
+    for g in &m.graphs {
+        let text = read_file(&root.join(g))?;
+        let value: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| anim_invalid(g, e.to_string()))?;
+        let def = amoris_assets::anim::GraphDef::parse(&value).map_err(|e| anim_invalid(g, e))?;
+        for file in std::iter::once(&def.skeleton).chain(&def.libraries) {
+            if !lib.sets.contains_key(file) {
+                lib.sets.insert(file.clone(), load_clips(root, file)?);
+            }
+        }
+        lib.graphs.insert(g.clone(), def);
+    }
+    amoris_assets::anim::AnimRigs::build(&lib)
+        .map_err(|e| anim_invalid("project.toml [animation]", e))?;
+    Ok(lib)
+}
+
+#[cfg(feature = "transpile")]
+fn load_clips(root: &Path, file: &str) -> Result<amoris_assets::anim::ClipSet, Problem> {
+    amoris_assets::anim::load::load(&root.join(file))
+}
+
+#[cfg(not(feature = "transpile"))]
+fn load_clips(_root: &Path, file: &str) -> Result<amoris_assets::anim::ClipSet, Problem> {
+    Err(anim_invalid(
+        file,
+        "this build reads no glTF files; load the project with a native host".into(),
+    ))
 }
 
 /// Lints and compiles the scripts under `root` with the lint on (checks.md 6.4): the number of

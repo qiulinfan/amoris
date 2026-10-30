@@ -85,6 +85,35 @@ const voxels = Object.freeze({
 	block: (volume, name) => host.voxelsBlock(volume, name),
 	raycast: (volume, from, dir, maxM, options) => host.voxelsRaycast(volume, from, dir, maxM, options?.solidOnly === true)
 });
+const physics = Object.freeze({
+	ray: (from, dir, maxM, options) => host.physicsRay(from, dir, maxM, options),
+	sweep: (from, to, radius, options) => host.physicsSweep(from, to, radius, options),
+	sphere: (center, radius, options) => host.physicsSphere(center, radius, options)
+});
+const nav = Object.freeze({
+	path: (grid, from, to) => host.navPath(grid, from, to),
+	nearest: (grid, at, radius) => host.navNearest(grid, at, radius)
+});
+const anim = Object.freeze({
+	set: (e, name, value) => {
+		host.animSet(e, name, value);
+	},
+	param: (e, name) => host.animParam(e, name),
+	play: (e, montage, options) => {
+		host.animCommand(e, "play", montage, options?.section ?? "", options?.rate ?? 1, 0);
+	},
+	next: (e, section) => {
+		host.animCommand(e, "next", "", section, 0, 0);
+	},
+	jump: (e, section) => {
+		host.animCommand(e, "jump", "", section, 0, 0);
+	},
+	stop: (e, fade) => {
+		host.animCommand(e, "stop", "", "", 0, fade ?? .2);
+	},
+	state: (e) => host.animState(e),
+	socket: (e, joint) => host.animSocket(e, joint)
+});
 const water = Object.freeze({
 	observe: (probe) => host.waterObserve(probe),
 	depth: (region, x, z) => host.waterDepth(region, x, z),
@@ -137,7 +166,10 @@ export function __context(info) {
 		emit: (kind, data, options) => host.emit(kind, data, options),
 		intent: (actor, kind, params) => host.intent(actor, kind, params),
 		voxels,
-		water
+		water,
+		physics,
+		anim,
+		nav
 	});
 }
 /** @internal The host wraps a declared query's raw columns with this. */
@@ -210,4 +242,4 @@ export const field = Object.freeze({
 
 import { harden as __amoris_harden } from "amoris:host";
 import * as __amoris_self from "amoris";
-__amoris_harden("amoris", __amoris_self, { ["Query"]: Query, ["annotate"]: annotate, ["world"]: world, ["voxels"]: voxels, ["water"]: water, ["part"]: part, ["makeRng"]: makeRng, ["__context"]: __context, ["__query"]: __query, ["component"]: component, ["system"]: system, ["executor"]: executor, ["game"]: game, ["freeze"]: freeze, ["fieldOf"]: fieldOf, ["field"]: field }, { ["Query"]: 293, ["annotate"]: 461, ["world"]: 470, ["voxels"]: 481, ["water"]: 499, ["part"]: 512, ["makeRng"]: 517, ["__context"]: 539, ["__query"]: 563, ["component"]: 694, ["system"]: 707, ["executor"]: 714, ["game"]: 719, ["freeze"]: 724, ["fieldOf"]: 766, ["field"]: 770 });
+__amoris_harden("amoris", __amoris_self, { ["Query"]: Query, ["annotate"]: annotate, ["world"]: world, ["voxels"]: voxels, ["physics"]: physics, ["nav"]: nav, ["anim"]: anim, ["water"]: water, ["part"]: part, ["makeRng"]: makeRng, ["__context"]: __context, ["__query"]: __query, ["component"]: component, ["system"]: system, ["executor"]: executor, ["game"]: game, ["freeze"]: freeze, ["fieldOf"]: fieldOf, ["field"]: field }, { ["Query"]: 293, ["annotate"]: 534, ["world"]: 543, ["voxels"]: 554, ["physics"]: 572, ["nav"]: 581, ["anim"]: 586, ["water"]: 607, ["part"]: 620, ["makeRng"]: 625, ["__context"]: 647, ["__query"]: 674, ["component"]: 805, ["system"]: 818, ["executor"]: 825, ["game"]: 830, ["freeze"]: 835, ["fieldOf"]: 877, ["field"]: 881 });

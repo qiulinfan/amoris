@@ -28,6 +28,8 @@ amoris-contract.workspace = true
 amoris-sim.workspace = true
 # `ctx.water` reads and edits the water regions (docs/spec/water.md 8).
 amoris-physics.workspace = true
+# `ctx.anim` reads and stages an entity's animation graph state (docs/spec/animation.md 4).
+amoris-assets.workspace = true
 # The world the host reads and writes (architecture.md 6, bevy_ecs; script-host.md 7.3 registers
 # project components through its dynamic-component API).
 bevy_ecs.workspace = true

@@ -3,6 +3,7 @@
 //! (feature `import`), and the render feed that carries visual changes from the game thread to the
 //! renderers. Game side: no GPU, no threads, builds for `wasm32`.
 
+pub mod anim;
 pub mod animation;
 #[cfg(feature = "import")]
 pub mod collision;
@@ -32,6 +33,30 @@ pub use visual::{
     Animator, AudioSource, Camera, Environment, Light, LightKind, Model, ParticleEmitter, SkyKind,
     Splat, UiAnchor, UiBar, UiText,
 };
+
+impl Persisted for anim::AnimGraph {
+    const NAME: &'static str = "AnimGraph";
+    const VERSION: u32 = 1;
+}
+
+impl Persisted for anim::AnimState {
+    const NAME: &'static str = "AnimState";
+    const VERSION: u32 = 1;
+
+    fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
+        t.trace_type::<anim::AnimParam>(s)?;
+        t.trace_type::<anim::LayerState>(s)?;
+        t.trace_type::<anim::SlotState>(s)?;
+        t.trace_type::<anim::AnimCommand>(s)?;
+        t.trace_type::<anim::Socket>(s)?;
+        t.trace_type::<Self>(s).map(|_| ())
+    }
+}
+
+impl Persisted for anim::Attach {
+    const NAME: &'static str = "Attach";
+    const VERSION: u32 = 1;
+}
 
 impl Persisted for Model {
     const NAME: &'static str = "Model";
@@ -124,6 +149,9 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     ComponentRegistry::register::<Environment>(w, None)?;
     ComponentRegistry::register::<Splat>(w, None)?;
     ComponentRegistry::register::<Animator>(w, None)?;
+    ComponentRegistry::register::<anim::AnimGraph>(w, None)?;
+    ComponentRegistry::register::<anim::AnimState>(w, None)?;
+    ComponentRegistry::register::<anim::Attach>(w, None)?;
     ComponentRegistry::register::<UiText>(w, None)?;
     ComponentRegistry::register::<UiBar>(w, None)?;
     ComponentRegistry::register::<AudioSource>(w, None)?;
@@ -145,6 +173,15 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
         .component::<Environment>()
         .component::<Splat>()
         .component::<Animator>()
+        .component::<anim::AnimGraph>()
+        .component::<anim::AnimState>()
+        .component::<anim::Attach>()
+        .derived::<anim::AnimPose>(
+            "each animated entity's pose, evaluated again by anim.graph every tick",
+        )
+        .ignore::<anim::AnimRigs>(
+            "the project's graphs bound to their clips: from the game's setup, kept through a restore",
+        )
         .component::<UiText>()
         .component::<UiBar>()
         .component::<AudioSource>()

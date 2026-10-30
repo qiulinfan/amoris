@@ -74,6 +74,7 @@ fn hero(i: u64) -> InstanceUpdate {
             time: 0.37 * i as f32,
             rate: 0.0,
             looped: true,
+            ..AnimView::default()
         }),
     }
 }
