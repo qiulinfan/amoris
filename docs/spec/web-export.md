@@ -17,8 +17,9 @@ its problems and the log under `out/check/`.
 
 It stands in for `amoris pack <project> --web` (architecture.md 4.13, threads-slice1.md 14): it
 drives cargo, `wasm-bindgen` and `wasm-opt` as the web step does (checks.md 7.1), so it needs the
-same tools: the wasm32 C toolchain for QuickJS-ng, `wasm-bindgen` 0.2.129, and optionally
-`wasm-opt` (the `-O3` module ships when it is found) and Python 3 for the zip.
+same tools: the wasm32 C toolchain for QuickJS-ng, `wasm-bindgen` 0.2.129, and optionally `wasm-opt`
+(the `-O3` module ships when it is found; the export fails when wasm-opt left the table the glue
+grows, `__wbindgen_externrefs`, with a maximum, as binaryen 108 does) and Python 3 for the zip.
 
 ## 2. The folder
 

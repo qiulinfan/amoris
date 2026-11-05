@@ -37,7 +37,15 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install -r site/requirements.txt
       - run: sudo apt-get update
-      - run: sudo apt-get install -y clang llvm lld binaryen
+      - run: sudo apt-get install -y clang llvm lld
+      # Ubuntu's binaryen (108) exports wasm-bindgen's externref table as the function table, which
+      # the glue cannot grow; the release the Mac builds with does not.
+      - name: Install binaryen 133
+        run: |
+          curl -fsSL -o binaryen.tar.gz https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-x86_64-linux.tar.gz
+          curl -fsSL https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-x86_64-linux.tar.gz.sha256 | awk '{print $1"  binaryen.tar.gz"}' | sha256sum -c
+          tar xzf binaryen.tar.gz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/binaryen-version_133/bin" >> "$GITHUB_PATH"
       - run: rustup show
       - name: Install the matching WebAssembly binding generator
         run: |

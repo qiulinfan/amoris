@@ -226,8 +226,153 @@ pub fn module(
     if !command(step, o, log, "wasm-opt -O3") {
         return Some(false);
     }
-    sizes(step, &opt.join("pkg/amoris_web_bg.wasm"), ".O3");
+    let optimized = opt.join("pkg").join("amoris_web_bg.wasm");
+    // The glue's start grows the table it reaches as `__wbindgen_externrefs`. Binaryen 108 (Ubuntu
+    // 24.04's) moves that export onto the function table, whose maximum is its size, so the module
+    // stops at `Table.grow()` in every browser.
+    match externref_table_has_maximum(&optimized) {
+        Ok(false) => {}
+        Ok(true) => {
+            step.error(Problem::new(
+                "check.command_failed",
+                "wasm-opt exported `__wbindgen_externrefs` as a table with a maximum, which the \
+                 glue cannot grow; use a newer wasm-opt (binaryen 108 does this)",
+                json!({"tool": "wasm-opt"}),
+            ));
+            return None;
+        }
+        Err(e) => {
+            step.error(Problem::new(
+                "check.command_failed",
+                format!("cannot read the -O3 module's tables: {e}"),
+                json!({}),
+            ));
+            return None;
+        }
+    }
+    sizes(step, &optimized, ".O3");
     Some(true)
+}
+
+/// Whether the table a module exports as `__wbindgen_externrefs` declares a maximum size.
+fn externref_table_has_maximum(path: &Path) -> Result<bool, String> {
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let mut r = Reader {
+        bytes: &bytes,
+        at: 8,
+    };
+    // Each table's "has a maximum", imported tables first, as the index space counts them.
+    let mut tables = Vec::new();
+    let mut exported = None;
+    while r.at < bytes.len() {
+        let id = r.byte()?;
+        let size = r.leb()? as usize;
+        let end = r.at + size;
+        match id {
+            2 => {
+                for _ in 0..r.leb()? {
+                    r.name()?;
+                    r.name()?;
+                    match r.byte()? {
+                        0 => {
+                            r.leb()?;
+                        }
+                        1 => tables.push(r.table_type()?),
+                        2 => {
+                            r.limits()?;
+                        }
+                        3 => {
+                            r.byte()?;
+                            r.byte()?;
+                        }
+                        4 => {
+                            r.byte()?;
+                            r.leb()?;
+                        }
+                        kind => return Err(format!("import of unknown kind {kind}")),
+                    }
+                }
+            }
+            4 => {
+                for _ in 0..r.leb()? {
+                    tables.push(r.table_type()?);
+                }
+            }
+            7 => {
+                for _ in 0..r.leb()? {
+                    let name = r.name()?;
+                    let kind = r.byte()?;
+                    let index = r.leb()?;
+                    if kind == 1 && name == b"__wbindgen_externrefs" {
+                        exported = Some(index as usize);
+                    }
+                }
+            }
+            _ => {}
+        }
+        r.at = end;
+    }
+    let index = exported.ok_or("no table is exported as `__wbindgen_externrefs`")?;
+    tables
+        .get(index)
+        .copied()
+        .ok_or_else(|| format!("the exported table {index} is not declared"))
+}
+
+/// A cursor over a module's bytes, reading what `externref_table_has_maximum` needs.
+struct Reader<'a> {
+    bytes: &'a [u8],
+    at: usize,
+}
+
+impl<'a> Reader<'a> {
+    fn byte(&mut self) -> Result<u8, String> {
+        let b = *self.bytes.get(self.at).ok_or("the module ends early")?;
+        self.at += 1;
+        Ok(b)
+    }
+
+    fn leb(&mut self) -> Result<u64, String> {
+        let (mut value, mut shift) = (0u64, 0);
+        loop {
+            let b = self.byte()?;
+            value |= u64::from(b & 0x7f) << shift;
+            if b & 0x80 == 0 {
+                return Ok(value);
+            }
+            shift += 7;
+            if shift > 63 {
+                return Err("an integer is too long".into());
+            }
+        }
+    }
+
+    fn name(&mut self) -> Result<&'a [u8], String> {
+        let len = self.leb()? as usize;
+        let name = self
+            .bytes
+            .get(self.at..self.at + len)
+            .ok_or("the module ends early")?;
+        self.at += len;
+        Ok(name)
+    }
+
+    /// Whether the limits declare a maximum.
+    fn limits(&mut self) -> Result<bool, String> {
+        let flags = self.byte()?;
+        self.leb()?;
+        if flags & 1 != 0 {
+            self.leb()?;
+        }
+        Ok(flags & 1 != 0)
+    }
+
+    fn table_type(&mut self) -> Result<bool, String> {
+        match self.byte()? {
+            0x70 | 0x6f => self.limits(),
+            t => Err(format!("a table of reference type {t:#x}")),
+        }
+    }
 }
 
 /// Writes the workloads' files into `page` (and `opt` when given) and `expected.json`; false when
