@@ -17,8 +17,9 @@ nav:
   - Editor: editor.md
   - Script API: sdk.md
   - CLI and MCP: api.md
-  - The Wind Road: wind-road.md
-  - Emberlight: emberlight.md
+  - Sample games:
+      - The Wind Road: wind-road.md
+      - Emberlight: emberlight.md
   - Agents and development benchmark: agents.md
   - Profiling: profiling.md
   - Data and validation: data.md
