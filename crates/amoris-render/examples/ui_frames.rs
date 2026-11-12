@@ -11,7 +11,14 @@ use glam::Vec3;
 use serde_json::{Value, json};
 
 /// One element in both forms: a bar is `kind: "Bar"` and `bar: true`.
-fn element(id: u64, text: &str, size: f32, anchor: u32, offset: [f32; 2], world: [f32; 3]) -> Value {
+fn element(
+    id: u64,
+    text: &str,
+    size: f32,
+    anchor: u32,
+    offset: [f32; 2],
+    world: [f32; 3],
+) -> Value {
     let bar = text.is_empty();
     json!({
         "id": id, "text": text, "fill": if bar { 0.62 } else { 0.0 },
@@ -52,7 +59,11 @@ fn items() -> Vec<UiView> {
 }
 
 fn main() {
-    let out = std::path::PathBuf::from(std::env::args().nth(1).unwrap_or_else(|| "out/ui-frames".into()));
+    let out = std::path::PathBuf::from(
+        std::env::args()
+            .nth(1)
+            .unwrap_or_else(|| "out/ui-frames".into()),
+    );
     std::fs::create_dir_all(&out).unwrap_or_else(|e| panic!("{}: {e}", out.display()));
     let gpu = Gpu::headless(BackendChoice::from_env()).unwrap_or_else(|e| panic!("no GPU: {e}"));
     for (name, (w, h), scale) in [("1x", (960, 540), 1.0), ("2x", (1280, 720), 2.0)] {

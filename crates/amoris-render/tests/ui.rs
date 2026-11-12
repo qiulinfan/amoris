@@ -108,16 +108,27 @@ fn an_image_draws_at_its_anchor_with_its_tint() {
         (30, 70, [0, 0, 255]),
         (70, 70, [255, 255, 255]),
     ] {
-        assert!(near(px(&img, w, x, y), c, 2), "({x}, {y}): {:?}", px(&img, w, x, y));
+        assert!(
+            near(px(&img, w, x, y), c, 2),
+            "({x}, {y}): {:?}",
+            px(&img, w, x, y)
+        );
     }
-    assert!(near(px(&img, w, 5, 5), [0, 0, 0], 2), "outside: {:?}", px(&img, w, 5, 5));
+    assert!(
+        near(px(&img, w, 5, 5), [0, 0, 0], 2),
+        "outside: {:?}",
+        px(&img, w, 5, 5)
+    );
     // Half alpha over black: the red half as bright in linear light (186 in sRGB).
     let half = px(&img, w, 130, 30);
     assert!(near(half, [188, 0, 0], 4), "tinted: {half:?}");
     // Its own size: 8 x 8 pixels at (210, 10).
     assert!(near(px(&img, w, 211, 11), [255, 0, 0], 2));
     assert!(near(px(&img, w, 217, 17), [255, 255, 255], 2));
-    assert!(near(px(&img, w, 219, 19), [0, 0, 0], 2), "past its own size");
+    assert!(
+        near(px(&img, w, 219, 19), [0, 0, 0], 2),
+        "past its own size"
+    );
 }
 
 fn button(id: u64, parent: u64, size: [f32; 2]) -> UiView {
@@ -183,7 +194,10 @@ fn stacks_lay_out_their_buttons_and_the_hit_test_answers() {
     assert!(near(px(&img, w, 22, 140), grey[..3].try_into().unwrap(), 1));
     assert!(near(px(&img, w, 22, 143), [0, 0, 0], 2), "below the box");
     assert!(near(px(&img, w, 80, 45), [255, 0, 0], 2), "a face");
-    assert!(near(px(&img, w, 80, 63), grey[..3].try_into().unwrap(), 1), "the spacing");
+    assert!(
+        near(px(&img, w, 80, 63), grey[..3].try_into().unwrap(), 1),
+        "the spacing"
+    );
 }
 
 #[test]
@@ -211,7 +225,11 @@ fn a_buttons_states_draw_their_colours() {
     r.apply(frame(vec![off]), 0.0);
     r.set_ui_pointer(Some([(W / 2) as f32, (H / 2) as f32]), true);
     // 45% of red over black in linear light, never hovered or held; no hit either.
-    assert!(near(at(&mut r), [178, 0, 0], 4), "disabled: {:?}", at(&mut r));
+    assert!(
+        near(at(&mut r), [178, 0, 0], 4),
+        "disabled: {:?}",
+        at(&mut r)
+    );
     assert_eq!(r.ui_hit((W / 2) as f32, (H / 2) as f32), None);
 }
 
@@ -242,7 +260,8 @@ fn a_cjk_line_draws_in_a_project_font() {
         .join("../../tests/fixtures/scenes/ui-hud")
         .join(CJK);
     let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    let font = fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).unwrap();
+    let font =
+        fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).unwrap();
     for c in ['中', '文', 'あ', 'ア', '한', '글'] {
         assert_ne!(font.lookup_glyph_index(c), 0, "{c} is in the font");
     }
@@ -279,8 +298,16 @@ fn a_stack_with_a_reference_height_scales_with_the_window() {
     s.reference_height = 120.0;
     let mut r = renderer(&gpu, vec![s, button(2, 1, [50.0, 20.0])]);
     let _ = r.capture_rgba(0.0);
-    assert_eq!(r.ui_buttons()[0].1, [0.0, 0.0, 100.0, 40.0], "240 rows: twice");
+    assert_eq!(
+        r.ui_buttons()[0].1,
+        [0.0, 0.0, 100.0, 40.0],
+        "240 rows: twice"
+    );
     r.resize(W * 2, H * 2);
     let _ = r.capture_rgba(0.0);
-    assert_eq!(r.ui_buttons()[0].1, [0.0, 0.0, 200.0, 80.0], "480 rows: four times");
+    assert_eq!(
+        r.ui_buttons()[0].1,
+        [0.0, 0.0, 200.0, 80.0],
+        "480 rows: four times"
+    );
 }
