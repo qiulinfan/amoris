@@ -427,6 +427,22 @@ impl Resolve for Pools<'_> {
     }
 }
 
+/// A smoothed camera farther than this from the world's jumps to it, metres (a respawn, a cut).
+pub const CAMERA_SMOOTHING_SNAP_M: f32 = 8.0;
+
+/// Where a smoothed camera last drawn at `prev` (position, wall seconds) draws at `now_s`, its
+/// world position `target` and its time constant `tau_s`: `1 - exp(-dt / tau)` of the way there
+/// (dt at most a quarter second), or there when it is farther than [`CAMERA_SMOOTHING_SNAP_M`].
+pub fn smoothed_position(prev: Option<(Vec3, f64)>, target: Vec3, now_s: f64, tau_s: f32) -> Vec3 {
+    match prev {
+        Some((p, t)) if p.distance(target) <= CAMERA_SMOOTHING_SNAP_M => {
+            let dt = (now_s - t).clamp(0.0, 0.25) as f32;
+            p.lerp(target, 1.0 - (-dt / tau_s).exp())
+        }
+        _ => target,
+    }
+}
+
 pub struct Renderer {
     gpu: Gpu,
     output: wgpu::TextureFormat,
@@ -602,6 +618,11 @@ pub struct Renderer {
     /// The scene camera's rotation from a first-person player's own latest look: its position
     /// stays the world's, drawn between ticks (`set_look_override`).
     look_override: Option<Quat>,
+    /// The time constant, seconds, with which the drawn scene camera's position follows the
+    /// world's (`set_camera_smoothing`; a third-person seat's camera lag), and the position the
+    /// last frame drew with the wall time it drew it at. Presentation only.
+    camera_smoothing: Option<f32>,
+    smoothed: Option<(Vec3, f64)>,
     /// Where between its last two ticks the last frame drew the world (`render`'s alpha).
     drawn_alpha: f32,
     tick_arrived: f64,
@@ -1562,6 +1583,8 @@ impl Renderer {
             local_warned: false,
             camera_override: None,
             look_override: None,
+            camera_smoothing: None,
+            smoothed: None,
             drawn_alpha: 1.0,
             tick_arrived: 0.0,
             last: FrameStats::default(),
@@ -2169,17 +2192,46 @@ impl Renderer {
         self.look_override = rotation;
     }
 
+    /// Smooths the drawn scene camera's position (a third-person seat's camera lag, player.md
+    /// 5.1): each frame it moves toward the world's camera, drawn between its last two ticks, by
+    /// `1 - exp(-dt / tau)` of the way, and jumps there when it is more than
+    /// [`CAMERA_SMOOTHING_SNAP_M`] away (a respawn). The rotation stays the world's. Presentation
+    /// only: nothing of it reaches the world. `None` draws the camera where the world has it.
+    pub fn set_camera_smoothing(&mut self, tau_s: Option<f32>) {
+        let tau_s = tau_s.filter(|t| *t > 0.0);
+        if self.camera_smoothing != tau_s {
+            self.camera_smoothing = tau_s;
+            self.smoothed = None;
+        }
+    }
+
+    /// The smoothed position for a frame drawn at `now_s` (`set_camera_smoothing`).
+    fn smooth_camera(&mut self, now_s: f64) {
+        let target = self
+            .scene
+            .camera_at(self.drawn_alpha)
+            .map(|c| Vec3::from(c.position));
+        let (Some(tau), Some(target), None) = (self.camera_smoothing, target, self.camera_override)
+        else {
+            self.smoothed = None;
+            return;
+        };
+        self.smoothed = Some((smoothed_position(self.smoothed, target, now_s, tau), now_s));
+    }
+
     /// The camera the last frame was drawn from, and the next one's until it is drawn: the
     /// override, or the scene's active camera between its last two ticks' poses
-    /// (`Scene::camera_at`) turned by the look override.
+    /// (`Scene::camera_at`) turned by the look override, at its smoothed position when the
+    /// presenter smooths it.
     pub fn camera(&self) -> CameraState {
         if let Some(c) = self.camera_override {
             return c;
         }
+        let smoothed = self.camera_smoothing.and(self.smoothed).map(|(p, _)| p);
         self.scene
             .camera_at(self.drawn_alpha)
             .map(|c| CameraState {
-                position: Vec3::from(c.position),
+                position: smoothed.unwrap_or_else(|| Vec3::from(c.position)),
                 rotation: self
                     .look_override
                     .unwrap_or_else(|| Quat::from_array(c.rotation).normalize()),
@@ -2939,6 +2991,7 @@ impl Renderer {
             ((now_s - self.tick_arrived) / self.scene.dt_s.max(1e-6)).clamp(0.0, 1.0) as f32;
         // The scene's camera is drawn at the same time between ticks as the poses it sees.
         self.drawn_alpha = alpha;
+        self.smooth_camera(now_s);
         let cam = self.camera();
         let view = cam.view();
         let proj = cam.proj(aspect);
@@ -4708,5 +4761,34 @@ mod named_mesh_tests {
         assert_eq!(named_node_parts(&m, "1"), Some(vec![(1, Some(2))]));
         assert_eq!(named_node_parts(&m, "3"), None);
         assert_eq!(named_node_parts(&m, "Nope"), None);
+    }
+}
+
+#[cfg(test)]
+mod camera_smoothing_tests {
+    use super::*;
+
+    #[test]
+    fn a_smoothed_camera_follows_with_lag_and_jumps_a_cut() {
+        let target = Vec3::new(1.0, 0.0, 0.0);
+        // The first frame draws where the world has it.
+        assert_eq!(smoothed_position(None, target, 1.0, 0.08), target);
+        // One tau later it has come 1 - 1/e of the way.
+        let p = smoothed_position(Some((Vec3::ZERO, 1.0)), target, 1.08, 0.08);
+        assert!((p.x - (1.0 - (-1.0f32).exp())).abs() < 1e-5, "{p}");
+        // No time, no move; a long stall moves at most a quarter second's worth.
+        assert_eq!(
+            smoothed_position(Some((Vec3::ZERO, 1.0)), target, 1.0, 0.08),
+            Vec3::ZERO
+        );
+        let late = smoothed_position(Some((Vec3::ZERO, 1.0)), target, 9.0, 0.08);
+        let quarter = smoothed_position(Some((Vec3::ZERO, 1.0)), target, 1.25, 0.08);
+        assert_eq!(late, quarter);
+        // A respawn far away is drawn there at once.
+        let far = Vec3::new(30.0, 0.0, 0.0);
+        assert_eq!(
+            smoothed_position(Some((Vec3::ZERO, 1.0)), far, 1.016, 0.08),
+            far
+        );
     }
 }
