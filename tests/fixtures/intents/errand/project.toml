@@ -1,0 +1,11 @@
+# A game's own intent in TypeScript (docs/spec/script-host.md 5.5) under the charter's four checks:
+# `walk_to` walks a first-person seat's body to a waypoint and presses `primary` there. The seat
+# starts it with player.act and with the waypoint's `visit` affordance; a rule starts the next
+# errand with ctx.intent when a waypoint is pressed; the script executor carries it out.
+name = "errand"
+rate = 60
+seed = 1
+
+[player]
+perception = "perception.json"
+actions = "first_person"

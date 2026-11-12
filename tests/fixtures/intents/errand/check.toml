@@ -1,0 +1,14 @@
+# The charter's four checks (checks.md 8.1) on a script intent: the seat's acts arrive as players'
+# Writes (`player.act` from {"player": 0}), the rule's ctx.intent acts are recomputed by every
+# replay, and the fork and reload points fall while the executor is walking the body.
+[run]
+seeds = [1, 2]
+ticks = 1200
+inputs = "checks/inputs.jsonl"
+
+[fork]
+at = [90, 400, 760]
+ticks = 120
+
+[reload]
+at = [90, 400, 760]

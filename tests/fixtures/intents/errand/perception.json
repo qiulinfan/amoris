@@ -1,0 +1,133 @@
+{
+  "observers": [
+    {
+      "name": "walker",
+      "doc": "Someone on errands: sees all round out to 60 m and knows the waypoints from the map.",
+      "sight": {
+        "range_m": 60,
+        "fov_deg": 360,
+        "eye_m": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "occlusion": false
+      },
+      "attention_m": 30,
+      "memory_s": 60,
+      "memory_capacity": 16,
+      "event_capacity": 64,
+      "chart": true,
+      "positions": true,
+      "instruments": [
+        "pos_m"
+      ],
+      "budget_tokens": 300
+    }
+  ],
+  "instruments": [
+    {"name": "pos_m", "doc": "Where you stand.", "unit": {"unit": "position"}, "precision": 2, "source": {"from": "field", "component": "Transform", "path": "position"}}
+  ],
+  "kinds": [
+    {
+      "kind": "waypoint",
+      "doc": "A post to walk to and press.",
+      "facts": [
+        {"name": "visits", "doc": "How often it was pressed.", "unit": {"unit": "count"}, "precision": 0, "exposure": "chart", "source": {"from": "field", "component": "Waypoint", "path": "visits"}}
+      ],
+      "affordances": [
+        {"verb": "visit", "doc": "Walk to it and press it.", "effect": {"effect": "intent", "intent": "walk_to", "params": {}}, "requires": [{"requires": "within", "max_m": 40}]}
+      ]
+    }
+  ],
+  "events": [
+    {
+      "kind": "errand.visited",
+      "doc": "You pressed a waypoint.",
+      "scope": {"scope": "private"},
+      "data": [
+        {"name": "waypoint", "doc": "The waypoint.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "waypoint"}},
+        {"name": "visits", "doc": "Its presses so far.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "visits"}}
+      ]
+    },
+    {
+      "kind": "intent.started",
+      "doc": "An intent of yours started.",
+      "scope": {"scope": "private"},
+      "data": [
+        {"name": "intent_id", "doc": "The intent's id.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent_id"}},
+        {"name": "intent", "doc": "The intent's name.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent"}},
+        {"name": "tag", "doc": "The caller's label.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "tag"}},
+        {"name": "code", "doc": "The failure's code.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "code"}},
+        {"name": "message", "doc": "The failure's message.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "message"}},
+        {"name": "distance_m", "doc": "Metres left to the waypoint.", "unit": {"unit": "metres"}, "precision": 1, "exposure": "coarse", "source": {"from": "data", "path": "distance_m"}}
+      ]
+    },
+    {
+      "kind": "intent.reached",
+      "doc": "An intent of yours reached its goal and holds it.",
+      "scope": {"scope": "private"},
+      "data": [
+        {"name": "intent_id", "doc": "The intent's id.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent_id"}},
+        {"name": "intent", "doc": "The intent's name.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent"}},
+        {"name": "tag", "doc": "The caller's label.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "tag"}},
+        {"name": "code", "doc": "The failure's code.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "code"}},
+        {"name": "message", "doc": "The failure's message.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "message"}},
+        {"name": "distance_m", "doc": "Metres left to the waypoint.", "unit": {"unit": "metres"}, "precision": 1, "exposure": "coarse", "source": {"from": "data", "path": "distance_m"}}
+      ]
+    },
+    {
+      "kind": "intent.succeeded",
+      "doc": "An intent of yours succeeded.",
+      "scope": {"scope": "private"},
+      "data": [
+        {"name": "intent_id", "doc": "The intent's id.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent_id"}},
+        {"name": "intent", "doc": "The intent's name.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent"}},
+        {"name": "tag", "doc": "The caller's label.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "tag"}},
+        {"name": "code", "doc": "The failure's code.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "code"}},
+        {"name": "message", "doc": "The failure's message.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "message"}},
+        {"name": "distance_m", "doc": "Metres left to the waypoint.", "unit": {"unit": "metres"}, "precision": 1, "exposure": "coarse", "source": {"from": "data", "path": "distance_m"}}
+      ]
+    },
+    {
+      "kind": "intent.failed",
+      "doc": "An intent of yours failed; code and message say why.",
+      "scope": {"scope": "private"},
+      "data": [
+        {"name": "intent_id", "doc": "The intent's id.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent_id"}},
+        {"name": "intent", "doc": "The intent's name.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent"}},
+        {"name": "tag", "doc": "The caller's label.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "tag"}},
+        {"name": "code", "doc": "The failure's code.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "code"}},
+        {"name": "message", "doc": "The failure's message.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "message"}},
+        {"name": "distance_m", "doc": "Metres left to the waypoint.", "unit": {"unit": "metres"}, "precision": 1, "exposure": "coarse", "source": {"from": "data", "path": "distance_m"}}
+      ]
+    },
+    {
+      "kind": "intent.cancelled",
+      "doc": "An intent of yours was cancelled.",
+      "scope": {"scope": "private"},
+      "data": [
+        {"name": "intent_id", "doc": "The intent's id.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent_id"}},
+        {"name": "intent", "doc": "The intent's name.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent"}},
+        {"name": "tag", "doc": "The caller's label.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "tag"}},
+        {"name": "code", "doc": "The failure's code.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "code"}},
+        {"name": "message", "doc": "The failure's message.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "message"}},
+        {"name": "distance_m", "doc": "Metres left to the waypoint.", "unit": {"unit": "metres"}, "precision": 1, "exposure": "coarse", "source": {"from": "data", "path": "distance_m"}}
+      ]
+    },
+    {
+      "kind": "intent.superseded",
+      "doc": "An intent of yours was superseded.",
+      "scope": {"scope": "private"},
+      "data": [
+        {"name": "intent_id", "doc": "The intent's id.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent_id"}},
+        {"name": "intent", "doc": "The intent's name.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent"}},
+        {"name": "tag", "doc": "The caller's label.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "tag"}},
+        {"name": "code", "doc": "The failure's code.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "code"}},
+        {"name": "message", "doc": "The failure's message.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "message"}},
+        {"name": "distance_m", "doc": "Metres left to the waypoint.", "unit": {"unit": "metres"}, "precision": 1, "exposure": "coarse", "source": {"from": "data", "path": "distance_m"}},
+        {"name": "by", "doc": "The intent of yours that superseded it, if one did.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "by"}}
+      ]
+    }
+  ]
+}
