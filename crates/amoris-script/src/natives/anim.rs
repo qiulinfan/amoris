@@ -1,8 +1,9 @@
-//! `ctx.anim` (docs/spec/animation.md 4): an entity's graph's parameters, montage requests, state
-//! and sockets. Parameters and requests are staged until the system returns, as every write;
-//! reads see the world as the system started, with this call's own parameters over it.
+//! `ctx.anim` (docs/spec/animation.md 4 and 5a): an entity's graph's parameters, montage requests,
+//! state, sockets and morph target weights. Parameters, requests and weight overrides are staged
+//! until the system returns, as every write; reads see the world as the system started, with this
+//! call's own parameters and overrides over it.
 
-use amoris_assets::anim::{AnimCommand, AnimState};
+use amoris_assets::anim::{AnimCommand, AnimState, MorphWeight, MorphWeights};
 use amoris_sim::{EntityId, entity};
 use bevy_ecs::prelude::World;
 use rquickjs::{Array, Ctx, Object, Value};
@@ -177,6 +178,93 @@ pub fn socket<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
     o.set("position", list(&s.position)?)?;
     o.set("rotation", list(&s.rotation)?)?;
     Ok(freeze_new(ctx, o)?)
+}
+
+/// `animWeight(e, name)`: a morph target's weight after the last evaluation, this call's own
+/// override over it, or null when the entity has no target of that name.
+pub fn weight<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
+    let e = arg(ctx, args, 0);
+    let name = text(&arg(ctx, args, 1), "a target's name")?;
+    let v = with_call(ctx, "anim.weight", |call, world| {
+        let id = target(call, world, &e)?;
+        let last = entity::entity(world, id)
+            .and_then(|x| world.get::<MorphWeights>(x))
+            .and_then(|m| m.weights.iter().find(|w| w.name == name).map(|w| w.weight));
+        let staged = call.commands.iter().rev().find_map(|c| match c {
+            Command::Morph {
+                id: at,
+                name: n,
+                weight: Some(w),
+            } if *at == id && *n == name => Some(Some(*w)),
+            Command::Morph {
+                id: at,
+                name: n,
+                weight: None,
+            } if *at == id && *n == name => Some(None),
+            _ => None,
+        });
+        Ok(match staged {
+            Some(Some(w)) if last.is_some() => Some(w),
+            _ => last,
+        })
+    })?;
+    Ok(match v {
+        Some(w) => Value::new_number(ctx.clone(), w),
+        None => Value::new_null(ctx.clone()),
+    })
+}
+
+/// `animSetWeight(e, name, weight)`: holds every morph target of that name at `weight` from the
+/// next evaluation on; null gives it back to the graph.
+pub fn set_weight<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
+    let e = arg(ctx, args, 0);
+    let name = text(&arg(ctx, args, 1), "a target's name")?;
+    let v = arg(ctx, args, 2);
+    let weight = if v.is_null() || v.is_undefined() {
+        None
+    } else {
+        Some(
+            v.as_number()
+                .filter(|x| x.is_finite())
+                .ok_or_else(|| range(format!("target {name} takes a finite number or null")))?,
+        )
+    };
+    with_call(ctx, "anim.setWeight", |call, world| {
+        let id = target(call, world, &e)?;
+        call.commands.push(Command::Morph { id, name, weight });
+        Ok(())
+    })?;
+    Ok(Value::new_undefined(ctx.clone()))
+}
+
+/// Applies a staged weight override, or its release, to the entity's `MorphWeights` (inserting
+/// it: the graph's evaluation keeps the overrides and fills in the weights).
+pub(crate) fn apply_weight(world: &mut World, id: EntityId, name: String, weight: Option<f64>) {
+    let Some(e) = entity::entity(world, id) else {
+        return;
+    };
+    if world.get::<MorphWeights>(e).is_none() {
+        if weight.is_none() {
+            return;
+        }
+        world.entity_mut(e).insert(MorphWeights::default());
+    }
+    let Some(mut m) = world.get_mut::<MorphWeights>(e) else {
+        return;
+    };
+    let at = m.overrides.iter().position(|o| o.name == name);
+    match (at, weight) {
+        (Some(i), Some(w)) => {
+            if m.overrides[i].weight != w {
+                m.overrides[i].weight = w;
+            }
+        }
+        (None, Some(w)) => m.overrides.push(MorphWeight { name, weight: w }),
+        (Some(i), None) => {
+            m.overrides.remove(i);
+        }
+        (None, None) => {}
+    }
 }
 
 /// Applies a staged parameter or request to the entity's state (inserting it before the graph's

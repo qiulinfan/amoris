@@ -198,6 +198,12 @@ pub(crate) enum Command {
         param: Option<(String, f64)>,
         command: Option<amoris_assets::anim::AnimCommand>,
     },
+    /// A morph target's weight override by name, or its release (animation.md 5a).
+    Morph {
+        id: EntityId,
+        name: String,
+        weight: Option<f64>,
+    },
 }
 
 /// A column handed to the script, kept to compare after the call.
@@ -379,6 +385,9 @@ pub(crate) fn apply(
             }
             Command::Anim { id, param, command } => {
                 crate::natives::anim::apply(world, id, param, command);
+            }
+            Command::Morph { id, name, weight } => {
+                crate::natives::anim::apply_weight(world, id, name, weight);
             }
             Command::Water { id, column, m3 } => {
                 if let Some(e) = entity::entity(world, id)

@@ -89,7 +89,8 @@ colours) and the `Environment` (sky colour, ambient, fog, exposure, bloom); the 
 paths a `Model` was built with are part of those fields too.
 
 Characters (docs/spec/animation.md): a body's `AnimGraph` names its graph and is driven through
-`ctx.anim` (parameters, montages and their sections, its notifies' events, socket poses); an
+`ctx.anim` (parameters, montages and their sections, its notifies' events, socket poses, and
+the weights of its model's morph targets, read and held by name with `weight` and `setWeight`); an
 `Avatar` stands a posed body on its `Walker` and turns it toward its motion, its look or a target;
 an `Attach` rides an entity on a body's joint; a game's `[player] buttons` arrive as the walker's
 `Buttons`; a `CameraRig` holds a camera on a spring arm behind a walker, and a script raises its

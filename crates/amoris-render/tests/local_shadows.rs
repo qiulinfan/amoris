@@ -81,6 +81,7 @@ fn model() -> ModelAsset {
             mesh: 0,
             transform: glam::Mat4::IDENTITY.to_cols_array(),
             skin: None,
+            node: None,
         }],
         ..ModelAsset::default()
     }

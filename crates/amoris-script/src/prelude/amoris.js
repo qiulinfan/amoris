@@ -115,7 +115,11 @@ const anim = Object.freeze({
 		host.animCommand(e, "stop", "", "", 0, fade ?? .2);
 	},
 	state: (e) => host.animState(e),
-	socket: (e, joint) => host.animSocket(e, joint)
+	socket: (e, joint) => host.animSocket(e, joint),
+	weight: (e, target) => host.animWeight(e, target),
+	setWeight: (e, target, weight) => {
+		host.animSetWeight(e, target, weight);
+	}
 });
 const water = Object.freeze({
 	observe: (probe) => host.waterObserve(probe),
@@ -246,4 +250,4 @@ export const field = Object.freeze({
 
 import { harden as __amoris_harden } from "amoris:host";
 import * as __amoris_self from "amoris";
-__amoris_harden("amoris", __amoris_self, { ["Query"]: Query, ["annotate"]: annotate, ["world"]: world, ["voxels"]: voxels, ["physics"]: physics, ["scene"]: scene, ["nav"]: nav, ["anim"]: anim, ["water"]: water, ["part"]: part, ["makeRng"]: makeRng, ["__context"]: __context, ["__query"]: __query, ["component"]: component, ["system"]: system, ["executor"]: executor, ["game"]: game, ["freeze"]: freeze, ["fieldOf"]: fieldOf, ["field"]: field }, { ["Query"]: 294, ["annotate"]: 549, ["world"]: 558, ["voxels"]: 569, ["physics"]: 587, ["scene"]: 596, ["nav"]: 602, ["anim"]: 607, ["water"]: 628, ["part"]: 641, ["makeRng"]: 646, ["__context"]: 668, ["__query"]: 696, ["component"]: 827, ["system"]: 840, ["executor"]: 847, ["game"]: 852, ["freeze"]: 857, ["fieldOf"]: 899, ["field"]: 903 });
+__amoris_harden("amoris", __amoris_self, { ["Query"]: Query, ["annotate"]: annotate, ["world"]: world, ["voxels"]: voxels, ["physics"]: physics, ["scene"]: scene, ["nav"]: nav, ["anim"]: anim, ["water"]: water, ["part"]: part, ["makeRng"]: makeRng, ["__context"]: __context, ["__query"]: __query, ["component"]: component, ["system"]: system, ["executor"]: executor, ["game"]: game, ["freeze"]: freeze, ["fieldOf"]: fieldOf, ["field"]: field }, { ["Query"]: 294, ["annotate"]: 555, ["world"]: 564, ["voxels"]: 575, ["physics"]: 593, ["scene"]: 602, ["nav"]: 608, ["anim"]: 613, ["water"]: 638, ["part"]: 651, ["makeRng"]: 656, ["__context"]: 678, ["__query"]: 706, ["component"]: 837, ["system"]: 850, ["executor"]: 857, ["game"]: 862, ["freeze"]: 867, ["fieldOf"]: 909, ["field"]: 913 });

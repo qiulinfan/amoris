@@ -321,6 +321,12 @@ export interface AnimAccess {
 	state(e: Entity): AnimInfo | null;
 	/** A socket's place in the world (the graph's `sockets`), or null. */
 	socket(e: Entity, joint: string): AnimSocket | null;
+	/** A morph target's weight after the last evaluation (this call's own override over it), or
+	* null when the model has no target of that name (docs/spec/animation.md 5a). */
+	weight(e: Entity, target: string): number | null;
+	/** Holds every morph target named `target` at `weight` from the next evaluation on, in place
+	* of what the graph gives; null gives it back to the graph. */
+	setWeight(e: Entity, target: string, weight: number | null): void;
 }
 /** Where a ray met a block (docs/spec/voxels.md 4). */
 export interface VoxelHit {

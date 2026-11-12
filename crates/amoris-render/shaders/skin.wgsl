@@ -3,11 +3,15 @@
 // which the rest of the renderer then draws like any mesh. One dispatch skins every instance: each
 // job (skinned instance) owns consecutive workgroups, and a workgroup finds its job by a binary
 // search over the jobs' first workgroups (skinning.rs).
+//
+// Morph targets (docs/spec/animation.md 5a) come first: a vertex adds each of its job's active
+// targets' offsets times the target's weight to its rest position, normal and tangent, then skins.
+// A job without active targets reads its rest vertex as before.
 
-// `jobs`: the job count, then per job five words: its first vertex in the rest and weight buffers,
-// the first vertex (base vertex) of its output range, its vertex count, its first joint matrix and
-// its first workgroup.
-const JOB_WORDS: u32 = 5u;
+// `jobs`: the job count, then per job eight words: its first vertex in the rest and weight buffers,
+// the first vertex (base vertex) of its output range, its vertex count, its first joint matrix,
+// its first workgroup, its source's first morph offset, its first active target and their count.
+const JOB_WORDS: u32 = 8u;
 // Workgroups per dispatch row (skinning.rs `ROW`).
 const ROW: u32 = 65535u;
 
@@ -22,8 +26,13 @@ struct SkinVert {
 @group(0) @binding(2) var<storage, read> skin: array<SkinVert>;
 @group(0) @binding(3) var<storage, read> palette: array<mat4x4f>;
 @group(0) @binding(4) var<storage, read_write> out_vertices: array<f32>;
+// Per target, per vertex of a source: position, normal and tangent offsets (MorphTargets::STRIDE).
+@group(0) @binding(5) var<storage, read> deltas: array<f32>;
+// The frame's active targets: (target, weight's bits).
+@group(0) @binding(6) var<storage, read> morph_active: array<vec2u>;
 
 const STRIDE: u32 = 12u;   // position 3, normal 3, uv 2, tangent 4
+const MORPH_STRIDE: u32 = 9u;
 
 fn job_word(k: u32, word: u32) -> u32 {
     return jobs[1u + k * JOB_WORDS + word];
@@ -52,9 +61,25 @@ fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_index) lane:
         return;
     }
     let s = (src + i) * STRIDE;
-    let pos = vec4f(rest[s], rest[s + 1u], rest[s + 2u], 1.0);
-    let nrm = vec4f(rest[s + 3u], rest[s + 4u], rest[s + 5u], 0.0);
-    let tan = vec4f(rest[s + 8u], rest[s + 9u], rest[s + 10u], 0.0);
+    var p3 = vec3f(rest[s], rest[s + 1u], rest[s + 2u]);
+    var n3 = vec3f(rest[s + 3u], rest[s + 4u], rest[s + 5u]);
+    var t3 = vec3f(rest[s + 8u], rest[s + 9u], rest[s + 10u]);
+    let actives = job_word(lo, 7u);
+    if (actives > 0u) {
+        let morph_at = job_word(lo, 5u);
+        let first_active = job_word(lo, 6u);
+        for (var k = 0u; k < actives; k++) {
+            let a = morph_active[first_active + k];
+            let w = bitcast<f32>(a.y);
+            let d = morph_at + (a.x * count + i) * MORPH_STRIDE;
+            p3 += w * vec3f(deltas[d], deltas[d + 1u], deltas[d + 2u]);
+            n3 += w * vec3f(deltas[d + 3u], deltas[d + 4u], deltas[d + 5u]);
+            t3 += w * vec3f(deltas[d + 6u], deltas[d + 7u], deltas[d + 8u]);
+        }
+    }
+    let pos = vec4f(p3, 1.0);
+    let nrm = vec4f(n3, 0.0);
+    let tan = vec4f(t3, 0.0);
     let sv = skin[src + i];
     let j = array<u32, 4>(sv.joints.x & 0xffffu, sv.joints.x >> 16u, sv.joints.y & 0xffffu, sv.joints.y >> 16u);
     let w = sv.weights;

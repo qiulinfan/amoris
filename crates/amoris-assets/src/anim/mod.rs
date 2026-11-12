@@ -20,7 +20,8 @@ pub use clip::{Clip, ClipSet, Skeleton};
 pub use graph::{GraphDef, Notice, Output, Rig};
 pub use math::Xform;
 pub use state::{
-    AnimCommand, AnimGraph, AnimParam, AnimPose, AnimState, Attach, LayerState, SlotState, Socket,
+    AnimCommand, AnimGraph, AnimParam, AnimPose, AnimState, Attach, LayerState, MorphWeight,
+    MorphWeights, SlotState, Socket,
 };
 
 /// A project's animation: its graphs and the files they name (skeletons and clip libraries), by

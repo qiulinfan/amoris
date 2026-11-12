@@ -2022,6 +2022,7 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     )?;
     ComponentRegistry::register::<amoris_assets::anim::AnimState>(world, None)?;
     ComponentRegistry::register::<amoris_assets::anim::Attach>(world, Some(attach_schema()?))?;
+    ComponentRegistry::register::<amoris_assets::anim::MorphWeights>(world, None)?;
     ComponentRegistry::register::<UiText>(world, Some(ui_text_schema()?))?;
     ComponentRegistry::register::<UiBar>(world, Some(ui_bar_schema()?))?;
     ComponentRegistry::register::<AudioSource>(world, None)?;

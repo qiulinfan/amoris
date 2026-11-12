@@ -902,6 +902,7 @@ fn skinned_board(px: f32) -> ModelAsset {
             mesh: 0,
             transform: glam::Mat4::IDENTITY.to_cols_array(),
             skin: Some(0),
+            node: None,
         }],
         skeleton: vec![SkeletonNode {
             name: "bone".into(),
@@ -909,6 +910,7 @@ fn skinned_board(px: f32) -> ModelAsset {
             translation: [0.0; 3],
             rotation: Quat::IDENTITY.to_array(),
             scale: [1.0; 3],
+            weights: Vec::new(),
         }],
         skins: vec![SkinAsset {
             joints: vec![0],
@@ -924,6 +926,7 @@ fn skinned_board(px: f32) -> ModelAsset {
                 times: vec![0.0, 1.0],
                 values: vec![[-0.75, 0.0, 0.0, 0.0], [-0.75 + speed, 0.0, 0.0, 0.0]],
             }],
+            morph: Vec::new(),
         }],
     }
 }

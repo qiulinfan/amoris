@@ -45,7 +45,7 @@ it are charter 5.4.
   `river-falls`, `surf-beach`, `water-pool`, `water-storm`, `water-valley`).
   `tests/fixtures/`: projects only tests and checks read: the checks' negative controls, the SDK's
   type test, and `scenes/`, the scenes that tests, checks and measurement tools read (eight
-  `water-*` scenes, `gi-room`, `pt-lab`, `hierarchy`). xtask runs every `samples/*/check.toml` and `tests/fixtures/**/check.toml`.
+  `water-*` scenes, `gi-room`, `pt-lab`, `hierarchy`, `morph`). xtask runs every `samples/*/check.toml` and `tests/fixtures/**/check.toml`.
 - `bench/`: benchmark workloads and comparison harnesses (`agent-dev/`, `physics/`, `rules/`,
   `web/threejs_cubes.html`).
 - `tools/`: Python, shell and Node scripts by purpose ([tools/README.md](tools/README.md)):
@@ -273,6 +273,11 @@ credential cleanup. File-verification records remain local, including in that ar
   their evidence (docs/bench/rt-shadows.md).
 - Compute pipelines use `shaders::compute_options()` (no automatic workgroup zeroing: it breaks
   MoltenVK); a compute shader must initialize the workgroup memory it reads.
+- Morph targets ([docs/spec/animation.md](docs/spec/animation.md) 5a) ride the skinning pass
+  (`skinning.rs`, `skin.wgsl`, seven storage buffers): a change to either runs render `morph`,
+  `draw_paths`, `taa` and `skinned_bounds` on D3D12 and Vulkan, and `tools/render/build_compare.py`'s
+  `crowd`; a change to the weights' blending runs amoris-assets' `morph` (its recorded digest).
+  WGSL reserves words such as `active`, which naga refuses at pipeline creation (no frame draws).
 - Occlusion culling (two-phase Hi-Z, [docs/spec/occlusion.md](docs/spec/occlusion.md)) runs in
   `auto` mode by default; `AMORIS_OCCLUSION=off|on|auto` (the viewport page: `?occlusion=`) sets
   it. A change to culling or the opaque passes runs `cargo test -p amoris-render --test occlusion

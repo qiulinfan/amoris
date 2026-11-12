@@ -67,9 +67,15 @@ pub struct AnimView {
     pub pose: Vec<f32>,
     /// The tick's length, seconds (a pose is interpolated from the previous tick's over it).
     pub tick_s: f32,
+    /// The pose's morph target weights, flat in the file's node order, each node's mesh's targets
+    /// in turn (animation.md 5a); empty for a pose without targets and for a clip.
+    pub morph: Vec<f32>,
     /// The previous tick's pose, kept by the renderer (never sent).
     #[serde(skip)]
     pub prev: Vec<f32>,
+    /// The previous tick's morph weights, kept by the renderer (never sent).
+    #[serde(skip)]
+    pub prev_morph: Vec<f32>,
 }
 
 /// One drawn entity's change: its pose, its look, its animation, or any of these.

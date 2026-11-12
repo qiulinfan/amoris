@@ -510,6 +510,8 @@ pub struct Rig {
     meta: Vec<Option<usize>>,
     /// Per layer, per joint, how much the layer covers it.
     weights: Vec<Vec<f32>>,
+    /// Where each joint's morph weights start in a pose's flat weights, the total last.
+    morph_at: Vec<usize>,
     root: Option<usize>,
     /// The root's parent in the file's space at rest (root motion is taken in that space).
     root_parent: Xform,
@@ -602,6 +604,7 @@ impl Rig {
                 .ok_or(format!("its socket {s} is no joint"))?;
             sockets.push((s.clone(), j));
         }
+        let morph_at = skeleton.morph_offsets();
         Ok(Rig {
             def,
             skeleton,
@@ -609,6 +612,7 @@ impl Rig {
             by_name,
             meta,
             weights,
+            morph_at,
             root,
             root_parent,
             sockets,
@@ -687,6 +691,20 @@ impl Rig {
         }
     }
 
+    /// How many morph weights a pose holds (every target of the skeleton's meshes).
+    pub fn morph_len(&self) -> usize {
+        self.morph_at.last().copied().unwrap_or(0)
+    }
+
+    /// Each morph weight's target name and joint, in a pose's flat order.
+    pub fn morph_targets(&self) -> impl Iterator<Item = (&str, usize)> {
+        self.skeleton
+            .joints
+            .iter()
+            .enumerate()
+            .flat_map(|(j, x)| x.targets.iter().map(move |n| (n.as_str(), j)))
+    }
+
     /// The model-space transforms of the graph's sockets for a pose.
     pub fn sockets(&self, pose: &[Xform]) -> Vec<(String, Xform)> {
         self.sockets
@@ -704,13 +722,40 @@ pub struct Notice {
     pub phase: &'static str,
 }
 
-/// What one tick of a graph gives: the pose (local transforms, the skeleton's order), the notifies
-/// crossed, and the root's horizontal motion in the model's space.
+/// What one tick of a graph gives: the pose (local transforms, the skeleton's order), its morph
+/// weights (flat, the skeleton's order; animation.md 5a), the notifies crossed, and the root's
+/// horizontal motion in the model's space.
 #[derive(Clone, Debug, Default)]
 pub struct Output {
     pub pose: Vec<Xform>,
+    pub morph: Vec<f32>,
     pub notices: Vec<Notice>,
     pub root_motion: V3,
+}
+
+/// A pose while it is blended: the joints' transforms and the flat morph weights.
+struct Pose {
+    x: Vec<Xform>,
+    w: Vec<f32>,
+}
+
+impl Pose {
+    fn rest(rig: &Rig) -> Pose {
+        Pose {
+            x: rig.skeleton.rest(),
+            w: rig.skeleton.rest_weights(),
+        }
+    }
+
+    /// `self` becomes `from` mixed toward `self` by `u` (a fade's outgoing pose under it).
+    fn fade_from(&mut self, from: &Pose, u: f32) {
+        for (o, a) in self.x.iter_mut().zip(&from.x) {
+            *o = Xform::mix(a, o, u);
+        }
+        for (o, a) in self.w.iter_mut().zip(&from.w) {
+            *o = a + (*o - a) * u;
+        }
+    }
 }
 
 fn param(st: &AnimState, name: &str) -> f64 {
@@ -874,24 +919,35 @@ fn is_blend(s: &StateDef) -> bool {
 }
 
 /// Writes a sampled state's pose (its clips weighted) over the rest.
-fn pose_of(rig: &Rig, sets: &[ClipSet], sampled: &Sampled, lock_root: bool) -> Vec<Xform> {
-    let rest = rig.skeleton.rest();
-    let mut out = rest.clone();
+fn pose_of(rig: &Rig, sets: &[ClipSet], sampled: &Sampled, lock_root: bool) -> Pose {
+    let rest = Pose::rest(rig);
+    let mut out = Pose {
+        x: rest.x.clone(),
+        w: rest.w.clone(),
+    };
     let mut acc = 0.0f64;
-    let mut buf = rest.clone();
+    let mut buf = rest.x.clone();
+    let mut wbuf = rest.w.clone();
     for &(c, t, w) in &sampled.parts {
         if w <= 0.0 {
             continue;
         }
-        buf.copy_from_slice(&rest);
+        buf.copy_from_slice(&rest.x);
         rig.clips[c].sample(sets, t as f32, &mut buf);
         if lock_root && rig.meta(c).is_some_and(|m| m.root_motion) {
             lock(rig, sets, c, &mut buf);
         }
+        if !wbuf.is_empty() {
+            wbuf.copy_from_slice(&rest.w);
+            rig.clips[c].sample_weights(sets, t as f32, &mut wbuf);
+        }
         acc += w;
         let u = (w / acc) as f32;
-        for (o, b) in out.iter_mut().zip(&buf) {
+        for (o, b) in out.x.iter_mut().zip(&buf) {
             *o = if acc == w { *b } else { Xform::mix(o, b, u) };
+        }
+        for (o, b) in out.w.iter_mut().zip(&wbuf) {
+            *o = if acc == w { *b } else { *o + (b - *o) * u };
         }
     }
     out
@@ -1132,7 +1188,7 @@ fn slot_weight(rig: &Rig, s: &SlotState) -> f64 {
 pub fn step(rig: &Rig, sets: &[ClipSet], st: &mut AnimState, dt: f64) -> Output {
     let mut out = Output::default();
     commands(rig, st, &mut out.notices);
-    let mut pose = rig.skeleton.rest();
+    let mut pose = Pose::rest(rig);
     let mut root = [0.0f32; 3];
     for (li, layer) in rig.def.layers.iter().enumerate() {
         let weights = &rig.weights[li];
@@ -1220,9 +1276,7 @@ pub fn step(rig: &Rig, sets: &[ClipSet], st: &mut AnimState, dt: f64) -> Output 
                         let from =
                             pose_of(rig, sets, &sample_state(rig, st, f, ls.from_time), true);
                         let u = (ls.fade / ls.fade_len) as f32;
-                        for (o, a) in lp.iter_mut().zip(&from) {
-                            *o = Xform::mix(a, o, u);
-                        }
+                        lp.fade_from(&from, u);
                     }
                 } else if ls.fade_len > 0.0 {
                     let ls = &mut st.layers[li];
@@ -1230,7 +1284,7 @@ pub fn step(rig: &Rig, sets: &[ClipSet], st: &mut AnimState, dt: f64) -> Output 
                     ls.fade_len = 0.0;
                     ls.fade = 0.0;
                 }
-                over(&mut pose, &lp, weights, 1.0);
+                over(rig, &mut pose, &lp, weights, 1.0);
             }
             LayerKind::Slot(name) => {
                 let Some(si) = st.slots.iter().position(|s| &s.slot == name) else {
@@ -1340,9 +1394,7 @@ pub fn step(rig: &Rig, sets: &[ClipSet], st: &mut AnimState, dt: f64) -> Output 
                             true,
                         );
                         let u = (slot.age / fade_in) as f32;
-                        for (o, a) in lp.iter_mut().zip(&from) {
-                            *o = Xform::mix(a, o, u);
-                        }
+                        lp.fade_from(&from, u);
                     } else {
                         slot.from_clip.clear();
                     }
@@ -1353,11 +1405,12 @@ pub fn step(rig: &Rig, sets: &[ClipSet], st: &mut AnimState, dt: f64) -> Output 
                 } else {
                     max(slot.from_weight, w)
                 };
-                over(&mut pose, &lp, weights, w as f32);
+                over(rig, &mut pose, &lp, weights, w as f32);
             }
         }
     }
-    out.pose = pose;
+    out.pose = pose.x;
+    out.morph = pose.w;
     out.root_motion = root;
     out
 }
@@ -1372,14 +1425,28 @@ fn layer_share(ls: &LayerState) -> f64 {
     }
 }
 
-/// `layer` over `pose` by each joint's weight times `w`.
-fn over(pose: &mut [Xform], layer: &[Xform], weights: &[f32], w: f32) {
-    for ((p, l), m) in pose.iter_mut().zip(layer).zip(weights) {
+/// `layer` over `pose` by each joint's weight times `w`; a joint's morph weights go with it.
+fn over(rig: &Rig, pose: &mut Pose, layer: &Pose, weights: &[f32], w: f32) {
+    for ((p, l), m) in pose.x.iter_mut().zip(&layer.x).zip(weights) {
         let u = m * w;
         if u >= 1.0 {
             *p = *l;
         } else if u > 0.0 {
             *p = Xform::mix(p, l, u);
+        }
+    }
+    if pose.w.is_empty() {
+        return;
+    }
+    for (j, m) in weights.iter().enumerate() {
+        let u = m * w;
+        let (a, b) = (rig.morph_at[j], rig.morph_at[j + 1]);
+        for (p, l) in pose.w[a..b].iter_mut().zip(&layer.w[a..b]) {
+            if u >= 1.0 {
+                *p = *l;
+            } else if u > 0.0 {
+                *p += (*l - *p) * u;
+            }
         }
     }
 }

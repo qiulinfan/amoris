@@ -1,0 +1,11 @@
+{
+  "format": "amoris-scene",
+  "version": 1,
+  "entities": [
+    {"name": "Figure", "components": {
+      "Transform": {"position": [0.0, 0.0, 0.0]},
+      "Model": {"mesh": "models/morph.gltf"},
+      "AnimGraph": {"graph": "anim/morph.anim.json"}}},
+    {"name": "Gauge", "components": {"Gauge": {"figure": 1}}}
+  ]
+}

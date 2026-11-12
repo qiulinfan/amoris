@@ -89,6 +89,51 @@ pub struct MeshData {
     /// Joint indices and weights per vertex, for a skinned mesh.
     #[serde(default)]
     pub skin: Option<SkinWeights>,
+    /// Its morph targets (docs/spec/animation.md 5a).
+    #[serde(default)]
+    pub morph: Option<MorphTargets>,
+}
+
+/// A mesh's morph targets (blend shapes): per target, per vertex, the offsets a weight of 1 adds.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct MorphTargets {
+    /// The targets' names: the glTF mesh's `extras.targetNames`, else their indices.
+    pub names: Vec<String>,
+    /// Target by target, vertex by vertex: the position, normal and tangent offsets,
+    /// [`MorphTargets::STRIDE`] numbers a vertex (zeros where the file has none).
+    pub deltas: Vec<f32>,
+}
+
+impl MorphTargets {
+    /// Numbers per vertex and target: position, normal and tangent offsets, three each.
+    pub const STRIDE: usize = 9;
+
+    pub fn len(&self) -> usize {
+        self.names.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.names.is_empty()
+    }
+
+    /// How far any vertex can move with every weight at 1: the sum over targets of the largest
+    /// position offset.
+    pub fn reach(&self, vertices: usize) -> f32 {
+        let per = vertices * Self::STRIDE;
+        if per == 0 {
+            return 0.0;
+        }
+        self.deltas
+            .chunks(per)
+            .map(|t| {
+                t.as_chunks::<{ Self::STRIDE }>()
+                    .0
+                    .iter()
+                    .map(|d| (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt())
+                    .fold(0.0f32, f32::max)
+            })
+            .sum()
+    }
 }
 
 /// Per-vertex skinning: up to four joints (indices into the skin's joint list) and their weights.
@@ -118,6 +163,7 @@ impl MeshData {
             material: None,
             lods: Vec::new(),
             skin: None,
+            morph: None,
         }
     }
 
@@ -310,6 +356,10 @@ pub struct NodeData {
     /// The skin deforming this mesh (an index into `ModelAsset::skins`).
     #[serde(default)]
     pub skin: Option<usize>,
+    /// The file's node it hangs from (an index into `ModelAsset::skeleton`), whose weights its
+    /// morph targets take.
+    #[serde(default)]
+    pub node: Option<usize>,
 }
 
 /// A node of the file's hierarchy in its rest pose (bones are nodes).
@@ -320,6 +370,10 @@ pub struct SkeletonNode {
     pub translation: [f32; 3],
     pub rotation: [f32; 4],
     pub scale: [f32; 3],
+    /// The default weights of its mesh's morph targets (the node's `weights`, else the mesh's,
+    /// else zeros); empty without a mesh with targets.
+    #[serde(default)]
+    pub weights: Vec<f32>,
 }
 
 /// A skin: its joints (skeleton node indices) and their inverse bind matrices (column-major).
@@ -355,12 +409,25 @@ pub struct Channel {
     pub values: Vec<[f32; 4]>,
 }
 
+/// The keys of a node's morph target weights (glTF's `weights` path).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MorphChannel {
+    pub node: usize,
+    pub interpolation: Interpolation,
+    pub times: Vec<f32>,
+    /// One weight per target a key; a cubic channel holds (in-tangents, values, out-tangents).
+    pub values: Vec<f32>,
+}
+
 /// An animation clip.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AnimationClip {
     pub name: String,
     pub duration: f32,
     pub channels: Vec<Channel>,
+    /// Its morph weight channels.
+    #[serde(default)]
+    pub morph: Vec<MorphChannel>,
 }
 
 /// An imported model: meshes, materials, images and the default scene's drawn nodes.

@@ -1,6 +1,7 @@
 //! The components of an animated character (animation.md 4): the graph it plays (`AnimGraph`), the
 //! graph's state (`AnimState`, persisted, so restores, forks and replays reproduce it), and the pose
-//! the last tick evaluated (`AnimPose`, derived and never persisted).
+//! the last tick evaluated (`AnimPose`, derived and never persisted), and its morph target weights
+//! (`MorphWeights`, persisted).
 
 use bevy_ecs::prelude::Component;
 use schemars::JsonSchema;
@@ -130,10 +131,31 @@ pub struct AnimState {
     pub root_motion: [f64; 3],
 }
 
-/// The pose the last tick evaluated, the skeleton's joints in its order (derived each tick).
+/// The pose the last tick evaluated, the skeleton's joints in its order, and its morph weights,
+/// flat in the same order (derived each tick).
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct AnimPose {
     pub joints: Vec<Xform>,
+    pub morph: Vec<f32>,
+}
+
+/// A morph target's weight, by the target's name.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct MorphWeight {
+    pub name: String,
+    pub weight: f64,
+}
+
+/// An animated model's morph target weights (animation.md 5a): scripts' overrides by target name,
+/// and each named target's weight after the last evaluation.
+#[derive(Component, Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct MorphWeights {
+    /// Weights set by name: every target of that name takes it in place of the graph's.
+    pub overrides: Vec<MorphWeight>,
+    /// Each named target's weight after the last evaluation, overrides included (engine-written).
+    pub weights: Vec<MorphWeight>,
 }
 
 /// A thing held by another's joint (a sword in a hand): its place is the parent's, then the
