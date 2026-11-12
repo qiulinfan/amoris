@@ -183,13 +183,13 @@ without gamepads and says so once.
 
 ## 7. The browser
 
-The page polls `navigator.getGamepads()` each frame and takes the standard-mapped pad with the
-latest `timestamp`; `gamepadconnected` and `gamepaddisconnected` name it in
-`window.amorisPlayer.pad`. While the page is ready and not playing, `PadStart` or any button starts
-play in the page's keyboard mode (no pointer lock: a gamepad button is no user gesture for the
-lock); `PadStart` while playing pauses. The mouse still looks while dragged. The page's sound starts
-with the first click or tap; a session started from the gamepad alone stays silent until one, since
-browsers start audio only on a user gesture.
+The page polls `navigator.getGamepads()` each frame, takes the standard-mapped pad with the latest
+`timestamp` and names it in `window.amorisPlayer.pad`; a pad that is gone lifts its inputs. While
+the page is ready and not playing, `PadStart` or any button starts play in the page's keyboard mode
+(no pointer lock: a gamepad button is no user gesture for the lock); `PadStart` while playing
+pauses. The mouse still looks while dragged. The page's sound starts with the first click or tap; a
+session started from the gamepad alone stays silent until one, since browsers start audio only on a
+user gesture.
 
 ## 8. Tests and checks
 

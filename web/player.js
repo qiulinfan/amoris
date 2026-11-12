@@ -1,9 +1,10 @@
 // The game player (docs/spec/web-export.md): a first-person game's `player` seat in a page, as the
 // native window plays it (`amoris play <project> --walk`, crates/amoris-app/src/window.rs). The game
 // runs in a module Web Worker (amoris.js, game.js) at real time; the engine's renderer
-// (viewport/viewport.js) draws its render feed with WebGPU; the keys, the mouse and the wheel become
-// `player.act` controls and pulses of the seat, sent as the local human player. The camera is the
-// walker's, turned at once by the page's own look (the viewport's `first_person`).
+// (viewport/viewport.js) draws its render feed with WebGPU; the keys, the mouse, the wheel, a gamepad
+// and the touch controls go through the project's input map in the viewport (`seat_frame`,
+// docs/spec/input.md) to `player.act` controls and pulses of the seat, sent as the local human
+// player. The camera is the walker's, turned at once by the page's own look.
 //
 // The page plays the game's sound with WebAudio as the native window plays it with amoris-audio:
 // the world's sound sources, the sound events (`sound`, or those the project's `[sounds]` names)
@@ -47,7 +48,28 @@ Play it in a current Chrome or Edge on Windows, macOS or ChromeOS (Chrome on And
 mouse controls). Safari 26 and Firefox 141+ on Windows have WebGPU as well; on Linux, Chrome needs
 chrome://flags/#enable-unsafe-webgpu.`;
 
-/** Keys, buttons and the wheel since the last frame, as the native window gathers them. */
+/** Mouse buttons by `MouseEvent.button`, as input names name them (docs/spec/input.md 2). */
+const MOUSE = ["MouseLeft", "MouseMiddle", "MouseRight"];
+/** The standard gamepad's buttons by index (input.md 2.1). */
+const PAD_START = 9;
+/** A touch that moves less than this (CSS pixels) is a tap; a touch drag looks at two counts a pixel. */
+const TAP_PX = 8;
+const TOUCH_LOOK = 2;
+/** The touch stick's reach, CSS pixels. */
+const STICK_PX = 60;
+
+/** The standard-mapped gamepad that last changed (input.md 7), or null. */
+function activePad() {
+  let best = null;
+  for (const g of (navigator.getGamepads ? navigator.getGamepads() : [])) {
+    if (g && g.connected && g.mapping === "standard" && (!best || g.timestamp > best.timestamp)) best = g;
+  }
+  return best;
+}
+
+/** The devices since the last frame, by input name (input.md 2), as the native window gathers them:
+ *  keys, mouse buttons and the wheel, the pointer's look (the mouse, or a touch drag), the gamepad,
+ *  and the touch controls. The viewport's seat maps them (`seat_frame`); nothing is mapped here. */
 class Input {
   constructor(canvas) {
     this.canvas = canvas;
@@ -58,16 +80,20 @@ class Input {
     this.forced = false; // the check page's capture without pointer lock
     this.dx = 0;
     this.dy = 0;
-    this.jump = false;
-    this.primary = false;
-    this.secondary = false;
-    this.slot = null;
     this.wheel = 0;
-    this.slotSteps = 0;
-    // The game's own buttons (animation.md 6): mouse buttons held, and every key or button
-    // pressed since the last frame, by name.
     this.mouse = new Set();
     this.pressed = [];
+    this.last = performance.now();
+    // The gamepad's buttons down at the last poll (for Start and starting play), and its name.
+    this.padDown = new Set();
+    this.padName = null;
+    // Touch (input.md 5): on once a touch reaches the page; the touch stick's strengths, the touch
+    // buttons held (`Touch:<input>`), and the touch looking (pointer id, last point, moved).
+    this.touch = false;
+    this.touchLayout = null;
+    this.touchHeld = new Map();
+    this.looker = null;
+    this.onTouch = () => {};
     addEventListener("keydown", (e) => {
       if (e.code === "Escape" && this.unlocked) {
         this.release();
@@ -77,9 +103,6 @@ class Input {
       if (!this.captured()) return;
       if (!e.repeat) this.pressed.push(e.code);
       this.keys.add(e.code);
-      if (e.code === "Space" && !e.repeat) this.jump = true;
-      const digit = /^Digit([1-9])$/.exec(e.code);
-      if (digit) this.slot = Number(digit[1]) - 1;
       if (e.code !== "Escape" && !e.metaKey && !e.ctrlKey) e.preventDefault();
     });
     addEventListener("keyup", (e) => this.keys.delete(e.code));
@@ -87,6 +110,7 @@ class Input {
     addEventListener("blur", () => {
       this.keys.clear();
       this.mouse.clear();
+      this.touchHeld.clear();
       if (this.unlocked) this.release();
     });
     document.addEventListener("pointerlockchange", () => {
@@ -96,19 +120,18 @@ class Input {
     });
     canvas.addEventListener("mousedown", (e) => {
       if (!this.captured()) return;
-      if (MOUSE[e.button]) {
-        this.mouse.add(MOUSE[e.button]);
-        this.pressed.push(MOUSE[e.button]);
+      const name = MOUSE[e.button];
+      if (name) {
+        this.mouse.add(name);
+        // Without the lock a left press acts when it is let go without a drag (a click), so a drag
+        // only looks around.
+        if (!(this.unlocked && e.button === 0)) this.pressed.push(name);
       }
-      if (e.button === 0) {
-        this.dragged = false;
-        if (!this.unlocked) this.primary = true;
-      }
-      else if (e.button === 2) this.secondary = true;
+      if (e.button === 0) this.dragged = false;
       e.preventDefault();
     });
     canvas.addEventListener("mouseup", (e) => {
-      if (this.unlocked && e.button === 0 && !this.dragged) this.primary = true;
+      if (this.unlocked && e.button === 0 && !this.dragged) this.pressed.push("MouseLeft");
     });
     addEventListener("contextmenu", (e) => e.preventDefault());
     addEventListener("mousemove", (e) => {
@@ -122,12 +145,44 @@ class Input {
     });
     addEventListener("wheel", (e) => {
       if (!this.captured()) return;
-      // Down moves the hotbar right, a notch a slot (Chrome's notch is 100 pixels).
+      // A notch a press (Chrome's notch is 100 pixels): down is WheelDown.
       this.wheel += e.deltaMode === 1 ? e.deltaY : e.deltaY / 100;
-      while (this.wheel >= 1) { this.wheel -= 1; this.slotSteps += 1; }
-      while (this.wheel <= -1) { this.wheel += 1; this.slotSteps -= 1; }
+      while (this.wheel >= 1) { this.wheel -= 1; this.pressed.push("WheelDown"); }
+      while (this.wheel <= -1) { this.wheel += 1; this.pressed.push("WheelUp"); }
       e.preventDefault();
     }, { passive: false });
+    // The first touch turns the touch controls on. A touch on the game itself is the pointer: its
+    // drag looks and a tap clicks. Cancelling the touch's pointerdown keeps the browser from also
+    // sending the mouse events it would make of it.
+    addEventListener("pointerdown", (e) => {
+      if (e.pointerType === "touch" && !this.touch) this.setTouch(true);
+    }, { capture: true });
+    canvas.addEventListener("pointerdown", (e) => {
+      if (e.pointerType !== "touch") return;
+      e.preventDefault();
+      if (!this.captured() || this.looker) return;
+      this.looker = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: 0 };
+    });
+    canvas.addEventListener("pointermove", (e) => {
+      const l = this.looker;
+      if (!l || e.pointerId !== l.id) return;
+      const dx = e.clientX - l.x, dy = e.clientY - l.y;
+      l.x = e.clientX;
+      l.y = e.clientY;
+      l.moved += Math.abs(dx) + Math.abs(dy);
+      if (this.touchLayout?.look !== false) {
+        this.dx += dx * TOUCH_LOOK;
+        this.dy += dy * TOUCH_LOOK;
+      }
+    });
+    const lift = (e) => {
+      const l = this.looker;
+      if (!l || e.pointerId !== l.id) return;
+      this.looker = null;
+      if (e.type === "pointerup" && l.moved < TAP_PX && this.captured()) this.pressed.push("MouseLeft");
+    };
+    canvas.addEventListener("pointerup", lift);
+    canvas.addEventListener("pointercancel", lift);
   }
 
   captured() {
@@ -135,6 +190,8 @@ class Input {
   }
 
   async capture() {
+    // Touch screens have no pointer lock: a tap starts play as the keyboard mode does.
+    if (this.touch) return this.play();
     this.canvas.focus({ preventScroll: true });
     const lock = (options) => {
       try {
@@ -149,97 +206,153 @@ class Input {
     try {
       await lock({ unadjustedMovement: true }).catch(() => lock());
     } catch {
-      this.unlocked = true;
-      this.onChange();
+      this.play();
     }
+  }
+
+  /** Plays without pointer lock: keyboard, drag-to-look, the gamepad and touch. */
+  play() {
+    this.unlocked = true;
+    this.onChange();
   }
 
   release() {
     this.unlocked = false;
     this.keys.clear();
+    this.touchHeld.clear();
     this.onChange();
   }
 
-  key(code) { return this.keys.has(code); }
+  /** Pauses as Escape does: the lock (or the keyboard mode) goes, and the veil comes back. */
+  pause() {
+    if (document.pointerLockElement === this.canvas) document.exitPointerLock();
+    this.forced = false;
+    this.release();
+  }
 
-  /** This frame's input; edges and movement are taken. */
-  take() {
+  setTouch(on) {
+    this.touch = on;
+    this.onTouch(on);
+  }
+
+  /** The gamepad now in the standard layout, and the buttons pressed since the last poll. */
+  pollPad() {
+    const g = activePad();
+    this.padName = g ? g.id : null;
+    if (!g) {
+      this.padDown.clear();
+      return { pad: null, pressed: [] };
+    }
+    const buttons = Array.from(g.buttons, (b) => b.value || (b.pressed ? 1 : 0));
+    const pressed = [];
+    buttons.forEach((v, i) => {
+      if (v >= 0.5 && !this.padDown.has(i)) pressed.push(i);
+    });
+    this.padDown = new Set(buttons.flatMap((v, i) => (v >= 0.5 ? [i] : [])));
+    return { pad: { buttons, axes: Array.from(g.axes).slice(0, 4) }, pressed };
+  }
+
+  /** This frame's devices (amoris_assets::input::DeviceFrame); presses and look are taken. */
+  take(pad) {
     const captured = this.captured();
-    const x = Number(this.key("KeyD")) - Number(this.key("KeyA"));
-    const z = Number(this.key("KeyW")) - Number(this.key("KeyS"));
-    const length = Math.max(1, Math.hypot(x, z));
-    const input = {
-      captured,
-      motion: captured ? [x / length, z / length] : [0, 0],
-      fast: captured && (this.key("ShiftLeft") || this.key("ShiftRight")),
-      rise: captured && this.key("Space"),
-      jump: this.jump, primary: this.primary, secondary: this.secondary,
-      slot: this.slot, slotSteps: this.slotSteps, dx: this.dx, dy: this.dy,
-      held: captured ? [...this.keys, ...this.mouse] : [],
+    const now = performance.now();
+    const held = {};
+    if (captured) {
+      for (const k of this.keys) held[k] = 1;
+      for (const m of this.mouse) held[m] = 1;
+      for (const [k, v] of this.touchHeld) held[k] = v;
+    }
+    const frame = {
+      held,
       pressed: captured ? this.pressed.splice(0) : (this.pressed.length = 0, []),
+      look: [this.dx, this.dy],
+      pad,
+      dt_s: Math.min(0.1, Math.max(0, (now - this.last) / 1000)),
     };
-    this.jump = this.primary = this.secondary = false;
-    this.slot = null;
-    this.slotSteps = 0;
+    this.last = now;
     this.dx = this.dy = 0;
-    return input;
+    return { frame, captured };
   }
 }
 
-/** Mouse buttons by `MouseEvent.button`, as a game's buttons name them. */
-const MOUSE = ["MouseLeft", "MouseMiddle", "MouseRight"];
-
-/** The mask of the game's buttons (each a list of key names) any of whose keys are in `names`. */
-function buttonMask(buttons, names) {
-  let m = 0;
-  buttons.slice(0, 16).forEach((keys, i) => {
-    if (keys.some((k) => names.includes(k))) m |= 1 << i;
+/** The page's touch controls (input.md 5): the move stick, the layout's buttons and pause. They
+ *  write `TouchStick…` strengths and `Touch:<input>` into the input's held touches. */
+function touchControls(input, layout, onPause) {
+  const root = $("touch");
+  const zone = $("stick-zone"), base = $("stick"), knob = $("knob");
+  zone.hidden = !layout.stick;
+  let grip = null;
+  const home = () => {
+    base.style.left = base.style.top = "";
+    knob.style.transform = "";
+    for (const k of ["TouchStickLeft", "TouchStickRight", "TouchStickUp", "TouchStickDown"]) input.touchHeld.delete(k);
+  };
+  zone.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    if (grip) return;
+    zone.setPointerCapture(e.pointerId);
+    const r = zone.getBoundingClientRect();
+    grip = { id: e.pointerId, x: e.clientX, y: e.clientY };
+    base.style.left = `${e.clientX - r.left}px`;
+    base.style.top = `${e.clientY - r.top}px`;
   });
-  return m;
+  zone.addEventListener("pointermove", (e) => {
+    if (!grip || e.pointerId !== grip.id) return;
+    let x = (e.clientX - grip.x) / STICK_PX, y = (e.clientY - grip.y) / STICK_PX;
+    const r = Math.hypot(x, y);
+    if (r > 1) { x /= r; y /= r; }
+    knob.style.transform = `translate(${x * STICK_PX}px, ${y * STICK_PX}px)`;
+    const set = (k, v) => (v > 0 ? input.touchHeld.set(k, v) : input.touchHeld.delete(k));
+    set("TouchStickLeft", -x); set("TouchStickRight", x); set("TouchStickUp", -y); set("TouchStickDown", y);
+  });
+  const letGo = (e) => {
+    if (!grip || e.pointerId !== grip.id) return;
+    grip = null;
+    home();
+  };
+  zone.addEventListener("pointerup", letGo);
+  zone.addEventListener("pointercancel", letGo);
+  const buttons = $("touch-buttons");
+  buttons.replaceChildren();
+  for (const b of layout.buttons) {
+    const el = document.createElement("button");
+    el.className = "touch-button";
+    el.textContent = b.label;
+    el.dataset.input = b.input;
+    const name = `Touch:${b.input}`;
+    el.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      el.setPointerCapture(e.pointerId);
+      if (!input.captured()) return;
+      input.touchHeld.set(name, 1);
+      input.pressed.push(name);
+      el.classList.add("down");
+    });
+    const up = () => { input.touchHeld.delete(name); el.classList.remove("down"); };
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+    buttons.append(el);
+  }
+  // On the click, after the tap: pausing on its pointerdown put the veil under the finger, and the
+  // tap's click then landed on the veil and started play again.
+  $("touch-pause").addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); onPause(); });
+  return {
+    show(on) {
+      root.hidden = !on;
+      if (!on) { grip = null; home(); }
+    },
+  };
 }
 
-/** The seat: each frame's input as `player.act` actions, sent when something changed. */
+/** The seat's sender: the viewport's `player.act` actions, sent as the local human player. */
 class Seat {
-  constructor(amoris, buttons = []) {
+  constructor(amoris) {
     this.amoris = amoris;
-    this.buttons = buttons;
-    this.held = 0;
-    this.sent = null;
-    this.slot = 0;
     this.acts = 0;
     this.refused = 0;
   }
 
-  frame(input, look) {
-    const [yaw, pitch] = look;
-    const actions = [];
-    const now = [input.motion[1], input.motion[0], input.fast, yaw, pitch, input.rise];
-    if (!this.sent || now.some((v, i) => v !== this.sent[i])) {
-      actions.push({ do: "set", controls: { forward: now[0], strafe: now[1], run: now[2], yaw, pitch, rise: now[5] } });
-      this.sent = now;
-    }
-    let slot = this.slot;
-    if (input.slot !== null) slot = input.slot;
-    else if (input.slotSteps) slot = (((this.slot + input.slotSteps) % 9) + 9) % 9;
-    if (slot !== this.slot) {
-      this.slot = slot;
-      actions.push({ do: "set", controls: { slot: String(slot) } });
-    }
-    if (input.captured) {
-      for (const [on, control] of [[input.jump, "jump"], [input.primary, "primary"], [input.secondary, "secondary"]]) {
-        if (on) actions.push({ do: "pulse", control });
-      }
-    }
-    if (this.buttons.length) {
-      const held = buttonMask(this.buttons, input.held);
-      if (held !== this.held) {
-        this.held = held;
-        actions.push({ do: "set", controls: { held } });
-      }
-      const pressed = buttonMask(this.buttons, input.pressed);
-      if (pressed) actions.push({ do: "set", controls: { pressed } });
-    }
-    if (!actions.length) return;
+  send(actions) {
     this.acts++;
     this.amoris.command("player.act", { actions }, PLAYER).catch((e) => {
       this.refused++;
@@ -427,7 +540,7 @@ export async function main() {
     loadModule(),
     fetchBytes(packageUrl, (n) => { if (total) progress(n / total); }),
   ]);
-  const { name, player_camera: camera, player_controls: controls, player_buttons: buttons, sounds } =
+  const { name, player_camera: camera, player_controls: controls, player_input: inputMap, sounds } =
     JSON.parse(new TextDecoder().decode(pkg));
   const gameCamera = camera === "game";
   if (controls) $("help").textContent = controls;
@@ -437,12 +550,12 @@ export async function main() {
   const amoris = start(module, pkg, { pacing: gameCamera ? "stepped" : { real_time: { speed: 1 } } });
   const canvas = $("view");
   const input = new Input(canvas);
-  const seat = new Seat(amoris, buttons || []);
+  const seat = new Seat(amoris);
   const sound = new Sound(new URL(".", packageUrl), sounds);
   amoris.onEvents((records) => sound.events(records));
   const state = (window.amorisPlayer = {
     loaded_ms: 0, ready_ms: 0, frames: 0, look: null, stats: null, samples: [],
-    amoris, input, seat, gameCamera, sound,
+    amoris, input, seat, gameCamera, sound, pad: null, touch: false,
     /** Captures without pointer lock (the check page, where headless Chrome has no lock). */
     forceCapture(on = true) {
       input.forced = on;
@@ -453,6 +566,8 @@ export async function main() {
   });
   let ready = false;
   let viewReady = false;
+  // The touch controls, once the viewport has the input map (input.md 5).
+  let touch = null;
   // The world's halt (a poisoned tick, such as GPU water that failed or timed out): the worker
   // keeps running and says so in its status, which the page shows as it shows a stopped game.
   let halted = null;
@@ -460,6 +575,7 @@ export async function main() {
     // A compiling water job freezes the game even after the page was ready: the veil says so.
     const compiling = viewReady && amoris.waterStarting;
     $("veil").hidden = ready && input.captured() && !compiling && !halted;
+    touch?.show(input.touch && $("veil").hidden);
     if (halted) {
       $("status").textContent = "The game halted.";
       $("error").hidden = false;
@@ -491,7 +607,7 @@ export async function main() {
   let pacing = Promise.resolve();
   const captureChanged = () => {
     veil();
-    $("input-mode").hidden = !input.unlocked;
+    $("input-mode").hidden = !input.unlocked || input.touch;
     $("input-mode").textContent = gameCamera ? "Drag to look · Esc pauses" : "Drag to look · Esc menu";
     if (!gameCamera || !ready) return Promise.resolve();
     pacing = pacing.then(() => amoris.command("player.pacing", {
@@ -513,19 +629,37 @@ export async function main() {
   };
   $("veil").addEventListener("click", capture);
   canvas.addEventListener("click", capture);
+  input.onTouch = (on) => {
+    state.touch = on;
+    veil();
+  };
   const vp = await createViewport(canvas, {
     assetsUrl: new URL(".", packageUrl).href,
     gpuMinimal: params.get("gpu_minimal") || undefined,
     beforeFrame(api) {
-      const frame = input.take();
-      const look = api.raw.first_person(frame.dx, frame.dy, frame.captured, gameCamera);
-      state.look = look.length ? Array.from(look) : null;
+      // The gamepad is read while the veil is up too: the seat takes its presses then, so the
+      // press that starts play does not also act (input.md 3).
+      const { pad, pressed } = input.pollPad();
+      state.pad = input.padName;
+      const { frame, captured } = input.take(pad);
+      const reply = JSON.parse(api.raw.seat_frame(JSON.stringify(frame), captured, gameCamera));
+      state.look = reply.look;
       sound.frame(api.raw);
-      if (!state.look) return;
-      seat.frame(frame, state.look);
+      if (reply.actions.length) seat.send(reply.actions);
+      // Start pauses; any button starts play once the game is ready (no pointer lock: a gamepad
+      // press is no user gesture).
+      if (pressed.length) {
+        if (captured) {
+          if (pressed.includes(PAD_START)) input.pause();
+        } else if (ready && !halted) input.play();
+      }
     },
   });
   state.viewport = vp;
+  if (inputMap) vp.raw.set_input_map(JSON.stringify(inputMap));
+  input.touchLayout = JSON.parse(vp.raw.input_map()).touch;
+  touch = touchControls(input, input.touchLayout, () => input.pause());
+  if (params.get("touch") === "1") input.setTouch(true);
   amoris.onRender((bytes) => vp.pushFrame(bytes));
   vp.onStats((s) => {
     state.frames++;

@@ -23,7 +23,7 @@ fn pack(project: &str, out: &str) -> Result<serde_json::Value, Problem> {
     if let Some(player) = &p.manifest.player {
         package.player_camera = player.camera;
         package.player_controls = player.controls.clone();
-        package.player_buttons = player.buttons.iter().map(|b| b.keys.clone()).collect();
+        package.player_input = Some(player.input_map()?);
     }
     let bytes = package.to_bytes();
     std::fs::write(out, &bytes).map_err(|e| {

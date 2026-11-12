@@ -25,11 +25,37 @@
   #error { color: #ffb4a8; white-space: pre-wrap; text-align: left; font-size: 14px; }
   #input-mode { position: fixed; right: 12px; bottom: 12px; margin: 0; padding: 5px 9px;
     color: var(--ink); background: var(--veil); font-size: 12px; pointer-events: none; }
+  /* The touch controls (docs/spec/input.md 5): a floating move stick at the bottom left, the
+     layout's buttons at the bottom right, pause at the top right. Touches elsewhere reach the
+     canvas, where they look and tap. */
+  canvas { touch-action: none; }
+  #touch { position: fixed; inset: 0; pointer-events: none; user-select: none; -webkit-user-select: none; }
+  #touch[hidden], #stick-zone[hidden] { display: none; }
+  #stick-zone { position: absolute; left: 0; bottom: 0; width: 40%; height: 55%; pointer-events: auto;
+    touch-action: none; }
+  #stick { position: absolute; left: 96px; top: calc(100% - 112px); width: 120px; height: 120px;
+    margin: -60px 0 0 -60px; border-radius: 50%; background: rgba(255, 255, 255, 0.12);
+    border: 2px solid rgba(255, 255, 255, 0.35); }
+  #knob { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px 0 0 -28px;
+    border-radius: 50%; background: rgba(255, 255, 255, 0.45); }
+  #touch-buttons { position: absolute; right: 20px; bottom: 24px; display: flex; flex-wrap: wrap-reverse;
+    flex-direction: row-reverse; gap: 14px; max-width: 46%; pointer-events: auto; touch-action: none; }
+  .touch-button, #touch-pause { min-width: 68px; height: 68px; border-radius: 34px; padding: 0 14px;
+    border: 2px solid rgba(255, 255, 255, 0.4); background: rgba(10, 14, 22, 0.45); color: var(--ink);
+    font: 600 14px system-ui, sans-serif; touch-action: none; }
+  .touch-button.down { background: rgba(127, 182, 255, 0.55); }
+  #touch-pause { position: absolute; right: 16px; top: 16px; min-width: 48px; height: 48px;
+    pointer-events: auto; }
 </style>
 </head>
 <body>
 <canvas id="view" tabindex="0" aria-label="The game, drawn by the Amoris renderer with WebGPU"></canvas>
 <p id="input-mode" hidden>Drag to look · Esc pauses</p>
+<div id="touch" hidden>
+  <div id="stick-zone"><div id="stick"><div id="knob"></div></div></div>
+  <div id="touch-buttons"></div>
+  <button id="touch-pause" aria-label="Pause">II</button>
+</div>
 <div id="veil">
   <div class="card">
     <h1 id="name">Amoris</h1>
@@ -37,7 +63,9 @@
     <div class="bar"><div id="progress"></div></div>
     <p id="help"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Shift</kbd> run ·
       <kbd>Space</kbd> jump / swim up · left click break · right click place ·
-      <kbd>1</kbd>–<kbd>9</kbd> or wheel choose · <kbd>Esc</kbd> releases the mouse</p>
+      <kbd>1</kbd>–<kbd>9</kbd> or wheel choose · <kbd>Esc</kbd> releases the mouse<br>
+      Gamepad: sticks move and look · A jump · RT / LT use · LB / RB choose · Start pauses<br>
+      Touch: the stick moves, drag to look, tap to use</p>
     <div id="error" hidden></div>
   </div>
 </div>
