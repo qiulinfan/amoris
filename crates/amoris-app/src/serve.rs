@@ -1,25 +1,40 @@
 //! `amoris serve <project> [--port 7878]` and `amoris mcp <project>` (docs/spec/server.md): the
 //! project's game on its game thread (real time, paused: the edit world) with the host's server on
 //! 127.0.0.1, or one MCP session over stdio, against a host already serving the project when there
-//! is one and otherwise against a game of its own.
+//! is one (as an agent session of that host, server.md 3.5) and otherwise against a game of its
+//! own. `amoris serve --grants <file>` locks the host (server.md 3.6): every request then needs a
+//! grant's token, and `amoris mcp --attach <url> --grant-token <token>` is the stdio session of
+//! one grant.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use amoris_contract::{Problem, detail};
 use amoris_link::Source;
-use amoris_mcp::{Backend, BoxFuture, Caller};
+use amoris_mcp::{Backend, BoxFuture, Caller, Hello};
 use amoris_runtime::Project;
 use amoris_runtime::thread::{GameHandle, GameThread, Pacing, ThreadOptions};
-use amoris_server::{GameAccess, Host, McpBackend, ServeOptions, hostfile};
+use amoris_server::{GameAccess, Grants, Host, McpBackend, ServeOptions, hostfile};
 use serde_json::{Value, json};
 
 use crate::check::Outcome;
 use crate::cli::{Args, Flag};
 
-const SERVE_FLAGS: &[Flag] = &[("port", true), ("editor", true), ("seed", true)];
-const MCP_FLAGS: &[Flag] = &[("seed", true), ("own", false), ("seat", true)];
+const SERVE_FLAGS: &[Flag] = &[
+    ("port", true),
+    ("editor", true),
+    ("seed", true),
+    ("grants", true),
+    ("agents", true),
+];
+const MCP_FLAGS: &[Flag] = &[
+    ("seed", true),
+    ("own", false),
+    ("seat", true),
+    ("attach", true),
+    ("grant-token", true),
+];
 
 fn fail(p: &Problem, code: i32) -> Outcome {
     Outcome {
@@ -65,6 +80,18 @@ impl Served {
 }
 
 fn start(root: &Path, seed: Option<u64>, editor: Option<PathBuf>) -> Result<Served, Problem> {
+    start_with(root, seed, editor, true)
+}
+
+/// [`start`], with the debugger's CDP endpoint or without it. A locked host starts none: that
+/// endpoint has no admission, and any local process that reached it could evaluate in a paused
+/// frame, past every grant (server.md 3.6). The debugger itself stays, behind `debug.*`.
+fn start_with(
+    root: &Path,
+    seed: Option<u64>,
+    editor: Option<PathBuf>,
+    cdp: bool,
+) -> Result<Served, Problem> {
     let feed = amoris_assets::Feed::new();
     let project = Project::load(root)?;
     let seed = seed.unwrap_or(project.manifest.seed);
@@ -86,14 +113,15 @@ fn start(root: &Path, seed: Option<u64>, editor: Option<PathBuf>) -> Result<Serv
         title: format!("Amoris: {}", project.manifest.name),
         ..amoris_debug::HubOptions::default()
     });
-    let cdp = match hub.serve_cdp(amoris_debug::CdpOptions::default()) {
-        Ok(c) => Some(c),
-        Err(e) => {
+    let cdp = match cdp.then(|| hub.serve_cdp(amoris_debug::CdpOptions::default())) {
+        Some(Ok(c)) => Some(c),
+        Some(Err(e)) => {
             eprintln!(
                 "amoris: the debugger's CDP endpoint did not start ({e}); debug.* still works"
             );
             None
         }
+        None => None,
     };
     let h = hub.clone();
     let handle = GameThread::spawn(
@@ -192,19 +220,44 @@ fn serving(args: &Args) -> Result<(), Problem> {
         .value("editor")
         .map(PathBuf::from)
         .or_else(amoris_server::find_editor_dist);
-    let served = start(&root, args.number::<u64>("seed")?, editor.clone())?;
+    // The grants are read before the game starts: a file that is refused starts nothing.
+    let grants = match args.value("grants") {
+        Some(file) => Some(Grants::load(Path::new(file), &root)?),
+        None => None,
+    };
+    let locked = grants.as_ref().map(Grants::counts);
+    // The agent programs the host may start (server.md 3.7), read before the game starts too.
+    let launchers = match args.value("agents") {
+        Some(file) => Some(amoris_server::Launchers::load(Path::new(file), &root)?),
+        None => None,
+    };
+    let served = start_with(
+        &root,
+        args.number::<u64>("seed")?,
+        editor.clone(),
+        locked.is_none(),
+    )?;
     let host = served.host.clone();
+    let agents = launchers.as_ref().map_or(0, amoris_server::Launchers::len);
+    if let Some(l) = launchers {
+        host.set_launchers(l);
+    }
     let rt = runtime()?;
     let r = rt.block_on(async {
+        if let Some(grants) = grants {
+            host.lock(grants).await?;
+        }
         let (addr, task) = host.serve(&ServeOptions { port }, stopped()).await?;
-        let file = hostfile::write(&root, addr.port())
+        let file = hostfile::write_as(&root, addr.port(), locked.is_some())
             .map_err(|e| Problem::new("host.file", e.to_string(), detail([])))?;
-        println!(
-            "{}",
-            json!({"url": file.url, "port": addr.port(), "pid": file.pid,
-                   "project": file.project, "mcp": format!("{}/mcp", file.url),
-                   "editor": editor.as_ref().map(|e| e.display().to_string())})
-        );
+        let mut ready = json!({"url": file.url, "port": addr.port(), "pid": file.pid,
+                               "project": file.project, "mcp": format!("{}/mcp", file.url),
+                               "editor": editor.as_ref().map(|e| e.display().to_string())});
+        if locked.is_some() {
+            // Said only by a locked host; no line, file or log of the host says a token.
+            ready["locked"] = json!(true);
+        }
+        println!("{ready}");
         eprintln!(
             "amoris: serving {} at {} (editor {}, MCP {}/mcp); Ctrl-C stops",
             root.display(),
@@ -216,6 +269,16 @@ fn serving(args: &Args) -> Result<(), Problem> {
             },
             file.url
         );
+        if agents > 0 {
+            eprintln!("amoris: {agents} agent programs may be started (agent.session.start)");
+        }
+        if let Some((players, checkers, developers)) = locked {
+            eprintln!(
+                "amoris: locked: grants for {players} player, {checkers} checker and \
+                 {developers} developer tokens, and every request needs one; the debugger's \
+                 CDP endpoint is off"
+            );
+        }
         let _ = task.await;
         Ok::<(), Problem>(())
     });
@@ -226,25 +289,184 @@ fn serving(args: &Args) -> Result<(), Problem> {
     r
 }
 
-/// A host serving the project over HTTP, as `amoris mcp` reaches it; with a seat, as that seat's
-/// player.
-struct Remote {
+/// How long the bridge waits for the host to register its session.
+const REGISTER_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long it waits, on its way out, for the host to close it.
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// `amoris mcp` attached to a host serving the project (server.md 3.5): one agent session of
+/// that host. It registers with `agent.session.open` when its MCP client says who it is (with a
+/// seat, as that seat's player), makes its calls with the handle the host answered, registers
+/// again when the host no longer knows the handle (it started again), and closes its session on
+/// its way out. So the host lists it, its calls are in the `agent` stream and its edits are its
+/// own in the history, not the shared `api` client's.
+struct Bridge {
     url: String,
+    seat: Option<String>,
+    /// What the MCP client calls itself, from its hello.
+    label: std::sync::Mutex<String>,
+    /// The session's id and handle on the host, once registered. Held while registering, so
+    /// calls that find it missing or stale together open one session.
+    registered: tokio::sync::Mutex<Option<(String, String)>>,
+    /// The host opened the session for the program that runs this bridge ([`Bridge::given`]).
+    given: bool,
+}
+
+/// Runs a blocking HTTP call off the runtime's workers.
+async fn blocking(
+    call: impl FnOnce() -> Result<Value, Problem> + Send + 'static,
+) -> Result<Value, Problem> {
+    tokio::task::spawn_blocking(call)
+        .await
+        .unwrap_or_else(|e| Err(Problem::new("host.unreachable", e.to_string(), detail([]))))
+}
+
+impl Bridge {
+    fn new(url: String, seat: Option<String>) -> Bridge {
+        Bridge {
+            url,
+            seat,
+            label: std::sync::Mutex::new(String::new()),
+            registered: tokio::sync::Mutex::new(None),
+            given: false,
+        }
+    }
+
+    /// The bridge of a program the host started (`agent.session.start`, server.md 3.7): the
+    /// session the host opened for it, from `AMORIS_AGENT_SESSION` and `AMORIS_AGENT_HANDLE`,
+    /// with its seat from `AMORIS_AGENT_SEAT`. It registers nothing and closes nothing: the host
+    /// closes the session when the program exits.
+    fn given(url: String) -> Option<Bridge> {
+        let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+        let (session, handle) = (var("AMORIS_AGENT_SESSION")?, var("AMORIS_AGENT_HANDLE")?);
+        Some(Bridge {
+            url,
+            seat: var("AMORIS_AGENT_SEAT"),
+            label: std::sync::Mutex::new(String::new()),
+            registered: tokio::sync::Mutex::new(Some((session, handle))),
+            given: true,
+        })
+    }
+
+    /// Asks the host for a session: its id and its handle.
+    async fn register(&self) -> Result<(String, String), Problem> {
+        let label = self.label.lock().map(|l| l.clone()).unwrap_or_default();
+        let mut params = json!({"label": label});
+        if let Some(seat) = &self.seat {
+            params["seat"] = json!(seat);
+        }
+        let url = self.url.clone();
+        let row = blocking(move || {
+            crate::client::call_url_within(&url, "agent.session.open", params, REGISTER_TIMEOUT)
+        })
+        .await?;
+        match (row["id"].as_str(), row["handle"].as_str()) {
+            (Some(id), Some(handle)) => Ok((id.to_owned(), handle.to_owned())),
+            _ => Err(Problem::new(
+                "host.error",
+                "agent.session.open answered no session handle.",
+                detail([("answer", row)]),
+            )),
+        }
+    }
+
+    /// The session's handle, registering first when there is none.
+    async fn handle(&self) -> Result<String, Problem> {
+        let mut registered = self.registered.lock().await;
+        if let Some((_, handle)) = registered.as_ref() {
+            return Ok(handle.clone());
+        }
+        let session = self.register().await?;
+        let handle = session.1.clone();
+        *registered = Some(session);
+        Ok(handle)
+    }
+
+    /// A handle in place of `stale`, which the host refused: registers again, unless another
+    /// call already did.
+    async fn renewed(&self, stale: &str) -> Result<String, Problem> {
+        let mut registered = self.registered.lock().await;
+        if let Some((_, handle)) = registered.as_ref()
+            && handle != stale
+        {
+            return Ok(handle.clone());
+        }
+        let session = self.register().await?;
+        eprintln!(
+            "amoris mcp: the host knew this session no longer; registered again as {}",
+            session.0
+        );
+        let handle = session.1.clone();
+        *registered = Some(session);
+        Ok(handle)
+    }
+
+    async fn post(&self, handle: String, method: String, params: Value) -> Result<Value, Problem> {
+        let url = self.url.clone();
+        blocking(move || {
+            let timeout = crate::client::timeout_for(None, &method, &params);
+            crate::client::call_url_in(&url, &method, params, &handle, timeout)
+        })
+        .await
+    }
+
+    /// One call as the session; a host that forgot the session gets it again, once.
+    async fn call(&self, method: String, params: Value) -> Result<Value, Problem> {
+        let handle = self.handle().await?;
+        match self
+            .post(handle.clone(), method.clone(), params.clone())
+            .await
+        {
+            // A given session is the host's: when it is gone, so is the program's place.
+            Err(p) if p.code == "host.session_unknown" && !self.given => {
+                let handle = self.renewed(&handle).await?;
+                self.post(handle, method, params).await
+            }
+            answer => answer,
+        }
+    }
+
+    /// Closes the session on the host, if it has one: best effort, the bridge is leaving.
+    async fn close(&self) {
+        if self.given {
+            return;
+        }
+        let Some((_, handle)) = self.registered.lock().await.take() else {
+            return;
+        };
+        let url = self.url.clone();
+        let _ = blocking(move || {
+            crate::client::call_url_within(
+                &url,
+                "agent.session.close",
+                json!({"handle": handle}),
+                CLOSE_TIMEOUT,
+            )
+        })
+        .await;
+    }
+}
+
+/// `amoris mcp --attach <url> --grant-token <token>` (server.md 3.6; shared/contract/mcp.md 10):
+/// the stdio session of one grant of a locked host. Each call is `POST /api/call` with the
+/// grant's token as its bearer, so it is the grant's session on the host, listed under the
+/// grant's label. It registers nothing, holds no handle and closes nothing: the grant's session
+/// is the host's, open for the host's life.
+#[derive(Clone)]
+struct Granted {
+    url: Arc<str>,
+    token: Arc<str>,
+    /// The seat of a player grant: the session then lists the `player` tool alone.
     seat: Option<String>,
 }
 
-impl Caller for Remote {
+impl Caller for Granted {
     fn call(&self, method: String, params: Value) -> BoxFuture<Result<Value, Problem>> {
-        let url = self.url.clone();
-        let seat = self.seat.clone();
-        Box::pin(async move {
-            tokio::task::spawn_blocking(move || {
-                let timeout = crate::client::timeout_for(None, &method, &params);
-                crate::client::call_url_as(&url, &method, params, seat.as_deref(), timeout)
-            })
-            .await
-            .unwrap_or_else(|e| Err(Problem::new("host.unreachable", e.to_string(), detail([]))))
-        })
+        let (url, token) = (self.url.clone(), self.token.clone());
+        Box::pin(blocking(move || {
+            let timeout = crate::client::timeout_for(None, &method, &params);
+            crate::client::call_url_granted(&url, &method, params, None, Some(&token), timeout)
+        }))
     }
 
     fn seat(&self) -> Option<String> {
@@ -252,13 +474,90 @@ impl Caller for Remote {
     }
 }
 
-impl Backend for Remote {
+impl Backend for Granted {
     fn open(&self) -> Arc<dyn Caller> {
-        Arc::new(Remote {
-            url: self.url.clone(),
-            seat: self.seat.clone(),
+        Arc::new(self.clone())
+    }
+}
+
+/// A host serving the project over HTTP, as `amoris mcp` reaches it: the bridge's session.
+struct Remote(Arc<Bridge>);
+
+impl Caller for Remote {
+    /// The client said who it is: the bridge registers under that name. A failure is left for
+    /// the first call to report.
+    fn hello(&self, hello: Hello) -> BoxFuture<()> {
+        let bridge = self.0.clone();
+        Box::pin(async move {
+            if let Ok(mut label) = bridge.label.lock() {
+                *label = hello.label;
+            }
+            let _ = bridge.handle().await;
         })
     }
+
+    fn call(&self, method: String, params: Value) -> BoxFuture<Result<Value, Problem>> {
+        let bridge = self.0.clone();
+        Box::pin(async move { bridge.call(method, params).await })
+    }
+
+    fn seat(&self) -> Option<String> {
+        self.0.seat.clone()
+    }
+}
+
+impl Backend for Remote {
+    fn open(&self) -> Arc<dyn Caller> {
+        Arc::new(Remote(self.0.clone()))
+    }
+}
+
+/// What `amoris mcp`'s flags ask for, settled before anything starts.
+struct McpPlan {
+    /// `--own`: a game of this process's own, whatever host serves the project.
+    own: bool,
+    /// `--attach <url|port>`: the host to be a session of. No game of its own is started then.
+    attach: Option<String>,
+    /// A grant's token (`--grant-token`, else `AMORIS_TOKEN`): the session is that grant's.
+    token: Option<String>,
+    seat: Option<String>,
+}
+
+fn mcp_plan(args: &Args) -> Result<McpPlan, Problem> {
+    let flags: Vec<&str> = MCP_FLAGS.iter().map(|(n, _)| *n).collect();
+    let own = args.has("own");
+    let attach = args.value("attach").map(crate::client::host_of);
+    for other in ["attach", "grant-token"] {
+        if own && args.has(other) {
+            return Err(crate::cli::usage(
+                format!("--own runs a game of this process's own; --{other} is for a running host"),
+                other,
+                &flags,
+            ));
+        }
+    }
+    // `AMORIS_TOKEN` is the token of a running host's grant: a game of its own takes none.
+    let token = if own {
+        None
+    } else {
+        crate::client::token_of(args.value("grant-token"))?
+    };
+    let seat = args.value("seat").map(str::to_owned);
+    if token.is_some() && seat.is_some() {
+        return Err(crate::cli::usage(
+            "a grant fixes its role and its seat: --seat is not given with a token \
+             (--grant-token, AMORIS_TOKEN)"
+                .to_owned(),
+            "seat",
+            &flags,
+        ));
+    }
+    Ok(McpPlan {
+        own,
+        attach,
+        token,
+        seat,
+    })
 }
 
 /// `amoris mcp`.
@@ -267,7 +566,18 @@ pub fn mcp(raw: &[String]) -> Outcome {
         Ok(a) => a,
         Err(p) => return fail(&p, 2),
     };
-    match mcp_session(&args) {
+    let plan = match mcp_plan(&args) {
+        Ok(p) => p,
+        Err(p) => {
+            // To stderr: stdout is the MCP client's.
+            eprintln!("{}", json!({"error": p}));
+            return Outcome {
+                stdout: String::new(),
+                code: 2,
+            };
+        }
+    };
+    match mcp_session(&args, plan) {
         Ok(()) => Outcome {
             stdout: String::new(),
             code: 0,
@@ -282,19 +592,108 @@ pub fn mcp(raw: &[String]) -> Outcome {
     }
 }
 
-fn mcp_session(args: &Args) -> Result<(), Problem> {
-    let root = project_dir(args)?;
+/// The stdio session of the grant `token` is on the locked host at `url`. The grant is asked of
+/// the host first, so a token the host does not know, a host without grants and a host that
+/// does not answer end the process before anything goes to stdout.
+fn granted_session(rt: &tokio::runtime::Runtime, url: &str, token: &str) -> Result<(), Problem> {
+    let grant = crate::client::grant(url, token)?;
+    let role = grant["role"].as_str().unwrap_or("");
+    eprintln!(
+        "amoris mcp: using the host at {url} as its {role} grant '{}' (session {})",
+        grant["label"].as_str().unwrap_or(""),
+        grant["session"].as_str().unwrap_or("")
+    );
+    let backend: Arc<dyn Backend> = Arc::new(Granted {
+        url: Arc::from(url),
+        token: Arc::from(token),
+        seat: (role == "player")
+            .then(|| grant["seat"].as_str().map(str::to_owned))
+            .flatten(),
+    });
+    // Until the client closes stdin, or the bridge is asked to stop.
+    rt.block_on(async {
+        tokio::select! {
+            r = amoris_mcp::serve_stdio(backend) => r,
+            () = stopped() => Ok(()),
+        }
+    })
+}
+
+fn mcp_session(args: &Args, plan: McpPlan) -> Result<(), Problem> {
+    // With `--attach` the host is named, and the project argument is not needed.
+    let root = match plan.attach {
+        Some(_) => None,
+        None => Some(project_dir(args)?),
+    };
     let rt = runtime()?;
-    let running = (!args.has("own"))
-        .then(|| hostfile::read(&hostfile::path(&root)))
-        .flatten()
-        .filter(|f| crate::client::call_url(&f.url, "status", json!({})).is_ok());
-    let seat = args.value("seat").map(str::to_owned);
-    if let Some(f) = running {
-        eprintln!("amoris mcp: using the host at {}", f.url);
-        let backend: Arc<dyn Backend> = Arc::new(Remote { url: f.url, seat });
-        return rt.block_on(amoris_mcp::serve_stdio(backend));
+    // The host to be a session of: the one `--attach` names, else the one serving the project.
+    let target = plan.attach.clone().or_else(|| {
+        root.as_ref()
+            .filter(|_| !plan.own)
+            .and_then(|root| hostfile::read(&hostfile::path(root)))
+            .map(|f| f.url)
+    });
+    if let Some(token) = &plan.token {
+        // A grant's session is a running host's: never a game of this process's own.
+        let Some(url) = target else {
+            return Err(Problem::new(
+                "host.not_found",
+                "A grant's token needs the host it is a grant of: no host serves this project \
+                 (.amoris/host.json); name one with --attach <url|port>.",
+                detail([]),
+            ));
+        };
+        let r = granted_session(&rt, &url, token);
+        rt.shutdown_timeout(Duration::from_secs(2));
+        return r;
     }
+    let running = match target {
+        None => None,
+        Some(url) => match crate::client::call_url(&url, "status", json!({})) {
+            Ok(_) => Some(url),
+            // The host `--attach` names must answer: no game is started in its place.
+            Err(p) if plan.attach.is_some() => return Err(p),
+            // A locked host serving the project: a private game here would not be the world
+            // the client was pointed at.
+            Err(p) if p.code == "host.unauthorized" => {
+                eprintln!(
+                    "amoris mcp: the host at {url} is locked: give its grant's token with \
+                     --grant-token or AMORIS_TOKEN, or --own for a game of this process's own"
+                );
+                return Err(p);
+            }
+            Err(_) => None,
+        },
+    };
+    let seat = plan.seat;
+    if let Some(url) = running {
+        eprintln!("amoris mcp: using the host at {url}");
+        // A program the host started calls as the session the host opened for it.
+        let bridge = match (&seat, plan.attach.is_some()) {
+            (None, true) => Bridge::given(url.clone()),
+            _ => None,
+        }
+        .unwrap_or_else(|| Bridge::new(url, seat));
+        let bridge = Arc::new(bridge);
+        let backend: Arc<dyn Backend> = Arc::new(Remote(bridge.clone()));
+        // Until the client closes stdin, or the bridge is asked to stop; either way its session
+        // on the host is closed before it leaves.
+        let r = rt.block_on(async {
+            let r = tokio::select! {
+                r = amoris_mcp::serve_stdio(backend) => r,
+                () = stopped() => Ok(()),
+            };
+            bridge.close().await;
+            r
+        });
+        rt.shutdown_timeout(Duration::from_secs(2));
+        return r;
+    }
+    // Reached without `--attach` only: the project was named.
+    let root = match root {
+        Some(root) => root,
+        None => project_dir(args)?,
+    };
     let served = start(&root, args.number::<u64>("seed")?, None)?;
     eprintln!("amoris mcp: running {} in this process", root.display());
     let backend: Arc<dyn Backend> = match &seat {
@@ -318,7 +717,7 @@ mod tests {
     use amoris_server::{ServeOptions, Via};
     use serde_json::json;
 
-    use super::{runtime, start};
+    use super::{Bridge, runtime, start, start_with};
     use crate::present::FEED_GAP;
 
     /// Each frame `/render` sends, with the time it was read and its tick.
@@ -380,6 +779,73 @@ mod tests {
             got.windows(2).all(|w| w[0].1 < w[1].1),
             "ticks only go forward"
         );
+        drop(rt);
+        served.shutdown();
+    }
+    /// A locked host starts no CDP endpoint (server.md 3.6): the debugger stays, behind the
+    /// host's `debug.*`, and says it serves none.
+    #[test]
+    fn a_host_started_without_cdp_serves_none() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../samples/sailing");
+        let served = start_with(&root, None, None, false).unwrap();
+        assert!(served.cdp.is_none());
+        let rt = runtime().unwrap();
+        let state = rt
+            .block_on(served.host.call(&Via::Api, "debug.state", json!({})))
+            .unwrap();
+        assert_eq!(state["cdp"], serde_json::Value::Null, "{state:#}");
+        assert_eq!(state["state"], json!("running"), "{state:#}");
+        drop(rt);
+        served.shutdown();
+    }
+
+    /// `amoris mcp` attached to a host that started again holds a handle the new host never
+    /// gave: its calls are refused with `host.session_unknown`, the bridge registers again and
+    /// retries, and two calls that find the handle stale together open one session.
+    #[test]
+    fn a_bridge_registers_again_after_its_host_forgot_it() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../samples/sailing");
+        let served = start(&root, None, None).unwrap();
+        let host = served.host.clone();
+        let rt = runtime().unwrap();
+        let (addr, _task) = rt
+            .block_on(host.serve(&ServeOptions { port: 0 }, std::future::pending()))
+            .unwrap();
+        let bridge = Bridge::new(format!("http://{addr}"), None);
+        *bridge.label.lock().unwrap() = "bridge-test 1".to_owned();
+        let (a, b) = rt.block_on(async {
+            // A session of another host run.
+            *bridge.registered.lock().await = Some(("mcp-7".to_owned(), "0-7".to_owned()));
+            tokio::join!(
+                bridge.call("status".to_owned(), json!({})),
+                bridge.call("status".to_owned(), json!({}))
+            )
+        });
+        assert!(a.is_ok(), "{a:#?}");
+        assert!(b.is_ok(), "{b:#?}");
+        let list = rt
+            .block_on(host.call(&Via::Api, "agent.session.list", json!({})))
+            .unwrap();
+        let rows = list["sessions"].as_array().unwrap();
+        assert_eq!(rows.len(), 1, "{list:#}");
+        let row = &rows[0];
+        assert_eq!(
+            (
+                row["transport"].as_str(),
+                row["label"].as_str(),
+                row["live"].as_bool(),
+                row["calls"].as_u64()
+            ),
+            (Some("bridge"), Some("bridge-test 1"), Some(true), Some(2)),
+            "{list:#}"
+        );
+        // On its way out the bridge closes its session, once.
+        rt.block_on(bridge.close());
+        rt.block_on(bridge.close());
+        let list = rt
+            .block_on(host.call(&Via::Api, "agent.session.list", json!({})))
+            .unwrap();
+        assert_eq!(list["sessions"][0]["live"], json!(false), "{list:#}");
         drop(rt);
         served.shutdown();
     }

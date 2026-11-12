@@ -14,9 +14,10 @@ use std::time::{Duration, Instant};
 use amoris_contract::Problem;
 use amoris_debug::{DebugHub, HubOptions};
 use amoris_link::{LoopState, Source};
+use amoris_mcp::Backend as _;
 use amoris_runtime::thread::{GameThread, Pacing, ThreadOptions};
 use amoris_runtime::{GameBuilder, Project};
-use amoris_server::{BoxFuture, GameAccess, Host, Via};
+use amoris_server::{BoxFuture, GameAccess, Host, McpBackend, Via};
 use serde_json::{Value, json};
 
 fn fixture() -> PathBuf {
@@ -848,6 +849,131 @@ fn debug_writes_names_the_writers_through_the_host() {
         assert!(w.get("rows").is_none(), "{w:#}");
         ok(host, "debug.breakpoints.clear", json!({})).await;
         ok(host, "debug.continue", json!({})).await;
+    });
+    served.stop();
+}
+
+/// Agent sessions are the host's own state (docs/spec/server.md 3.5): while the debugger holds
+/// the game they are opened, listed, read back and closed like at any other time, and none of it
+/// is refused with `debug.paused`. A session's reads answer from the last publication and are in
+/// the stream; its writes are refused and counted as failed calls.
+#[test]
+fn agent_sessions_answer_while_the_debugger_holds_the_game() {
+    let served = Served::start();
+    let rt = runtime();
+    rt.block_on(async {
+        let host = &served.host;
+        ok(
+            host,
+            "debug.breakpoints.set",
+            json!({"file": "rules.ts", "line": mark("next")}),
+        )
+        .await;
+        let s = ok(host, "time.step", json!({"ticks": 5})).await;
+        assert_eq!(s["paused"], true, "{s:#}");
+        let stopped = s["stopped_by"]["tick"].clone();
+        assert!(host.debug_stop().is_some());
+
+        // Opening asks the game nothing, with a seat too: the seat is looked up by its first call.
+        let bridge = ok(host, "agent.session.open", json!({"label": "held 1"})).await;
+        assert_eq!(
+            (bridge["id"].as_str(), bridge["live"].as_bool()),
+            (Some("mcp-1"), Some(true)),
+            "{bridge:#}"
+        );
+        let seat = ok(host, "agent.session.open", json!({"seat": "skipper"})).await;
+        assert_eq!(
+            (seat["id"].as_str(), seat["role"].as_str()),
+            (Some("mcp-2"), Some("player")),
+            "{seat:#}"
+        );
+
+        // An MCP session's read answers from the last publication; its write is refused.
+        let agent = McpBackend::new(host.clone()).open();
+        let got = agent
+            .call("world.get".to_owned(), json!({"entity": "Gauge"}))
+            .await
+            .unwrap();
+        assert_eq!(got["paused_at"]["tick"], stopped, "{got:#}");
+        let e = agent
+            .call(
+                "world.edit".to_owned(),
+                json!({"ops": [{"destroy": {"entity": "Gauge"}}]}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "debug.paused", "{e:#?}");
+
+        let list = ok(host, "agent.session.list", json!({})).await;
+        let rows = list["sessions"].as_array().unwrap();
+        assert_eq!(rows.len(), 3, "{list:#}");
+        assert_eq!(
+            (
+                rows[2]["id"].as_str(),
+                rows[2]["transport"].as_str(),
+                rows[2]["calls"].as_u64(),
+                rows[2]["failed_calls"].as_u64(),
+                rows[2]["last_method"].as_str()
+            ),
+            (
+                Some("mcp-3"),
+                Some("stdio"),
+                Some(2),
+                Some(1),
+                Some("world.edit")
+            ),
+            "{list:#}"
+        );
+        let stream = ok(host, "agent.session.events", json!({"session": "mcp-3"})).await;
+        let told: Vec<(&str, Option<&str>, Option<bool>)> = stream["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| {
+                (
+                    e["kind"].as_str().unwrap(),
+                    e["method"].as_str(),
+                    e["ok"].as_bool(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            told,
+            [
+                ("opened", None, None),
+                ("call", Some("world.get"), None),
+                ("result", Some("world.get"), Some(true)),
+                ("call", Some("world.edit"), None),
+                ("result", Some("world.edit"), Some(false)),
+            ],
+            "{stream:#}"
+        );
+        assert_eq!(stream["last"], list["last"], "{stream:#}");
+
+        // Closing too: by the handle, by the id, and the MCP session's when its caller goes.
+        let closed = ok(
+            host,
+            "agent.session.close",
+            json!({"handle": bridge["handle"]}),
+        )
+        .await;
+        assert_eq!(closed["live"], false, "{closed:#}");
+        let closed = ok(host, "agent.session.close", json!({"session": "mcp-2"})).await;
+        assert_eq!(closed["live"], false, "{closed:#}");
+        drop(agent);
+        let list = ok(host, "agent.session.list", json!({})).await;
+        let live: Vec<bool> = list["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["live"].as_bool().unwrap())
+            .collect();
+        assert_eq!(live, [false, false, false], "{list:#}");
+        assert!(host.debug_stop().is_some(), "the game was held throughout");
+
+        ok(host, "debug.breakpoints.clear", json!({})).await;
+        ok(host, "debug.continue", json!({})).await;
+        settled(host).await;
     });
     served.stop();
 }

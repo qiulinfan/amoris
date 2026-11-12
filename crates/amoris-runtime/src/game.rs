@@ -809,6 +809,7 @@ impl Game {
                 crate::player::observe(world, &mut self.player, cmd.source, p)
             }
             "player.nearby" => crate::player::nearby(self.sim.world(), cmd.source, p),
+            "player.blocks" => crate::blocks::blocks(self.sim.world(), cmd.source, p),
             "player.events" => crate::player::events(self.sim.world(), cmd.source, p),
             "player.affordances" => crate::player::affordances(self.sim.world(), cmd.source, p),
             "player.intents" => crate::player::intents(self.sim.world(), cmd.source, p),
@@ -1530,6 +1531,21 @@ impl Game {
         g.player = self.player.clone();
         g.wall = self.wall.clone();
         Ok(g)
+    }
+
+    /// A branch of this game for an agent's lookahead (docs/spec/player.md 7.1): [`Game::fork`],
+    /// with the players' session stepped whatever this game's pacing is, since a branch always
+    /// runs stepped (shared/contract/mcp.md 3.2).
+    pub fn fork_branch(&self) -> Result<Game, Problem> {
+        let mut g = self.fork()?;
+        g.player.set_pacing(PlayPacing::Stepped);
+        Ok(g)
+    }
+
+    /// Whether the players' session holds the world for a seat's decision now (real time with
+    /// pause on decision).
+    pub fn players_held(&self, now_ms: f64) -> bool {
+        !self.player.paused_for(now_ms).is_empty()
     }
 
     /// Makes `branch`, a game forked from this one before, a fork of this game's state again:

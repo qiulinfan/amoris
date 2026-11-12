@@ -29,6 +29,7 @@
 | Players' waits on a loop, decision points after every tick, pace from the players' session: one core the game thread and the browser worker share | `amoris-runtime/src/boundary.rs` (`PlayerWaits`), `thread.rs`, `amoris-web/src/worker.rs` |
 | The reference skipper (a decision model outside the tick) | `amoris-runtime/src/skipper.rs` |
 | Fork lookahead for the skipper, the course's seeded variants, `Game::fork_into` | `amoris-runtime/src/lookahead.rs`, `game.rs` |
+| Branches for an agent outside the process: `player.fork`, `.discard`, `.branches`, `world` (7.1) | `amoris-runtime/src/branches.rs`, `thread.rs` |
 | The `player` MCP tool, seat-bound MCP sessions | `amoris-mcp`, `amoris-server/src/mcp.rs` |
 | Calls made as a seat over HTTP, `amoris player`, `amoris mcp --seat` | `amoris-server`, `amoris-app` |
 | The sailing course | `samples/sailing-course/` |
@@ -202,6 +203,7 @@ carries `commit` yet (section 10).
 | `player.describe {entity}` / `{part?, name?}` | Read | one entity as the seat knows it (facts, affordances with why not, latest events); or the game definition for the caller within 2000 tokens (names only beyond, with the call for each part) |
 | `player.observe {budget_tokens?, projection?, since?}` | Read | instruments, active intents, the pending decision, ranked percepts, events since |
 | `player.nearby`, `player.events`, `player.affordances`, `player.intents` | Read | perception.md and actions.md's answers |
+| `player.blocks {seat?, range_m?, budget_tokens?, projection?}` | Read | the block cells the seat's eye sees, nearest first within budget, and the cell it looks at (voxels.md 6.1; the engine's, outside the contract) |
 | `player.act` | Write | `ActResult` with the events delta since the seat's push cursor |
 | `player.wait {until?, ticks?, max_wall_ms?, observe?}` | Control | time.md's `TimeResult` with the events delta (a developer's carries the world hash, a player's never) |
 | `player.continue` | Control | answers the pending decision |
@@ -244,22 +246,89 @@ no perception to keep it to. The web form plays a game with players through `pla
 The commands are projected like every catalog command:
 
 - **MCP**: the `player` tool,
-  `{action: session|describe|observe|nearby|events|affordances|intents|act|wait|continue|pacing, ...}`.
-  Reads an LLM reads (observe, nearby, events, an entity described) come as the text projection
-  unless the call asks for JSON, sent as the text itself. A session made with
+  `{action: session|describe|observe|nearby|blocks|events|affordances|intents|act|wait|continue|pacing|fork|discard|branches, ...}`.
+  Reads an LLM reads (observe, nearby, blocks, events, an entity described) come as the text
+  projection unless the call asks for JSON, sent as the text itself. A session made with
   `amoris mcp <project> --seat skipper` (against a running host or in process) calls as the seat's
   player, lists the `player` tool alone, refuses the others with `permission.denied`, and gets
   player instructions.
 - **HTTP**: `/api/call {method, params, seat}` makes the call from the seat's player source (the
   host asks the game for the seat's index once and keeps one client per seat).
+- **Agent sessions** (2026-11-12; server.md 3.5): a seat-bound MCP session, and a bridge opened
+  with `agent.session.open {seat}` (what `amoris mcp --seat` attached to a host is), are rows of
+  role `player` in the host's list, and their `agent` events carry their `mcp-<n>` id (before, a
+  seat-bound session's said `player:<seat>`). Their calls pass `seat_permits` before the seat is
+  looked up, a refusal recorded as a call that failed; the seat's client is found by the session's
+  first permitted call and kept. Calls made as a seat with no session (`/api/call {seat}`) are the
+  row `player:<seat>`.
+- **A locked host** (2026-11-12; server.md 3.6): on a host started with `--grants` the seat is
+  the token's, not the request's. A player grant's token makes every call its seat's player's, over
+  `/api/call`, over `/mcp` and `/mcp/<token>`, and through `amoris mcp --attach <url>
+  --grant-token <token>`; another seat in the body is `seat.not_yours`, a session `handle` is
+  `permission.denied`, and the catalog, the project's files, `/ws` and `/render` answer 403. The
+  three places of the engine's own enforcement above stand unchanged beneath it.
 - **CLI**: `amoris player <action> ['<json>'] [--seat s]`; `act` also takes the actions alone;
   observations print as text, other answers as one line of JSON. A client of a running host (the
   CLI, `amoris mcp` against a host) waits for a `wait` at least 10 s past its wall limit,
   `max_wall_ms` or the default 30 s, whatever `--timeout` says (`client::timeout_for`).
 
-Not built from mcp.md: grants with tokens over HTTP MCP, branches (`fork`, `discard`), snapshots and
-`replay` for players, `world` in answers, statistics across sessions (section 10). A decision model
-in process forks a game directly instead (section 8.1).
+### 7.1 Branches for lookahead
+
+An agent outside the process looks ahead as the in-process model does (8.1), through three more
+player commands (2026-11-12; mcp.md 5.5), which the game thread answers itself
+(`amoris_runtime::branches`; a game driven directly answers `command.thread_only`, and forks with
+`Game::fork` instead):
+
+| Command | Kind | Answers |
+|---|---|---|
+| `player.fork {world?, label?}` | Control | `{tick, world, parent, label?}`: a branch `b1`, `b2`, ... (never reused in the thread's life) of main or of one of the caller's branches; a developer's answer also carries the branch's `world_hash`, equal to its parent's |
+| `player.discard {branch}` | Control | `{tick, world: "main", discarded}` |
+| `player.branches` | Read | the caller's branches `{world, parent, forked_at, tick, label?}`, its `limits`, the branch ticks `left` for main's tick, and its `stats` (`forks`, `branch_ticks`, `branch_acts`) |
+
+Every other player command takes `world` (default `main`): the game thread takes it out of the
+parameters and applies the command to that branch, whose answer names it (`world` in a JSON answer,
+a first line `world b1` before a text projection; mcp.md 4.1). Main's answers do not change.
+
+- **A branch is the caller's.** It belongs to the command's source: a seat's player (every client
+  of the seat, as the seat's decision state is shared, section 7), or one developer client. Another
+  source naming it gets `session.unknown_world` with the worlds it has. A branch ends with
+  `player.discard`, at the next fork after its source has no live client (the session that made it
+  went away), or when the game thread stops.
+- **What a branch is.** `Game::fork_branch`: main's snapshot restored into a new game with main's
+  scripts and the players' session copied, its pacing stepped whatever main's is. It records
+  nothing, publishes nothing, feeds no presenter and pushes no event: nothing it does reaches
+  main's world, history, recording or streams. A branch runs the true world, hidden state included,
+  and a player reads it only through its seat's perception (8.1, Perception stays honest); a
+  player's answers there carry no hash, as on main.
+- **Determinism.** A fork's world hash is its parent's, and a branch is stepped by the same tick
+  code as main: the same calls on a branch and then on main give the same ticks and the same hashes
+  (`crates/amoris-runtime/tests/thread_branches.rs`). The bounds below never stop a run partway, so
+  they never change what a run computes.
+- **When it runs.** A branch's `wait` runs inline on the game thread between two of main's
+  boundaries, while main is stepped, paused or held for a seat's decision (real time with pause on
+  decision); while main runs in real time it is refused with `time.wrong_mode`, since no branch
+  tick may hold main's (threads.md 3.6's worker slices are not built). Forks and reads are
+  answered in any pacing. `player.pacing` on a branch is `request.invalid_value`.
+- **The bounds** (the runtime's, `branches::{PER_SOURCE, LIVE, PER_DECISION}`, the defaults of
+  mcp.md 3.1's `Policy` and the benchmark's fork condition): at most 4 live branches a source and
+  16 on the thread (`session.limit_reached {what: "branches"}`), and at most 600 branch ticks a
+  source simulates, over all its branches, while main stays at one tick; the count starts again
+  when main's tick moves. A `wait` on a branch whose `ticks` exceed what is left is refused before
+  anything runs with `session.limit_reached {what: "branch_ticks", limit, value, asked, left}`; one
+  that names no `ticks` runs at most what is left.
+- **Who may fork.** On a host without grants every client may (such a host trusts its local
+  clients, server.md 3.6); a checker never does (the fork is a Control); a developer always does. On
+  a locked host a player grant forks only when its policy says so, `"policy": {"fork": true}` in
+  the grants file (server.md 3.6), and is refused `session.policy_denies {request: "fork", policy:
+  "fork"}` otherwise, as mcp.md 3.1's default for a player is.
+- **Projections.** MCP: the `player` tool's actions `fork`, `discard` and `branches`, and `world`
+  on every action; CLI: `amoris player fork|discard|branches` and `'{"world": "b1", ...}'`; HTTP:
+  `/api/call` with the method.
+
+Not built from mcp.md: snapshots and `replay` for players, `world` in main's answers, statistics
+across sessions (section 10), branch ticks off the game thread (threads.md 3.6); of its grants,
+`profile`, `decision`, `clock`, `max_wall_ms` and of `policy` all but `fork` (its bounds are the
+runtime's, above). A decision model in process forks a game directly instead (section 8.1).
 
 ## 8. The sailing course
 
@@ -369,13 +438,11 @@ every tick, and its player scenario passes the four checks.
   `amoris-script` natives, an interface bridge and executors, about 3,000 lines of source and 2,500
   of tests) against a script host this line has since changed (the debugger, types, the prelude);
   porting them is the next step. A game's own intents are therefore engine catalogs in Rust for now.
-- **Lockstep for players, branches, snapshots and `replay` for players, grants over HTTP MCP**:
-  amoris-interface has lockstep's `commit`; nothing carries it, nor mcp.md's fork tools. The fork
-  lookahead (8.1) forks a game in process (`Game::fork`, `Game::fork_into`); an agent outside the
-  process still has no `fork` or `discard` (mcp.md 5.5), no `world` in answers to address a branch
-  by, and the game thread runs no branch beside main (threads.md 3.6, `branch.main_lateness`).
-  Those are the next step for an LLM's lookahead, with the session counting `branch_ticks` against
-  the policy as the lookahead's own statistics do now.
+- **Lockstep for players, branches, snapshots and `replay` for players, a grant's policy**:
+  amoris-interface has lockstep's `commit`; nothing carries it. An agent outside the process
+  forks, steps and discards branches since 2026-11-12 (7.1), inline on the game thread with the
+  runtime's bounds; a grant's policy says only whether a player may fork, and the game thread runs
+  no branch beside main in real time (threads.md 3.6, `branch.main_lateness`).
 - **A grounded boat decides every other tick.** `sail_to` does not steer round land; once the
   Sloop runs aground on the Isle every `sail_to` fails at once (`sail.aground`), the failure is a
   decision point, and the reference skipper starts its mark again two ticks later until the boat
@@ -452,6 +519,7 @@ every tick, and its player scenario passes the four checks.
 | A developer naming a seat leaves its push cursor | `amoris-runtime/tests/player.rs` |
 | A player's developer calls refused by the game and the thread; a throwing rule halts the players until a hot update, a developer's resume or a restore; a restore rebases the seat's decisions and push cursor | `amoris-runtime/tests/player.rs`, `amoris-runtime/tests/player_session.rs`, `amoris-interface/src/time/control.rs` (tests) |
 | A seat over HTTP and a seat-bound MCP session (in process, newline JSON-RPC over a pipe) play through the player tools alone; the host refuses the game's and its own developer methods; an unknown seat says `seat.unknown` | `amoris-app/tests/player_host.rs` |
+| A locked host: a player grant's token is its seat whatever the request says, over HTTP, MCP by header and by path, the CLI and `amoris mcp --attach --grant-token`; a checker's reads alone; an unlocked host unchanged; the same world hash locked and unlocked | `amoris-app/tests/locked_host.rs` |
 | The review's three findings replayed against the release `amoris serve` over HTTP | `tools/host/player_http_probe.py`, [evidence/player/seat-http.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/player/seat-http.txt) |
 | Fork lookahead: a decision leaves main's hash, tick and session untouched and keeps to 4 branches and 600 ticks; the same variant decides the same twice, with kept branches as with fresh forks; a branch is reached as the seat alone; a kept branch forked into again matches a fresh fork; `fork_into` refuses a game that is not a branch of main; with forks off the model never forks; the variants follow their seed | `amoris-runtime/tests/lookahead.rs` |
 | The lookahead's choice needs the margin and never takes a branch that refused its first act; the fork-off estimate reads the chart alone | `amoris-runtime/src/lookahead.rs` (tests) |

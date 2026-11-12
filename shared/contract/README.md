@@ -94,6 +94,26 @@ fixed in 3.6.0). mcp.md 7.2's pin and the rmcp behaviour it cites (`Parameters`'
 `find_parameters_type_in_sig`, `schema_for_input`) name 3.7.0, where that behaviour is unchanged.
 The tools, their schemas and their answers did not change, so the contract stays 0.2.
 
+On 2026-11-12 the host learned grants (mcp.md 14, Grants as built; `docs/spec/server.md` 3.6): a
+host started with `amoris serve --grants <file>` is locked, and each token of the file binds its
+client to one of this file's roles, a seat's player, a checker or a developer (Seats and callers),
+so a client no longer picks its role there. What a role may see and do is what the table below
+already said; the engine now holds a checker to it, where before no checker existed. Requests,
+answers, the text projection and the contract's codes did not change: a player that names another
+seat still gets `seat.not_yours`, a role's refusal is still `permission.denied`, and the new
+refusals are the host's own `host.*` codes (`host.unauthorized`, `host.grants_invalid`,
+`host.not_locked`; `docs/spec/server.md` 9), a family errors.md leaves to the host. So the contract
+stays 0.2. The grants file's form is the host's, not the contract's: it carries four of mcp.md
+3.1's `Grant` fields and refuses the others until they are built.
+
+The same day the player's branches were built (mcp.md 14, Branches as built;
+`docs/spec/player.md` 7.1): mcp.md 5.5's `fork` and `discard` as the commands `player.fork` and
+`player.discard`, `player.branches` for the session's list of branches, and `world` on the player
+commands, with the `session.*` codes and templates of mcp.md 7.1 and a player grant's
+`policy.fork`. They build what mcp.md already specified: main's requests and answers, the text
+projection and the codes are unchanged, a branch's answer adds `world` as 4.1 says, and the
+bounds are 3.1's defaults. So the contract stays 0.2.
+
 ## Contract record
 
 The contract and benchmark live in this repository under `shared/contract/` and

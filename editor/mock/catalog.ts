@@ -148,7 +148,7 @@ export const CATALOG: CatalogCommand[] = [
   { name: "debug.continue", kind: "control", doc: "Resumes a paused game (and releases a game waiting for a debugger).", params: obj() },
   { name: "debug.step", kind: "control", doc: "Steps over, into or out of the current statement and returns where it stopped.", params: obj({ kind: { type: "string", enum: ["over", "into", "out"] }, timeout_ms: int("Wait up to this long for the step to stop (default 5000).") }, ["kind"]) },
   { name: "debug.state", kind: "read", doc: "Running or paused; when paused, why, the tick and system, and the frames with TypeScript locations and locals.", params: obj() },
-  { name: "debug.eval", kind: "read", doc: "Evaluates an expression in a frame of the paused game.", params: obj({ expr: str("A JavaScript expression; it sees the frame's arguments, locals and closure variables."), frame: int("The frame, as debug.state numbers them (0: where the game stopped).") }, ["expr"]) },
+  { name: "debug.eval", kind: "write", doc: "Evaluates an expression in a frame of the paused game.", params: obj({ expr: str("A JavaScript expression; it sees the frame's arguments, locals and closure variables."), frame: int("The frame, as debug.state numbers them (0: where the game stopped).") }, ["expr"]) },
   {
     name: "debug.set",
     kind: "control",
@@ -177,5 +177,52 @@ export const CATALOG: CatalogCommand[] = [
     kind: "read",
     doc: "What the last ticks cost the game thread (default 60), in ms per tick: each system's own time, tick.other, loop.present and loop.publish, and each phase; ticks the debugger held are counted in held and left out.",
     params: obj({ ticks: int("The last this many ticks, default 60 (the ring keeps 600).") }),
+  },
+  // The host's agent sessions (docs/spec/server.md 3.5).
+  {
+    name: "agent.session.list",
+    kind: "read",
+    doc: "The host's agent sessions in opening order, {sessions: [{id, transport, role, seat, label, calls, failed_calls, last_method, live, opened_ts, last_ts}], last}.",
+    params: obj(),
+  },
+  {
+    name: "agent.session.events",
+    kind: "read",
+    doc: "What the agent sessions called, {seq, ts, session, kind: opened|call|result|closed, ...}: the newest (the host keeps 2,000), or with since the first limit after it; last is the cursor to ask again with, missed counts what left the ring.",
+    params: obj({
+      since: int("Events after this stream number, oldest first; without it, the newest."),
+      limit: int("At most this many, default 100 (the host keeps the newest 2,000)."),
+      session: str("One session's events, by its id (mcp-3)."),
+    }),
+  },
+  {
+    name: "agent.session.open",
+    kind: "control",
+    doc: "Registers the caller as an agent session (with seat: that seat's player) and answers its row and a handle.",
+    params: obj({ label: str("What the session is called in the list."), seat: str("The seat the session plays; without it the session is a developer's.") }),
+  },
+  {
+    name: "agent.session.close",
+    kind: "control",
+    doc: "Closes a registered session: by the handle its opener holds, or a bridge session by its id (session) when its process is gone.",
+    params: obj({ handle: str("The handle agent.session.open answered."), session: str("A bridge session's id (mcp-3).") }),
+  },
+  {
+    name: "agent.session.agents",
+    kind: "read",
+    doc: "The agent programs this host may start, {agents: [{name, label}], running, limit}: registered by the process owner with amoris serve --agents <file>.",
+    params: obj(),
+  },
+  {
+    name: "agent.session.start",
+    kind: "control",
+    doc: "Starts a registered agent program as an agent session of this host (transport launch) with a goal, and with seat as that seat's player; its output lines are the session's message events and the session closes when it exits.",
+    params: obj({ agent: str("A program the host registered."), goal: str("What the agent is asked to do."), seat: str("The seat it plays; without it a developer.") }, ["agent", "goal"]),
+  },
+  {
+    name: "agent.session.stop",
+    kind: "control",
+    doc: "Ends a started agent program; answers its session's row once closed.",
+    params: obj({ session: str("The started session's id (mcp-3).") }, ["session"]),
   },
 ];

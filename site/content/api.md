@@ -57,8 +57,10 @@ For a seat-bound stdio MCP session:
 This session lists only the `player` tool, with actions including `observe`, `nearby`,
 `affordances`, `intents`, `act`, and `wait`. HTTP callers pass `seat` alongside `method`
 and `params` to `/api/call`. The seat parameter selects a player role; it is not a remote
-authentication token. Token grants over HTTP MCP, player forks/replay, and script-defined
-intent executors remain unfinished. See the
+authentication token. A host started with `amoris serve --grants <file>` is locked instead:
+each token of the file binds its client to one role (a seat's player, a read-only checker
+or a developer) on every route. Player forks/replay and script-defined intent executors
+remain unfinished. See the
 [player specification](https://github.com/qiulinfan/amoris/blob/main/docs/spec/player.md).
 
 The [DeepSeek recording](agents.md) used an earlier project-level gateway. Its results

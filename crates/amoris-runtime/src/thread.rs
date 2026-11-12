@@ -127,6 +127,9 @@ impl GameThread {
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let attached = Arc::new(AtomicBool::new(false));
         let seen = attached.clone();
+        let sources: Arc<Mutex<BTreeMap<Source, SourceSlot>>> =
+            Arc::new(Mutex::new(BTreeMap::new()));
+        let leased = sources.clone();
         let join = std::thread::Builder::new()
             .name("amoris-game".into())
             .stack_size(options.stack_bytes)
@@ -166,7 +169,14 @@ impl GameThread {
                     epoch: 0,
                 });
                 let profiler = TickTimer::new(options.clock.clone());
+                let alive: crate::branches::Alive = Arc::new(move |source| {
+                    leased
+                        .lock()
+                        .map(|s| s.get(&source).is_some_and(|slot| slot.in_use))
+                        .unwrap_or(false)
+                });
                 let mut l = Loop {
+                    branches: crate::branches::Branches::new(alive),
                     bundle: game.bundle(),
                     game,
                     rx,
@@ -204,7 +214,7 @@ impl GameThread {
             attached,
             clients: Clients {
                 queue: tx.clone(),
-                sources: Arc::new(Mutex::new(BTreeMap::new())),
+                sources,
                 next_developer: Arc::new(AtomicU32::new(0)),
             },
             host_seq: AtomicU64::new(0),
@@ -414,6 +424,8 @@ struct Loop {
     profile_ready: Vec<amoris_link::TickProfile>,
     /// The loop's work after the last profiled tick, carried into the next one's profile.
     profile_after: f64,
+    /// Agents' branches of main for lookahead (`player.fork`; docs/spec/player.md 7.1).
+    branches: crate::branches::Branches,
 }
 
 enum Next {
@@ -1102,8 +1114,8 @@ impl Loop {
     /// Applies one command; `true` when it asks the loop to quit.
     fn handle(&mut self, e: Envelope) -> bool {
         let def = catalog::find(&e.name);
-        let name = def.map_or(e.name.as_str(), |d| d.name);
-        let json = |r: Result<Value, Problem>| r.map(ReplyValue::Json);
+        let name = def.map_or(e.name.clone(), |d| d.name.to_owned());
+        let name = name.as_str();
         // A player sends the player tools alone (`crate::player::permitted`): the commands the
         // loop answers itself (time, Play, the kept snapshots, the status) are refused here, the
         // others again by the game.
@@ -1113,6 +1125,54 @@ impl Loop {
             e.reply.send(Err(p));
             return false;
         }
+        if name.starts_with("player.") {
+            match self.branch(name, e) {
+                Some(e) => return self.handle_main(name, e),
+                None => return false,
+            }
+        }
+        self.handle_main(name, e)
+    }
+
+    /// Answers the branch commands (`player.fork`, `.discard`, `.branches`) and a `player.*`
+    /// command whose `world` names a branch; gives back the others, `world: "main"` taken out.
+    fn branch(&mut self, name: &str, mut e: Envelope) -> Option<Envelope> {
+        let cmd = |e: &Envelope| Command::new(e.source, e.seq, name, e.params.clone());
+        let r = match name {
+            "player.fork" => self.branches.fork(&self.game, &cmd(&e)),
+            "player.discard" => self.branches.discard(&self.game, &cmd(&e)),
+            "player.branches" => self.branches.list(&self.game, &cmd(&e)),
+            _ => {
+                let world = match e.params.as_object_mut().and_then(|m| m.remove("world")) {
+                    None => return Some(e),
+                    Some(Value::String(w)) if w == "main" => return Some(e),
+                    Some(Value::String(w)) => w,
+                    Some(other) => {
+                        let p = amoris_contract::codes::wrong_type(
+                            &amoris_contract::Pointer::root().key("world"),
+                            "string",
+                            amoris_contract::render::json_type(&other),
+                        );
+                        e.reply.send(Err(p));
+                        return None;
+                    }
+                };
+                // A branch steps between main's boundaries unless main runs in real time
+                // (threads.md 3.6): stepped, paused or held for a seat's decision.
+                let may_run = matches!(self.model.pacing(), Pacing::Stepped)
+                    || self.model.paused()
+                    || self.game.players_held(self.now());
+                let tick = self.game.tick().0;
+                self.branches.call(tick, &world, cmd(&e), may_run)
+            }
+        };
+        e.reply.send(r.map(ReplyValue::Json));
+        None
+    }
+
+    /// Applies one command to main; `true` when it asks the loop to quit.
+    fn handle_main(&mut self, name: &str, e: Envelope) -> bool {
+        let json = |r: Result<Value, Problem>| r.map(ReplyValue::Json);
         match name {
             "shutdown" if e.source == Source::Host => {
                 self.model.quit();

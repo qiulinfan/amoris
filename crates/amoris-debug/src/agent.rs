@@ -175,7 +175,8 @@ struct WaitParams {
 pub struct Method {
     pub name: &'static str,
     /// As the command catalog says it: `read` (looks only), `control` (stops, resumes, steps,
-    /// sets breakpoints and watches) or `write` (changes a paused frame's variable).
+    /// sets breakpoints and watches) or `write` (changes a paused frame's variable, or evaluates
+    /// an expression there, which may assign through an object).
     pub kind: &'static str,
     /// Other names that reach it.
     pub aliases: &'static [&'static str],
@@ -263,11 +264,14 @@ pub fn methods() -> Vec<Method> {
             doc: "Running or paused; when paused, why, the tick and system, and the frames with TypeScript locations and locals (brief: the innermost frame's locals and the other frames' locations only).",
             params: schema::<StateParams>(),
         },
+        // A write, not a read: an assignment through an object (`g.level[r] = 7`, a query
+        // column) writes that object and taints the run (docs/spec/debugger.md 5 and 7), so a
+        // caller kept to reads (a checker on a locked host, server.md 3.6) is refused it.
         Method {
             name: "debug.eval",
-            kind: "read",
+            kind: "write",
             aliases: &[],
-            doc: "Evaluates an expression in a frame of the paused game.",
+            doc: "Evaluates an expression in a frame of the paused game; an assignment through an object (a query column) writes it and taints the run.",
             params: schema::<EvalParams>(),
         },
         Method {
@@ -752,4 +756,29 @@ fn brief(state: &Json) -> Json {
     );
     v["watches"] = state["watches"].clone();
     v
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The catalog's kinds decide what a caller kept to reads may send (a checker on a locked
+    /// host, docs/spec/server.md 3.6): what can change a paused frame or the world through it is
+    /// a write.
+    #[test]
+    fn what_changes_a_paused_frame_is_a_write() {
+        let kind = |name: &str| {
+            methods()
+                .into_iter()
+                .find(|m| m.name == name)
+                .unwrap_or_else(|| panic!("no method {name}"))
+                .kind
+        };
+        for name in ["debug.eval", "debug.set"] {
+            assert_eq!(kind(name), "write", "{name}");
+        }
+        for name in ["debug.state", "debug.breakpoints.list", "debug.wait"] {
+            assert_eq!(kind(name), "read", "{name}");
+        }
+    }
 }

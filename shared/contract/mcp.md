@@ -791,17 +791,50 @@ request (decision 1 above). The player-facing requests arrived on that design
   as the text itself (4.3); a call may still ask for `"projection": "json"`. The CLI's
   `amoris player <action>` and the HTTP API carry the same commands.
 - **Roles by source, sessions by seat.** A command sent as `Source::Player(i)` is a player at the
-  declared seat of index `i` (3.1, Sources); every other source is a developer. A session is bound
-  to a seat by the process that serves it, not by a token grant: `amoris mcp <project> --seat
-  <seat>` over stdio (in process or against a running host) and `/api/call {..., "seat"}` over
-  HTTP make every call the seat's player's. A seat-bound MCP session lists the `player` tool alone
+  declared seat of index `i` (3.1, Sources); every other source is a developer. On a host started
+  without grants a session is bound to a seat by the process that serves it, not by a token
+  grant: `amoris mcp <project> --seat <seat>` over stdio (in process or against a running host)
+  and `/api/call {..., "seat"}` over HTTP make every call the seat's player's. Such a host trusts
+  its local clients: a client picks its role. A host started with grants does not (the next
+  item). A seat-bound MCP session lists the `player` tool alone
   and refuses the others with `permission.denied` (3.3). The engine enforces the role beneath any
   session: in a game that declares players, the runtime refuses a player source every command but
   the `player.*` ones, and the host every method a seat's call names but those, its own answers
   (`events.since`, the debugger's methods) included (`docs/spec/player.md` 7). Each seat's push cursor and decision
   state live in the runtime's one players' session, so two clients of one seat share them (5.3
   keeps one cursor per session).
-- **Not built**: grants and tokens over HTTP MCP, the checker role, `fork`, `discard`, `snapshot`,
-  `restore` and `replay` for players (5.5 to 5.7), `world` and `hash` in answers (4.1; a
-  developer's `player.wait` carries `world_hash`), statistics across sessions, the M1 to M11
-  checks as named checks.
+- **Grants as built** (2026-11-12; `docs/spec/server.md` 3.6). `amoris serve <project> --grants
+  <file>` registers grants when the runtime starts, as 3.1 says the process owner does. A grant in
+  the file is four of 3.1's fields: `{token, role, seat?, label?}`. The token is 128 bits the
+  process owner draws, written as 32 hex digits; the engine draws none. The host is then locked:
+  every route, not MCP alone, needs a registered token, as `Authorization: Bearer <token>` or, for
+  MCP, at `/mcp/<token>`; a missing and an unknown token are refused alike, and tokens are compared
+  in constant time. The three roles: a player's session sends as its seat's `Source::Player`, the
+  player tool alone, whatever its requests say (another seat in a request is `seat.not_yours`); a
+  developer's sends everything; a checker's is a `Source::Developer(n)` whose calls the host keeps
+  to the catalog's Read commands (3.1, Sources), refusing every other with `permission.denied`
+  before it reaches the game. Each grant is one session for the host's life, whatever number of
+  connections present its token, opened in the file's order so that a grants file gives the same
+  sources in every run. `amoris mcp --attach <url> --grant-token <token>` (10) serves one stdio
+  session bound to a grant. Requests, answers and the contract's codes are unchanged; the refusals
+  of the lock itself are the host's (`host.unauthorized`, `host.grants_invalid`,
+  `host.not_locked`).
+- **Branches as built** (2026-11-12; `docs/spec/player.md` 7.1). 5.5's `fork` and `discard` are
+  the runtime's `player.fork {world?, label?}` and `player.discard {branch}`, with
+  `player.branches` for 5.1's `branches` and the fork statistics; every other player command takes
+  `world`. The game thread holds the branches, by source (a seat's player or one developer client),
+  runs them stepped and inline between main's boundaries, and refuses a branch's `wait` while main
+  runs in real time (`time.wrong_mode`). The bounds are 3.1's defaults and the benchmark's fork
+  condition, fixed by the runtime: 4 live branches a source, 16 in all, 600 branch ticks a source
+  while main stays at one tick (`session.limit_reached`, refused up front). Of `policy`, a grants
+  file takes `fork` alone, on a player grant (default false: `session.policy_denies`). A branch's
+  answers carry `world` (4.1); main's do not. Codes and their templates are 7.1's.
+- **Not built**: of 3.1's `Grant`, `profile`, `decision`, `clock`, `max_wall_ms` and of `policy`
+  all but `fork` (a grants file that names one is refused, never accepted and ignored), `--grant
+  <json>` for a stdio session that runs its own game, and `session.seat_taken` between sessions
+  opened at run time (two player grants on one seat are refused in the file); of 3.3, a tool list
+  of the checker's own (a checker lists the developer's tools and the host refuses what is no
+  Read, so "a tool the session may not call is not listed" holds for players only); `snapshot`,
+  `restore` and `replay` for players (5.6, 5.7), `world` and `hash` in main's answers (4.1; a
+  developer's `player.wait` carries `world_hash`), statistics across sessions, the M1 to M11 checks
+  as named checks.

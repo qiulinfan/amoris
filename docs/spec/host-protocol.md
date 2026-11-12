@@ -29,9 +29,21 @@ endpoint, which `amoris-debug` serves on its own port (9229). A request whose `H
 | `GET /wasm/<path>` | `web/viewport`: amoris-viewport's committed wasm-bindgen package (`pkg/`) and its glue `amoris_web.js` exporting `createViewport` (editor.md 5); `AMORIS_WEB_VIEWPORT` names another directory; 404 when none is found (`tools/build_viewport.sh` builds it) | editor viewport |
 | `POST /mcp` | MCP Streamable HTTP (rmcp) | agents |
 | `GET /json/list`, `GET /json/version`, `WS /devtools/game` | CDP discovery and endpoint (section 6), on `amoris-debug`'s own port (default 9229, where VS Code's `node` attach looks); the host may proxy them | Chrome DevTools, VS Code, the editor |
+| `GET /api/grant` | a locked host only: JSON `{role, seat, label, session}`, what the presented token is | a client that holds a grant's token |
+| `/mcp/<token>` | a locked host only: MCP Streamable HTTP as `/mcp`, for a client that cannot set a header | agents |
 
 `amoris mcp <project>` serves the same MCP tools over stdio instead (through the running host when
-there is one). The `amoris` CLI is a client of the same `/api/call` (server.md 8).
+there is one, as an agent session of that host: server.md 3.5). The `amoris` CLI is a client of the
+same `/api/call` (server.md 8).
+
+2026-11-12, a locked host (server.md 3.6). `amoris serve <project> --grants <file>` registers
+grants, each a token of 32 hex digits bound to one role: a seat's player, a checker or a developer.
+Every endpoint of the table then needs a registered token, `Authorization: Bearer <token>` (MCP also
+at `/mcp/<token>`), and the token decides what the request may be: a player's `/api/call` and MCP
+alone, as its seat; a checker's also the catalog and `/assets`, its calls the catalog's reads; a
+developer's everything. Such a host adds `"locked": true` to its readiness line and to
+`.amoris/host.json`, which never hold a token, and starts no CDP endpoint. A host started without
+grants serves as this file says everywhere else and reads no token.
 
 ## 2. Requests and responses
 
@@ -52,6 +64,14 @@ Response:
 order of completion, not of sending. `POST /api/call` answers HTTP 200 with either form (400 only
 for a body that is not JSON).
 
+The body of `POST /api/call` may also say whose call it is: `"seat": "skipper"` makes it that seat's
+player's ([player.md](player.md) 7), `"handle": "<handle>"` the call of the agent session
+`agent.session.open` gave the handle to (server.md 3.5). Both together are refused
+(`request.conflict`); with neither it is the HTTP API's shared developer client. A locked host
+answers `401 host.unauthorized`, or `403 permission.denied` for an endpoint the token's role may
+not open, before it reads the body; a call it admits is the grant's session's, and the body's
+`seat` and `handle` are a developer's to give (server.md 3.6).
+
 ## 3. Pushed events (`/ws`)
 
 The host pushes `{"event": <topic>, "data": ...}`. A client subscribes with
@@ -69,7 +89,7 @@ nothing. A socket more than 1,024 pushes behind gets `{"event": "lagged", "data"
 | `history` | `{undo: [label], redo: [label], entries: {undo: [entry], redo: [entry]}}` (as `history.list`) | after any edit, undo, redo, restore, Play or Stop that changed it |
 | `debug` | `{state: "paused"|"running", reason?, location?: {file, line, column}, frames?}` | debugger state changes |
 | `profile` | `{tick, epoch, ticks, held, missed, tick_ms, tick_max_ms, busy_ms, systems: [{name, ms, max_ms}], phases: [{name, ms, max_ms}]}`: the ticks since the last push, ms per tick (below) | 4 Hz while subscribed, also when no tick ran (`ticks: 0`) |
-| `agent` | `{session, kind: "call"|"result", method, ok?, summary}` | each MCP call by an agent and its result |
+| `agent` | `{seq, ts, session, kind: "opened"|"call"|"result"|"closed"|"message", method?, ok?, summary?, stream?, row?}`: `seq` the stream number, `row` the session as `agent.session.list` lists it (on `opened` and `closed`) | each agent session's opening, each of its calls and its result, its closing; the host records them whether or not a socket listens (`agent.session.events` reads them back, server.md 3.5) |
 
 `profile` (2026-10-14) is what the ticks cost the host's game thread, timed on the loop's clock by
 the step hooks of every tick while the host serves the stream (server.md 4): `ms` is the average per
@@ -128,7 +148,13 @@ Each method is a command of the catalog (`GET /api/catalog` is authoritative). K
 | `subscribe` / `unsubscribe` | `{topics: [topic]}` | `{topics}` (`/ws` only, section 3) |
 | `player.*` | per seat ([player.md](player.md)) | session, describe, observe, nearby, events, affordances, intents, act, wait, continue, pacing |
 | `debug.*` | section 6 | `debug.not_available` until amoris-debug's hub is installed; one catalog entry per method |
-| `agent.*` | MCP tool calls mirrored (section 7) | |
+| `agent.session.list` | `{}` | `{sessions: [{id, transport: "http"\|"stdio"\|"bridge"\|"api"\|"grant"\|"launch", role: "developer"\|"player"\|"checker", seat, label, calls, failed_calls, last_method, live, opened_ts, last_ts}], last}`: the host's agent sessions in opening order (server.md 3.5) |
+| `agent.session.events` | `{since?, limit?, session?}` | `{events, last, missed}`: the `agent` events the host kept (the newest 2,000), the newest or with `since` the first `limit` after it; `last` is the cursor to ask again with |
+| `agent.session.open` | `{label?, seat?}` | the session's row and `handle`: the caller is registered as a session of its own, whose calls are `POST /api/call {handle}` (section 2) |
+| `agent.session.close` | `{handle}` or `{session}` | the row, no longer live |
+| `agent.session.agents` | `{}` | `{agents: [{name, label}], running, limit}`: the agent programs the host may start (server.md 3.7) |
+| `agent.session.start` | `{agent, goal, seat?}` | the row of a new `launch` session, with `agent` and `pid`: a registered program started as that session |
+| `agent.session.stop` | `{session}` | the started session's row once its program ended |
 
 server.md 3 is the complete table, with each method's kind and result.
 
@@ -232,7 +258,10 @@ eleven tools as built, their actions and the size of `tools/list`: the developer
 `capture` and `docs`, and `player`, which plays one seat through its own perception
 ([player.md](player.md); a developer names the seat, a player session lists it alone).
 
-Every MCP call is also pushed to editors as an `agent` event, so a human sees what agents do.
+Every call of an agent session (an MCP client, or a bridge such as `amoris mcp` attached to the
+host) is recorded by the host, listed with its session (`agent.session.list`), read back
+(`agent.session.events`) and pushed to editors as an `agent` event, so a human sees what agents do,
+also what they did before the editor opened (server.md 3.5).
 
 ## 8. Forms the editor relies on
 

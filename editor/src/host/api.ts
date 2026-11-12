@@ -144,6 +144,18 @@ export const api = {
   profile: {
     frame: (ticks?: number) => call("profile.frame", ticks === undefined ? {} : { ticks }),
   },
+  agent: {
+    /** The host's agent sessions, and the stream number the list was read at. */
+    sessions: () => call("agent.session.list", {}),
+    /** The stream of what they called: the newest, or with `since` the first after it. */
+    events: (p: { since?: number; limit?: number; session?: string } = {}) => call("agent.session.events", p),
+    /** The agent programs the host may start (server.md 3.7). */
+    programs: () => call("agent.session.agents", {}),
+    /** Starts a registered program with a goal, as a seat's player or a developer. */
+    start: (p: { agent: string; goal: string; seat?: string }) => call("agent.session.start", p),
+    /** Ends a started program. */
+    stop: (session: string) => call("agent.session.stop", { session }),
+  },
 };
 
 /** The host's `events.why` (the event and its causes, nearest first) as the chain the Events panel

@@ -261,10 +261,14 @@ pub fn tools() -> Vec<ToolDef> {
                 kinds|events|codes|..., name} or one entity you know {entity}; observe: \
                 instruments, intents, pending decision, ranked percepts (Name#id), events \
                 {since, budget_tokens, projection: text|json}; nearby {kinds, within_m, sector}; \
+                blocks: the block cells your eye sees, nearest first {range_m, budget_tokens}; \
                 events {since}; affordances; intents; act {actions: [{do: start, intent, target, \
                 params} | {do: use, entity, verb} | {do: set, controls} | {do: cancel, \
                 intent_id}], resume}; wait: time runs until your next decision point {until, \
-                ticks, observe}; continue; session. A developer names the seat.",
+                ticks, observe}; continue; session. Lookahead: fork {label} gives you a branch \
+                b1, b2, ... of main that only you reach; every action takes world to act on a \
+                branch (wait on a branch runs at most 600 ticks while main stays at one tick); \
+                branches lists yours; discard {branch}. A developer names the seat.",
             schema: obj(
                 json!({
                     "action": action(&PLAYER_ACTIONS),
@@ -277,6 +281,7 @@ pub fn tools() -> Vec<ToolDef> {
                     "since": {"type": "integer"},
                     "kinds": strings,
                     "within_m": {"type": "number"},
+                    "range_m": {"type": "number"},
                     "sector": {"type": "object"},
                     "visibility": strings,
                     "limit": {"type": "integer"},
@@ -291,6 +296,9 @@ pub fn tools() -> Vec<ToolDef> {
                     "observe": {"type": "object"},
                     "pacing": {"type": "object"},
                     "omniscient": {"type": "boolean"},
+                    "world": {"type": "string", "description": "\"main\" (default) or one of your branches"},
+                    "label": {"type": "string"},
+                    "branch": {"type": "string"},
                 }),
                 &["action"],
             ),
@@ -299,11 +307,12 @@ pub fn tools() -> Vec<ToolDef> {
 }
 
 /// The `player` tool's actions: the `player.*` catalog methods.
-pub const PLAYER_ACTIONS: [&str; 11] = [
+pub const PLAYER_ACTIONS: [&str; 15] = [
     "session",
     "describe",
     "observe",
     "nearby",
+    "blocks",
     "events",
     "affordances",
     "intents",
@@ -311,6 +320,9 @@ pub const PLAYER_ACTIONS: [&str; 11] = [
     "wait",
     "continue",
     "pacing",
+    "fork",
+    "discard",
+    "branches",
 ];
 
 /// The player's reads an LLM reads as text unless it asks for JSON (mcp.md 4.3: text by default
@@ -318,7 +330,7 @@ pub const PLAYER_ACTIONS: [&str; 11] = [
 fn text_by_default(action: &str, args: &Map<String, Value>) -> bool {
     !args.contains_key("projection")
         && match action {
-            "observe" | "nearby" | "events" => true,
+            "observe" | "nearby" | "blocks" | "events" => true,
             "describe" => args.contains_key("entity"),
             _ => false,
         }

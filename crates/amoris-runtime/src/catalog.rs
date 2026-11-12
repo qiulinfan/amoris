@@ -338,6 +338,12 @@ pub const CATALOG: &[CommandDef] = &[
         schema::<amoris_interface::perception::NearbyRequest>,
     ),
     def(
+        "player.blocks",
+        Kind::Read,
+        "The block volumes as your seat sees them: the cells (block, centre, face, distance) its rays reach over its field of view within range_m (default 16, at most its sight's range and 32), nearest first within budget_tokens, and the cell you look at.",
+        schema::<crate::blocks::BlocksParams>,
+    ),
+    def(
         "player.events",
         Kind::Read,
         "Your perceived events after a seq, oldest first.",
@@ -379,6 +385,24 @@ pub const CATALOG: &[CommandDef] = &[
         "Developer: the players' pacing: stepped, or real_time {speed, pause_on_decision, clock}.",
         schema::<crate::player::PacingParams>,
     ),
+    on_thread(def(
+        "player.fork",
+        Kind::Control,
+        "Lookahead: forks main (or world, one of your branches) into a branch b1, b2, ... only you reach; every other player command takes world to act on it. A branch runs stepped and never touches main; at most 4 branches and 600 branch ticks while main stays at one tick.",
+        schema::<crate::branches::ForkParams>,
+    )),
+    on_thread(def(
+        "player.discard",
+        Kind::Control,
+        "Drops one of your branches.",
+        schema::<crate::branches::DiscardParams>,
+    )),
+    on_thread(def(
+        "player.branches",
+        Kind::Read,
+        "Your branches (world, parent, forked_at, tick, label), your limits, the branch ticks left for main's tick, and your fork statistics.",
+        schema::<NoParams>,
+    )),
 ];
 
 /// A command a game or a test adds: a function over the boundary that returns the result and the

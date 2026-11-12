@@ -363,7 +363,11 @@ const PERCEPTION: &str = r#"{
 }"#;
 
 fn player_project() -> PathBuf {
-    let root = std::env::temp_dir().join(format!("amoris-voxels-player-{}", std::process::id()));
+    player_project_in("player")
+}
+
+fn player_project_in(tag: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!("amoris-voxels-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("scripts")).unwrap();
     std::fs::write(
@@ -462,6 +466,133 @@ fn a_player_breaks_and_places_blocks_and_the_run_replays() {
             amoris_persist::replay::ReplayOutcome::Identical,
             "{v:#?}"
         );
+        std::fs::remove_dir_all(root).unwrap();
+    });
+}
+
+/// `player.blocks` (voxels.md 11.1): the seat sees the surface cells its rays reach over its field
+/// of view and within range, each once, nearest first within the budget, never a cell behind
+/// another; the cell it looks at is the one its hands would break. A developer naming the seat
+/// reads the same bytes; a player reads no other seat.
+#[test]
+fn a_seat_sees_the_surface_cells_its_rays_reach() {
+    common::big_stack(|| {
+        let root = player_project_in("blocks");
+        let p = Project::load(&root).unwrap_or_else(|e| panic!("{e:#?}"));
+        let setup = Arc::new(p.setup(false).unwrap_or_else(|e| panic!("{e:#?}")));
+        let mut g = Game::new(setup, 1).unwrap_or_else(|e| panic!("{e:#?}"));
+        let mut seq = 0;
+        let mut call = |g: &mut Game, source: Source, name: &str, params: Value| {
+            seq += 1;
+            g.apply(&Command::new(source, seq, name, params))
+        };
+        for _ in 0..30 {
+            g.step().unwrap();
+        }
+        let aim = json!({"actions": [{"do": "set", "controls": {"pitch": -0.8, "yaw": 0.0}}]});
+        call(&mut g, Source::Player(0), "player.act", aim).unwrap();
+        g.step().unwrap();
+        let seen = call(
+            &mut g,
+            Source::Player(0),
+            "player.blocks",
+            json!({"budget_tokens": 8000}),
+        )
+        .unwrap_or_else(|e| panic!("{e:#?}"));
+        // The cell two ahead, where the hands test breaks one, on its top face.
+        assert_eq!(seen["looking_at"]["block"], json!("stone"), "{seen:#}");
+        assert_eq!(
+            seen["looking_at"]["at"],
+            json!([0.5, 0.5, -1.5]),
+            "{seen:#}"
+        );
+        assert_eq!(seen["looking_at"]["face"], json!("+y"), "{seen:#}");
+        let blocks = seen["blocks"].as_array().unwrap();
+        assert!(blocks.len() > 20, "{seen:#}");
+        assert!(seen.get("omitted").is_none(), "{seen:#}");
+        let mut last = 0.0;
+        let mut cells = std::collections::BTreeSet::new();
+        for b in blocks {
+            let d = b["distance_m"].as_f64().unwrap();
+            assert!(d >= last && d <= 16.0, "nearest first, within range: {b}");
+            last = d;
+            assert!(cells.insert(b["at"].to_string()), "each cell once: {b}");
+            // The floor's lower layer lies under its top one: no ray reaches it.
+            assert_eq!(b["at"][1], json!(0.5), "{b}");
+            assert_eq!(b["face"], json!("+y"), "{b}");
+            // Ahead of the eye, within the 90 degree field of view about -z.
+            let (x, z) = (b["at"][0].as_f64().unwrap(), b["at"][2].as_f64().unwrap());
+            assert!(z < 0.5 + 1.0 && (x - 0.5).abs() <= (0.5 - z) + 1.0, "{b}");
+        }
+        // A smaller budget keeps the nearest and counts the rest; a shorter range sees less.
+        let small = call(
+            &mut g,
+            Source::Player(0),
+            "player.blocks",
+            json!({"budget_tokens": 120}),
+        )
+        .unwrap();
+        let kept = small["blocks"].as_array().unwrap();
+        assert!(!kept.is_empty() && kept.len() < blocks.len(), "{small:#}");
+        assert_eq!(kept[..], blocks[..kept.len()], "the nearest first");
+        assert_eq!(
+            small["omitted"].as_u64().unwrap() as usize,
+            blocks.len() - kept.len()
+        );
+        assert!(small["tokens"].as_u64().unwrap() <= 120, "{small:#}");
+        let near = call(
+            &mut g,
+            Source::Player(0),
+            "player.blocks",
+            json!({"range_m": 3}),
+        )
+        .unwrap();
+        assert!(
+            near["blocks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|b| b["distance_m"].as_f64().unwrap() <= 3.0)
+        );
+        // The text projection says the same.
+        let text = call(
+            &mut g,
+            Source::Player(0),
+            "player.blocks",
+            json!({"projection": "text", "budget_tokens": 8000}),
+        )
+        .unwrap();
+        let text = text.as_str().unwrap();
+        assert!(
+            text.starts_with("blocks tick 31 seat player eye 0.5,2.62,0.5"),
+            "{text}"
+        );
+        assert!(
+            text.contains("\nlooking_at stone 0.5,0.5,-1.5 +y "),
+            "{text}"
+        );
+        assert_eq!(text.lines().count(), 2 + blocks.len(), "{text}");
+        // A developer naming the seat reads what the player reads; a player names no other seat.
+        let dev = call(
+            &mut g,
+            Source::Developer(0),
+            "player.blocks",
+            json!({"seat": "player", "budget_tokens": 8000}),
+        )
+        .unwrap();
+        assert_eq!(dev, seen);
+        let e = call(
+            &mut g,
+            Source::Player(0),
+            "player.blocks",
+            json!({"seat": "other"}),
+        )
+        .unwrap_err();
+        assert_eq!(e.code, "seat.not_yours", "{e:#?}");
+        // A read: the world does not change.
+        let before = g.world_hash().unwrap();
+        call(&mut g, Source::Player(0), "player.blocks", json!({})).unwrap();
+        assert_eq!(g.world_hash().unwrap(), before);
         std::fs::remove_dir_all(root).unwrap();
     });
 }

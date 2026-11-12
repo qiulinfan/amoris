@@ -2,6 +2,8 @@
 //! (the integrator's feed), `/assets/<path>`, `/mcp` and the editor's static files, behind a guard
 //! that refuses any request whose `Host` or `Origin` is not loopback (DNS rebinding).
 
+mod locked;
+
 use std::path::{Path, PathBuf};
 
 use amoris_contract::{Problem, detail};
@@ -76,9 +78,22 @@ async fn catalog(State(host): State<Host>) -> Response {
     }
 }
 
-/// `POST /api/call`: `{id?, method, params?, seat?}` answered `{id, result}` or `{id, error}`;
-/// with `seat` the call is made as that seat's player (docs/spec/player.md), restricted by the
-/// runtime to its own perception and actions.
+/// What a JSON value is, as a refusal of its type says it.
+fn json_type(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+/// `POST /api/call`: `{id?, method, params?, seat?, handle?}` answered `{id, result}` or
+/// `{id, error}`; with `seat` the call is made as that seat's player (docs/spec/player.md),
+/// restricted by the runtime to its own perception and actions; with `handle` it is the call of
+/// the agent session `agent.session.open` gave the handle to (server.md 3.5).
 async fn call(State(host): State<Host>, body: String) -> Response {
     let req: Value = match serde_json::from_str(&body) {
         Ok(v) => v,
@@ -92,6 +107,35 @@ async fn call(State(host): State<Host>, body: String) -> Response {
         }
     };
     let refused = |p: Problem| json_response(&json!({"id": req.get("id"), "error": p}));
+    let root = amoris_contract::Pointer::root();
+    match req.get("handle") {
+        None | Some(Value::Null) => {}
+        Some(Value::String(handle)) => {
+            // A session is a developer's or one seat's from its opening: it names no other.
+            if req.get("seat").is_some_and(|s| !s.is_null()) {
+                return refused(amoris_contract::codes::conflict(&[
+                    root.key("handle"),
+                    root.key("seat"),
+                ]));
+            }
+            let Some(method) = req.get("method").and_then(Value::as_str) else {
+                // No method: the same refusal as without a handle.
+                return json_response(&crate::ws::answer(&host, &Via::Api, req).await);
+            };
+            let params = req.get("params").cloned().unwrap_or_else(|| json!({}));
+            return match host.call_as(handle, method, params).await {
+                Ok(result) => json_response(&json!({"id": req.get("id"), "result": result})),
+                Err(p) => refused(p),
+            };
+        }
+        Some(other) => {
+            return refused(amoris_contract::codes::wrong_type(
+                &root.key("handle"),
+                "string",
+                json_type(other),
+            ));
+        }
+    }
     match req.get("seat") {
         None | Some(Value::Null) => {}
         Some(Value::String(seat)) => {
@@ -107,16 +151,10 @@ async fn call(State(host): State<Host>, body: String) -> Response {
             };
         }
         Some(other) => {
-            let got = match other {
-                Value::Bool(_) => "boolean",
-                Value::Number(_) => "number",
-                Value::Array(_) => "array",
-                _ => "object",
-            };
             return refused(amoris_contract::codes::wrong_type(
-                &amoris_contract::Pointer::root().key("seat"),
+                &root.key("seat"),
                 "string",
-                got,
+                json_type(other),
             ));
         }
     }
@@ -245,6 +283,11 @@ fn placeholder() -> Response {
 /// The server's routes over `host`; `port` is the bound port (for the MCP service's checks).
 pub fn router(host: Host, port: u16) -> Router {
     let _ = port;
+    // A host started with grants serves its routes behind their tokens (server.md 3.6).
+    if host.locked() {
+        return locked::router(host);
+    }
+    host.serves_unlocked();
     let mcp = amoris_mcp::http_service(std::sync::Arc::new(McpBackend::new(host.clone())));
     Router::new()
         .route("/api/catalog", get(catalog))

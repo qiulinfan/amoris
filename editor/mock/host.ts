@@ -34,23 +34,23 @@ interface Client {
 }
 
 const clients = new Set<ServerWebSocket<Client>>();
-// Recent log lines and agent events, replayed to a client that subscribes (the mock's choice, so a
-// freshly opened editor is not empty; the protocol does not require it).
+// Recent log lines, replayed to a client that subscribes (the mock's choice, so a freshly opened
+// editor is not empty; the protocol does not require it). Agent events are not replayed: the editor
+// reads the sessions and their stream (`agent.session.list`, `agent.session.events`), as of the
+// real host.
 const recentLogs: unknown[] = [];
-const recentAgent: unknown[] = [];
 
 function broadcast(topic: string, data: unknown) {
-  if (topic === "log" || topic === "agent") {
-    const ring = topic === "log" ? recentLogs : recentAgent;
-    ring.push(data);
-    if (ring.length > 300) ring.shift();
+  if (topic === "log") {
+    recentLogs.push(data);
+    if (recentLogs.length > 300) recentLogs.shift();
   }
   const frame = JSON.stringify({ event: topic, data });
   for (const ws of clients) if (topic === "status" || ws.data.topics.has(topic)) ws.send(frame);
 }
 
 const session = new Session(broadcast);
-const agent = new MockAgent(session, broadcast);
+const agent = new MockAgent(session);
 
 /** The HTTP API's client, as the host names it (`amoris serve`'s CLI client); the socket is the
  * editor's. */
@@ -155,7 +155,6 @@ const server = Bun.serve<Client>({
         topics.forEach((t) => ws.data.topics.add(t));
         ws.send(JSON.stringify({ id: msg.id, result: { topics: [...ws.data.topics] } }));
         if (fresh.includes("log")) for (const l of recentLogs) ws.send(JSON.stringify({ event: "log", data: l }));
-        if (fresh.includes("agent")) for (const a of recentAgent) ws.send(JSON.stringify({ event: "agent", data: a }));
         if (fresh.includes("history")) ws.send(JSON.stringify({ event: "history", data: session.world.history() }));
         return;
       }

@@ -249,6 +249,14 @@ main's tick lateness while a branch steps.
 - A branch's ticks never touch main's world, recorder or event stream; a branch publishes no
 snapshot unless a presenter asks for it.
 
+As built (2026-11-12; player.md 7.1): the game thread holds the branches the player commands fork
+(`player.fork`, `player.discard`, `world` on the others) beside main's `Game`, by source rather
+than by MCP session, each with its bundle binding and no recorder, always stepped; a command names
+its world in its parameters and the loop routes it there. A branch's `wait` runs inline between
+main's boundaries while main is stepped, paused or held for a seat's decision, and is refused with
+`time.wrong_mode` while main runs in real time: the worker slices and the runtime worker above are
+not built, nor is `branch.main_lateness` measured.
+
 ## 4. Snapshots
 
 ### 4.1 What a snapshot is

@@ -1,7 +1,7 @@
 //! One catalog call (docs/spec/server.md, dispatch): a method answered on the server side
 //! (`local`), or sent to the game thread through the caller's client and awaited without blocking
-//! the server's threads. Edits, undo, redo, restores and Play push the history to editors; an MCP
-//! session's calls are pushed as `agent` events.
+//! the server's threads. Edits, undo, redo, restores and Play push the history to editors; an
+//! agent session's calls are recorded and pushed as `agent` events (`sessions.rs`).
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -10,6 +10,7 @@ use amoris_contract::{Problem, detail};
 use amoris_link::{GameClient, Reply, WorldMode, game_stopped};
 use serde_json::{Value, json};
 
+use crate::sessions::Step;
 use crate::{DebugHub, Host, paused};
 
 /// How often a call waiting on the game looks for a stop of the script debugger.
@@ -32,11 +33,17 @@ pub enum Via {
     Editor,
     /// The HTTP API's shared developer client (CLI calls, tests).
     Api,
-    /// An MCP session's own developer client, and the session's name for `agent` events.
+    /// An agent session's own developer client, and the session its calls are listed under
+    /// (`mcp-<n>`).
     Session(Arc<Mutex<GameClient>>, String),
-    /// A seat's player client (`Source::Player`) and the seat (docs/spec/player.md): calls made
-    /// as that seat, which send the player tools alone ([`seat_permits`]).
+    /// A seat's player client (`Source::Player`, docs/spec/player.md) and the session its calls
+    /// are listed under (`mcp-<n>`, or `player:<seat>` for calls made with no session): calls
+    /// made as that seat, which send the player tools alone ([`seat_permits`]).
     Player(Arc<Mutex<GameClient>>, String),
+    /// A checker's developer client (a grant of a locked host, `grants.rs`) and the session its
+    /// calls are listed under: the game sees a developer source, and the host lets through the
+    /// catalog's reads alone (`Host::checker_permits`).
+    Checker(Arc<Mutex<GameClient>>, String),
 }
 
 /// Whether a call made as `seat`'s player may name `method`: the player tools alone. Every other
@@ -69,7 +76,7 @@ const HISTORY: &[&str] = &[
 ];
 
 /// A short text of a value for `agent` events.
-fn summary(v: &Value) -> String {
+pub(crate) fn summary(v: &Value) -> String {
     let mut s = v.to_string();
     if s.len() > 160 {
         let mut cut = 157;
@@ -87,7 +94,7 @@ impl Host {
         match via {
             Via::Editor => self.0.editor.clone(),
             Via::Api => self.0.api.clone(),
-            Via::Session(c, _) | Via::Player(c, _) => c.clone(),
+            Via::Session(c, _) | Via::Player(c, _) | Via::Checker(c, _) => c.clone(),
         }
     }
 
@@ -175,21 +182,6 @@ impl Host {
         }
     }
 
-    /// A new MCP session's client, its source named after the session in the history.
-    pub(crate) fn open_session(&self) -> Via {
-        let n = self
-            .0
-            .sessions
-            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
-            + 1;
-        let client = (self.0.developer)();
-        let name = format!("mcp-{n}");
-        if let Ok(mut names) = self.0.names.write() {
-            names.insert(client.source(), name.clone());
-        }
-        Via::Session(Arc::new(Mutex::new(client)), name)
-    }
-
     /// The history (`history.list`'s answer, the `history` push) with `session` on each entry
     /// whose source is a developer client the server named: `api` (the HTTP API's) or `mcp-<n>`
     /// (as `agent` events name the session).
@@ -228,19 +220,24 @@ impl Host {
     /// One catalog call: answered here or by the game, with the pushes it causes.
     pub async fn call(&self, via: &Via, method: &str, params: Value) -> Result<Value, Problem> {
         let session = match via {
-            Via::Session(_, name) => Some(name.clone()),
-            Via::Player(_, seat) => Some(format!("player:{seat}")),
+            Via::Session(_, name) | Via::Player(_, name) | Via::Checker(_, name) => {
+                Some(name.clone())
+            }
             _ => None,
         };
         if let Some(session) = &session {
-            self.push(
-                "agent",
-                json!({"session": session, "kind": "call", "method": method,
-                       "summary": summary(&params)}),
+            self.agent_event(
+                session,
+                Step::Call {
+                    method,
+                    summary: summary(&params),
+                },
             );
         }
         let permitted = match via {
             Via::Player(..) => seat_permits(method),
+            // Refused here, before `respond`: nothing but a read reaches the game or a plug-in.
+            Via::Checker(..) => self.checker_permits(method),
             _ => Ok(()),
         };
         let r = match permitted {
@@ -252,10 +249,13 @@ impl Host {
                 Ok(v) => (true, summary(v)),
                 Err(p) => (false, format!("{}: {}", p.code, p.message)),
             };
-            self.push(
-                "agent",
-                json!({"session": session, "kind": "result", "method": method, "ok": ok,
-                       "summary": text}),
+            self.agent_event(
+                session,
+                Step::Result {
+                    method,
+                    ok,
+                    summary: text,
+                },
             );
         }
         r

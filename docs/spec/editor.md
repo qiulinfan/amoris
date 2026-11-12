@@ -64,7 +64,12 @@ previews, evaluation only while paused, `debug.set` lasting for the pause (a `co
 breakpoints on fields script systems write, which stop on the statement after the write and on a
 returned frame only when the write was the call's last, `debug.exceptions`), profile samples in the
 host's shape, assets with thumbnails, and a simulated MCP agent whose edits land in the same undo
-history. It binds 127.0.0.1 and refuses non-loopback `Origin`/`Host`, as the host does.
+history. It lists and records agent sessions in the host's shapes (`agent.session.list`, `.events`,
+`.open`, `.close` and the `agent` events, `mock/sessions.ts`; server.md 3.5): each round of the
+simulated agent opens a session, calls as it and closes it, and its own words are `message` events.
+It starts its one scripted agent program as the host starts registered ones (`agent.session.agents`,
+`.start`, `.stop`, `mock/programs.ts`; server.md 3.7). It binds 127.0.0.1 and refuses non-loopback
+`Origin`/`Host`, as the host does.
 
 The mock is not the host: a form counts as working once it ran against `amoris serve` (section 10),
 and what the editor sends the mock must answer as the host does. Where the editor's basic edits
@@ -110,7 +115,7 @@ one value a panel cannot draw no longer leaves a blank page.
 | Timeline | Kept snapshots and event lanes (the most frequent kinds, and the selection's) on a tick ruler with the playhead; drag to scrub and release to rewind there; click a snapshot to restore it; back to the previous snapshot, pause, step | `snapshots.list/restore`, `debug.rewind`, `time.*` |
 | Profiler | Per sample (4 a second), the host's CPU time per tick stacked by system and the viewport's frame time against the 60 Hz budget (hover for one sample), then over the last 3 s: the game thread's systems (each system's own time, `tick.other`, `loop.present`, `loop.publish`, `loop.after`) and the tick's phases with their largest tick, and the viewport's GPU passes; the tick and game-thread time, the frame interval, fps and GPU time; held ticks left out; freeze and clear | `profile` events, the viewport's `stats()` |
 | Assets | Grid or list with thumbnails or kind icons, kind filters with counts, search; drag into the viewport or the hierarchy (or double-click) to place a model or a splat (the host lists the project's other files too, which are not placed); Import uploads files picked in the browser's file chooser or dropped on the panel (section 6.3); context menu (place, copy path) | `assets.list/upload`, `world.edit` spawn with `Model.mesh`, or `Splat.asset` for a splat |
-| Agent | The live feed of agent activity grouped by session (call, result with success, message), sessions with their call counts and liveness, and a New session form (model, goal, tools) that waits for host support; copies the MCP endpoint command | `agent` events |
+| Agent | The host's agent sessions and the stream of what they called, read from the host on connect, so calls made before the editor opened are shown (server.md 3.5): each session with its id, label, transport, seat, call and failed-call counts and whether it is live; the feed grouped by session (opened, call, result with success, closed; the mock's messages); a filter by session; Clear hides what is shown. A New session form: an agent program the host's owner registered (`agent.session.agents`), a goal and an optional seat; Start runs it as a `launch` session of the host whose output lines join the feed, Stop ends the selected one (server.md 3.7); a host without programs says how they are registered; copies the MCP endpoint command | `agent.session.list`, `agent.session.events`, `agent.session.agents`, `.start`, `.stop`, `agent` events |
 | History | The undo history as a timeline from "Opened scene", each edit another client made marked with its session (`mcp-1`, `api`); click an entry to undo or redo up to it; undo and redo buttons | `history` events, `history.undo/redo/list` |
 
 ## 4. Shortcuts
@@ -446,7 +451,14 @@ ran against `amoris serve` (section 10), and where the two differed the mock was
    edits by an `agent:` label prefix. The editor changed for the order instead: the host lists
    `redo` most recent last, as Draft 1 has it (the editor had assumed the next to redo first), and
    the history store reverses it.
-6. `agent` events may carry `ok` (a result's success) and `ts` (ms since the epoch).
+6. `agent` events may carry `ok` (a result's success) and `ts` (ms since the epoch). Adopted
+   2026-11-12 (server.md 3.5): every event carries `seq` (its stream number) and `ts`, the kinds
+   `opened` and `closed` carry the session's `row`, and the host lists the sessions and keeps the
+   stream (`agent.session.list`, `agent.session.events`). The editor reads both on each connection
+   (subscribed to `agent` first, the list before the backlog), applies pushes in the order of
+   their numbers and reads again when a number is skipped, instead of guessing sessions from the
+   events it happened to receive. `message` events carry a started program's lines with their
+   `stream` (server.md 3.7; before that day they were the mock's only).
 7. `scripts.read` answers the text (a string) or `{text}`; diagnostics are `{file?, line, column,
    end_line?, end_column?, severity: "error" | "warning" | "info" | "hint", message, code?}`.
 8. `snapshots.list` answers `[{tick, t_s?, hash?}]` on the mock; the host answers `{every, keep,
@@ -579,7 +591,7 @@ the wire shapes (`HostDebugState`, `HostFrame`, `HostVariable`, `HostBreakpoint`
 |---|---|
 | `src/host/` | `protocol.ts` (wire types, method params and results), `client.ts` (WebSocket with ids, events, reconnect; catalog), `api.ts` (typed wrappers, the connection), `sync.ts` (stores from host events), `schema.ts` (JSON Schema to field kinds) |
 | `src/state/` | One zustand store per domain: world, selection, session, history, logs, events, profile, the viewport's render timings, agent, debug, scripts, assets, viewport settings, UI |
-| `src/actions/` | Edits (`world.ts`, `LiveEdit` for drags), transport, debugger, scripts, error reporting |
+| `src/actions/` | Edits (`world.ts`, `LiveEdit` for drags), transport, debugger, scripts, error reporting, the load of the agent sessions (`agent.ts`) |
 | `src/commands/` | The command registry, key handling, the built-in commands |
 | `src/layout/` | The panel registry, the dock and its default layout, a handle for other code |
 | `src/shell/` | Top bar, menus, transport, status bar, palette, dialogs |
@@ -587,8 +599,8 @@ the wire shapes (`HostDebugState`, `HostFrame`, `HostVariable`, `HostBreakpoint`
 | `src/viewport/` | The renderer interface, camera, math, gizmo, the frame meter, the fallback renderer |
 | `src/panels/<panel>/` | One module per panel (and its CSS) |
 | `mock/` | The mock host (section 1.1) |
-| `test/` | bun unit tests (`bun test`): history, live edits, subscriptions, the profile, water authoring, the desktop guards, arithmetic, the host's forms (`host-forms`: the cause chain, the pacing, enum spellings, the component search, and the mock answering them as the host does), what Create, Place and Duplicate send (`create`), and a poisoned world's status with the shell drawn from it, the newest events on connect, a component without fields and a select's keys (`halted`, the editor's client answered by the mock over the wire), mixed values and what an edit of several entities makes of each (`multi`), what Import sends and the mock's answers to it (`upload`) |
-| `tools/` | `capture.ts` (evidence of every panel against the mock), `debug-host.ts` (the debugger against the real host), `rename-host.ts` (the rename against the real host, section 8 item 2), `edit-host.ts` (the edit loop against the real host, or the mock: section 10), `sdk_check.ts` (the script editor's types against the real host), `profiler-capture.ts` (the profiler against the real host, docs/bench/profiler.md), `water-authoring.ts` (the water tools against the real host, 6.1), `viewport-loads.ts` (the viewport's loads, remounts and hot updates, 5), `gizmo-drag.ts` (live gizmo drags, docs/bench/gizmo.md), `serve-clients.ts` (clients held on a real host while its game thread is profiled, docs/bench/profiler.md); the pages are driven in headless Chrome over CDP (`cdp.ts`, `chrome.ts`): `launchChrome` starts the browser `chrome.ts` finds with a temporary profile of its own, on a CDP port Chrome picks (read from the profile's `DevToolsActivePort`) or on `--chrome-port`, which it refuses when something already listens there; it hands out a page only once the browser answering on the port is the process it started, and its `close` ends that process alone |
+| `test/` | bun unit tests (`bun test`): history, live edits, subscriptions, the profile, water authoring, the desktop guards, arithmetic, the host's forms (`host-forms`: the cause chain, the pacing, enum spellings, the component search, and the mock answering them as the host does), what Create, Place and Duplicate send (`create`), and a poisoned world's status with the shell drawn from it, the newest events on connect, a component without fields and a select's keys (`halted`, the editor's client answered by the mock over the wire), mixed values and what an edit of several entities makes of each (`multi`), what Import sends and the mock's answers to it (`upload`), the agent sessions (the mock's shapes and the store) |
+| `tools/` | `capture.ts` (evidence of every panel against the mock), `debug-host.ts` (the debugger against the real host), `rename-host.ts` (the rename against the real host, section 8 item 2), `edit-host.ts` (the edit loop against the real host, or the mock: section 10), `sdk_check.ts` (the script editor's types against the real host), `profiler-capture.ts` (the profiler against the real host, docs/bench/profiler.md), `water-authoring.ts` (the water tools against the real host, 6.1), `viewport-loads.ts` (the viewport's loads, remounts and hot updates, 5), `gizmo-drag.ts` (live gizmo drags, docs/bench/gizmo.md), `serve-clients.ts` (clients held on a real host while its game thread is profiled, docs/bench/profiler.md), `agent-sessions.ts` (the Agent panel against a real host: sessions opened and called before the page exists are listed with their stream, a later call arrives by push, a close takes the live dot away); the pages are driven in headless Chrome over CDP (`cdp.ts`, `chrome.ts`): `launchChrome` starts the browser `chrome.ts` finds with a temporary profile of its own, on a CDP port Chrome picks (read from the profile's `DevToolsActivePort`) or on `--chrome-port`, which it refuses when something already listens there; it hands out a page only once the browser answering on the port is the process it started, and its `close` ends that process alone |
 
 ## 10. Evidence
 
@@ -776,8 +788,10 @@ completes the Boat's fields.
   refused too: Pause, then Continue, or remove the breakpoint first.
 - `debug.set` sets the first variable of that name a function declares: two block scopes declaring
   one name (`for (let r ...)` twice) cannot be told apart at run time.
-- Agent sessions cannot be started from the editor yet (no `agent.session.*`); the form is a
-  preview, and agents connect over MCP.
+- The editor starts only the agent programs the process owner registered (`amoris serve --agents
+  <file>`, server.md 3.7), by name: it never names a command, a model or a key, and a locked host
+  starts none. A stale bridge row (its process killed) has no Close button: `amoris call
+  agent.session.close '{"session": "mcp-3"}'` closes it.
 - An upload sends its parts one after another, and only a toast at the end says how it went:
   a large file shows no progress meanwhile. The CLI has no upload command (`amoris assets` lists).
 - The worker's declarations are fetched on connect and after the editor's own apply: a component
