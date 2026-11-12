@@ -679,10 +679,7 @@ fn developer_methods() -> Vec<(&'static str, Value)> {
         ("saves.write", json!({"name": "a"})),
         ("saves.load", json!({"name": "a"})),
         ("scene.load", json!({"path": "scene.json"})),
-        (
-            "assets.upload",
-            json!({"path": "a.txt", "data": "YQ=="}),
-        ),
+        ("assets.upload", json!({"path": "a.txt", "data": "YQ=="})),
         ("capture", json!({})),
     ]
 }
