@@ -41,7 +41,7 @@ A project opts in with `[player]` in `project.toml`:
 ```toml
 [player]
 perception = "perception.json"   # default; the observer profiles, instruments, kinds, events
-actions = "sailing"              # the engine's action catalog: "sailing", "first_person" or "none"
+actions = "sailing"              # the engine's catalog: "sailing", "first_person", "third_person" or "none"
 done_event = "course.finished"   # the episode ends in the tick one is emitted (optional)
 camera = "look"                  # who aims the camera: "look" (default) or "game"
 controls = "WASD move · Mouse look" # optional plain-text legend for the browser's pause veil
@@ -67,7 +67,7 @@ controls = "WASD move · Mouse look" # optional plain-text legend for the browse
   beside their systems). `sailing` is one seat, `skipper`; the controls `rudder`, `sheet`, `hoist`
   (a `Boat`'s) and `interact` (a pulse written into the project's `Crew.take`, which the game's rule
   reads and clears); the intents with their Rust executors; the crate's `take_aboard`; the `sail.*`
-  codes. `none` declares no action.
+  codes. `first_person` is voxels.md 6's, `third_person` section 5.1's. `none` declares no action.
 - The scene puts `Observer {profile, seat, team?}` on a seat's body,
   `Perceivable {kind, detect_m, height_m, priority, chart_m?}` on what can be perceived and
   `Occluder {}` on what blocks sight (its colliders); all three are engine components a scene or
@@ -132,6 +132,78 @@ it does not steer round land). Each sees only its seat's `PerceptionView` and wr
 channels' controls (actions.md, Executors, rules 1 and 2), so an intent is a convenience the seat
 could have done with controls (`contract.intents.transparency`, the interface's tests). Script
 executors are not built here (section 10).
+
+### 5.1 The `third_person` catalog
+
+(2026-11-12; charter 5.1, the note of that day.) A character seen from behind: the walker
+(voxels.md 5.2) moves and collides, its `Avatar` is the body seen standing at its feet, and a
+`CameraRig` follows its look as an orbit camera (animation.md 6). Before it, `samples/thornkeep`
+played through `first_person` with its own buttons for every verb and kept its lock-on in a
+project component, and nothing let an agent move relative to anything but the camera.
+
+`actions = "third_person"` in `[player]` declares one seat, `player`, whose body is the entity with
+`Observer {seat: "player"}`, a `Walker` and a `ThirdPerson`. Its controls, with the keyboard and
+mouse defaults the native window and the browser player send (the gaps/input line owns other
+devices and rebinding):
+
+| Control | Kind | Binding | Default |
+|---|---|---|---|
+| `forward`, `strafe` | Axis -1..1 | `ThirdPerson.forward`, `.strafe`: the move, in `frame` | W/S, D/A |
+| `frame` | Choice `camera` (default), `world`, `body` | `ThirdPerson.frame` | — |
+| `yaw` | Axis -pi..pi | `Walker.yaw`: the orbit's turn | the mouse |
+| `pitch` | Axis -1.55..1.55 | `Walker.pitch`: the orbit's tilt | the mouse |
+| `zoom` | Axis 0.5..2, default 1 | `ThirdPerson.zoom`: the arm's length over the rig's `distance_m` | the wheel, 10% a notch |
+| `run` | Toggle | `Walker.run`: sprint | Shift |
+| `guard` | Toggle (held) | `ThirdPerson.guard`: guard or aim, as the game's rules say | right button |
+| `jump`, `primary`, `secondary` | Pulse | `Walker.jump`, `.primary`, `.secondary` | Space, left button, E |
+| `dodge`, `interact` | Pulse | `ThirdPerson.dodge`, `.interact` | C, F |
+| `lock` | Pulse | `ThirdPerson.lock_toggle`: lock on to the best target in front, or let go | Q, middle button |
+| `lock_on` | Pulse, a target of any kind the perception declares | `ThirdPerson.lock_request` | — |
+| `interact_with` | Pulse, a target of any kind the perception declares | `ThirdPerson.interact_target` | — |
+| `held`, `pressed` | Axis 0..65535 | `Buttons` (animation.md 6): the game's other buttons | `[player] buttons` |
+
+- **One system turns the controls into the walker's.** `physics.third_person` (Control phase, after
+  `interface.intents`, so this tick's pulses are in) takes every walker with a `ThirdPerson`, in
+  `EntityId` order: it reads `facing`, the yaw of the first `Avatar` (by id) standing for the
+  walker, else the look's; settles the lock; while locked turns the look's yaw toward the target
+  at most `lock_turn_rate` (8 rad/s) so the camera swings behind the line to it; and writes
+  `Walker.forward` and `.strafe` as the move turned from its frame into the look's: `camera` as
+  given (W walks away from the camera), `world` with forward toward north (-z) and strafe toward
+  east (+x), so a percept's bearing b is `{forward: cos b, strafe: sin b}`, and `body` along the
+  body's facing. Rules in the Update phase therefore read the walker's controls as `physics.walk`
+  will use them; a third-person walker's `forward` and `strafe` are the engine's, not a rule's.
+- **The lock.** `lock_toggle` lets go of a lock, or picks among the entities with `Lockable`, other
+  than the walker and its avatars, within `lock_range_m` (20) of the eye, in front (the cosine of
+  the bearing off the look's yaw at least 0.2, or within 4 m), and in sight of the eye past fixed
+  colliders: the least `distance * (1.6 - cosine)`, the lower id on a tie. `lock_request` locks on
+  to its target if it is `Lockable`, and is ignored otherwise; it is applied after `lock_toggle`. A
+  lock ends when its target is gone, no longer `Lockable` (a game removes it from a fallen foe) or
+  farther than 1.5 times `lock_range_m`. Rules may set or clear `ThirdPerson.lock` themselves.
+- **Facing.** An avatar whose `facing` is `motion` faces its walker's lock while the walker is
+  locked and not running, its motion otherwise; `target` and `fixed` are unchanged, so an attack's
+  committed direction stays the rules'.
+- **The camera.** The rig's arm is `distance_m * zoom`, at least `min_distance_m`, shortened at
+  once to the first fixed collider its probe meets and lengthened again at `return_mps`: the
+  pull-in against level geometry is the rig's, in the tick. Everything above is world state and
+  enters the hash; every input that changes it is a recorded `player.act`.
+- **Presentation.** The window and the page draw the rig's camera between its last two ticks, as
+  every pose, and smooth its position with a time constant of 0.08 s (`Renderer::
+  set_camera_smoothing`; Unreal's camera lag), leaving the rotation exact; a jump of more than 8 m
+  (a respawn) is not smoothed. The smoothing is the presenter's alone: it never reaches the world,
+  so it changes no hash. They send the mouse's look as `set {yaw, pitch}` and, while the mouse is
+  still, take the game's camera look as their own (a lock turns it).
+- **Pulses** `dodge`, `interact`, `lock_toggle`, `lock_request` and `interact_target` are cleared
+  in the Finish phase of the tick they act in (`physics.walk.clear`), as the walker's are, so a rule
+  sees each once. `ThirdPerson` and `Lockable` are persisted and script-usable; a rule removes a
+  fallen foe's `Lockable` with `ctx.world.remove(e, "Lockable")`.
+- **Agents.** The seat is played over MCP, HTTP and the CLI like the others. Perception derives
+  `third_person.heading_deg` (the body's facing as a bearing; the instrument an affordance's
+  `facing` requirement reads as `heading_deg`), `third_person.look_deg` (the camera's) and
+  `third_person.locked`; a game names them as instruments. A game's affordances may pulse
+  `lock_on` or `interact_with` on its kinds, which validates the target through the seat's own
+  perception. No intents and no codes: what `primary`, `guard` or `interact` do is the game's.
+
+Example: `samples/thornkeep`.
 
 ## 6. Time
 

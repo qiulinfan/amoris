@@ -187,6 +187,12 @@ before. An attached entity is an ordinary instance whose `Transform` the simulat
   blow and falls by `shake_decay` a second; the camera trembles by its square, up to `shake_m`
   metres and `shake_rad` radians of look, along fixed sines of the clock's time, so a replay
   shakes the same.
+- The `third_person` action catalog (player.md 5.1, 2026-11-12) plays a walker with this body and
+  rig as a seat: its `ThirdPerson` turns camera-, world- or body-relative moves into the walker's,
+  scales the arm by `zoom`, and keeps a lock (`ThirdPerson.lock`, on an entity with `Lockable`)
+  that turns the walker's look toward its target, so the arm swings behind the line to it, and
+  that a `motion` avatar faces while its walker does not run. `look_at` stays for a game that
+  aims the arm itself.
 
 ## 7. Physics queries for scripts
 
