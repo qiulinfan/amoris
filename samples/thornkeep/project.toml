@@ -41,11 +41,22 @@ camera = "game"
 done_event = "keep.freed"
 controls = "WASD move · Mouse look · Shift sprint · LMB swing · E heavy · Space roll · RMB guard (parry on time) · Q lock · 1 bolt · 2 knives · 3 flask · Esc menu"
 buttons = [
-  { name = "dodge", keys = ["Space"] },
-  { name = "block", keys = ["MouseRight"] },
-  { name = "lock", keys = ["KeyQ", "MouseMiddle"] },
-  { name = "heavy", keys = ["KeyE"] },
-  { name = "bolt", keys = ["Digit1"] },
-  { name = "knives", keys = ["Digit2"] },
-  { name = "flask", keys = ["Digit3", "KeyC"] },
+  { name = "dodge", keys = ["Space", "PadEast"] },
+  { name = "block", keys = ["MouseRight", "PadL2"] },
+  { name = "lock", keys = ["KeyQ", "MouseMiddle", "PadR3"] },
+  { name = "heavy", keys = ["KeyE", "PadNorth"] },
+  { name = "bolt", keys = ["Digit1", "PadLeft"] },
+  { name = "knives", keys = ["Digit2", "PadRight"] },
+  { name = "flask", keys = ["Digit3", "KeyC", "PadWest"] },
+]
+
+# The browser's on-screen controls (docs/spec/input.md 5); a gamepad swings with RT by default.
+[player.touch]
+buttons = [
+  { label = "Swing", input = "primary" },
+  { label = "Roll", input = "dodge" },
+  { label = "Guard", input = "block" },
+  { label = "Heavy", input = "heavy" },
+  { label = "Lock", input = "lock" },
+  { label = "Flask", input = "flask" },
 ]
