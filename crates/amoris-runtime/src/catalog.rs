@@ -26,6 +26,7 @@ use crate::files::{ScriptReadParams, ScriptWriteParams};
 use crate::history::HistoryUndoParams;
 use crate::inspect::{WorldQueryParams, WorldSchemaParams, WorldTreeParams};
 use crate::saves::{SavesLoadParams, SavesWriteParams};
+use crate::scene_load::{SceneLoadParams, SceneLoadRecorded};
 use crate::scripts::{ScriptsApplyParams, ScriptsSwapParams};
 use crate::types::ScriptsTypesParams;
 
@@ -152,6 +153,24 @@ pub const CATALOG: &[CommandDef] = &[
          and with `others` the entities destroyed under it).",
         schema::<WorldEditParams>,
     ),
+    def(
+        "scene.load",
+        Kind::Write,
+        "Loads another scene file of the project at a boundary: replace (the default) despawns \
+         every entity and spawns the scene's; add spawns them beside the world's. Entity numbers \
+         in the file are its places; appends scene.loaded. Not undoable: clears the history.",
+        schema::<SceneLoadParams>,
+    ),
+    CommandDef {
+        host_only: true,
+        ..def(
+            "scene_load",
+            Kind::Write,
+            "scene.load's recorded form: the scene by the content hash of its bytes, which the \
+             recording keeps.",
+            schema::<SceneLoadRecorded>,
+        )
+    },
     def(
         "history.list",
         Kind::Read,

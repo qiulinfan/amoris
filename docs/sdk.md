@@ -237,6 +237,29 @@ ctx.world.insert(ball, "CollisionFilter", { groups: GHOST, mask: GHOST });
 - Ray casts, overlaps and sweeps (`ctx.physics`) pass through sensors.
 - Changing a filter takes effect at the next step without rebuilding the body.
 
+## Scenes
+
+A project starts with `scene.json` and may load other scene files (`scenes/level2.json`, the same
+format) while it runs:
+
+```ts
+// Declare events: ["scene.", "game.level_won"].
+for (const e of ctx.events) {
+    if (e.kind === "game.level_won") ctx.scene.load("scenes/level2.json");    // replace the world
+    if (e.kind === "scene.loaded") setUpLevel(e.data as { path: string });     // a tick after
+}
+ctx.scene.load("scenes/wave3.json", { mode: "add" });                        // spawn beside it
+```
+
+- The load happens at the boundary after this tick, not at the call; nothing happens if the
+  system throws. `replace` despawns every entity, the player's included: the next scene spawns
+  its own. The tick, the clock, the random streams and your scripts go on.
+- New entities take new ids (ids are never reused), so find them by name or by query, never by a
+  number. Inside a scene file an entity number is a place in that file, as in `scene.json`.
+- A file that is missing or does not load is a tick error (`amoris logs`) and the world stays.
+- From outside: `amoris call scene.load '{"path": "scenes/level2.json"}'` (MCP: `world` tool,
+  action `load`).
+
 ## Block volumes
 
 A `Voxels` entity holds a world of blocks in 16 x 16 x 16 chunks with a palette (index 0 is air);

@@ -38,6 +38,7 @@ pub mod profile;
 mod project;
 pub mod saves;
 mod scene;
+mod scene_load;
 pub mod script_profile;
 mod scripts;
 pub mod skipper;

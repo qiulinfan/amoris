@@ -85,6 +85,7 @@ files).
 | `world.schema` | read | `{component?}` | `[{name, origin, version, doc, schema}]`, or one |
 | `world.edit` | write | `{ops: [op], label?, group?}` | `{tick, applied, spawned: [id], results, label}`; all or nothing; consecutive edits of one `group` from one caller are one undo entry (3.1) |
 | `world_edit` | write | `{edits: [{op: ...}]}` | the canonical recorded form (below) |
+| `scene.load` | write | `{path, mode? = "replace"}` | `{path, mode, spawned, first, despawned}`: another scene file of the project spawned at this boundary, replacing the world's entities or beside them; not undoable, clears the history; recorded as `scene_load {path, mode, scene}` with the scene's bytes as the recording's data (simulation.md 7.6) |
 | `history.list` | read | `{}` | `{undo: [label], redo: [label], entries: {undo: [entry], redo: [entry]}}`: each stack most recent last (the next to undo or redo last), `entries` the same entries in the same order as `{label, source, group?, session?}` (3.1) |
 | `history.undo` / `history.redo` | write | `{group?}` / `{}` | as `world.edit`, with the entry's `label`; an undo with `group` only when the next entry is the whole of that group, else `history.group` (3.1) |
 | `time.control` (`time_control`) | control | `{pause?, speed?, pacing?}` | `status` |
@@ -453,7 +454,7 @@ parameters loosely and the runtime's decoder refuses unknown ones with suggestio
 
 | Tool | Actions -> methods |
 |---|---|
-| `world` | tree, get, query, schema, edit -> `world.*` |
+| `world` | tree, get, query, schema, edit -> `world.*`; load -> `scene.load` |
 | `scripts` | guide, list, read, write, apply, check, status, types -> `scripts.*` |
 | `time` | status -> `status`; pause, resume, speed -> `time.control`; step -> `time.step`; snapshots -> `snapshots.list`; rewind -> `snapshots.restore`; saves -> `saves.list`; save -> `saves.write`; load -> `saves.load`; profile -> `profile.frame` |
 | `play` | start, stop |
@@ -533,6 +534,7 @@ error exits 2. Every call waits 60 s at most (`--timeout <s>`, `AMORIS_TIMEOUT`)
 | `play.running`, `play.not_running` | `play.start` while playing; `play.stop` while editing |
 | `play.started`, `play.stopped`, `snapshots.restored`, `saves.loaded` | a waiting `time.step` whose world was replaced |
 | `snapshots.none` | no kept snapshot at or before the tick |
+| `scene.place_invalid` | an entity number in a loaded scene that is no place in its file (`path`, `place`, `entities`; simulation.md 7.6) |
 | `saves.not_found` | `saves.load` of a name with no save (`saves`, `suggestion?`) |
 | `saves.unwritable` | a save's folder or file could not be written or read (`path`, `error`) |
 | `sim.entity_alive` | a revive names a live id (simulation.md 11) |

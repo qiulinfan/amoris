@@ -573,6 +573,48 @@ Since committed ids only increase, inserting a spawned entity is a push that kee
 sorted; a despawn marks its slot, and `sim.finish` compacts the vector once per tick. Lookup by id
 is a binary search. Restore and fork rebuild the index in one sorted pass.
 
+### 7.6 Loading a scene at run time
+
+A project may hold more scene files than `scene.json` (`scenes/level2.json`); the game starts with
+`scene.json` and loads another at a boundary (2026-11-12):
+
+- **`scene.load {path, mode}`** (server.md 3), a Write. `path` is a `.json` file inside the project
+  (`request.invalid_value` otherwise); it is read, checked as a scene and its cells files resolved
+  into it, as `scene.json` is. `mode: "replace"` (the default) spawns the scene's entities and then
+  despawns every entity that was there before, in id order, each with what is under it; `"add"`
+  spawns them beside the world's. The scene is spawned and checked whole first, so a refused
+  load (`project.missing_file`, a bad component, `scene.place_invalid`) changes nothing.
+- **Ids.** Ids are never reused (7.2), so a loaded scene's entities take the allocator's next ids,
+  in file order. An entity number inside a component is the place of an entity in the file
+  (7.4), rewritten to the id that entity was spawned with, by the same walk over project schemas
+  and engine JSON Schemas as `project.save`; a number past the file is `scene.place_invalid
+  {path, place, entities}`. A name inside a value resolves against the world as the load finds it,
+  old entities included, so a loaded scene names its own entities by place.
+- **What stays.** The tick, the clock, the seed and the random streams, the events, the scripts
+  and the persisted resources (players' declarations among them) are the world's, not the
+  scene's: a load replaces entities, never the run. A replaced body's contacts end at the next
+  step, as a despawn's do.
+- **Events and history.** The load appends `scene.loaded {path, mode, entities}`, which systems
+  that declare `scene.` read in the next tick. It is not undoable, and it clears the history, whose
+  entries named a world a replace has despawned.
+- **Scripts.** `ctx.scene.load(path, {mode})` stages `scene.load_requested {path, mode}`, an
+  event of the engine's (the `scene.` prefix is reserved), committed with the call's other
+  commands, so a system that throws asks for nothing. After the tick, before anything else happens
+  at that boundary, the game applies a Host `scene.load` for each request of the tick in event
+  order; a refused one joins the tick's report as an error and the world stays.
+- **Determinism and replays.** A load is recorded as `scene_load {path, mode, scene}`, `scene` the
+  content hash (context `Amoris loaded scene v1`) of the scene's canonical JSON as it was read,
+  and the recorder keeps those bytes as data (replay.md 2.4, Data). A replay, which applies the
+  recorded writes and therefore does not apply the script's requests again, spawns the recorded
+  bytes and never reads the file: a scene changed or deleted on disk after a run does not change
+  its replay, a fork made before the load loads the same file the same way, and the world hash
+  after the load follows from the bytes. `scene_load` is the host's: sent by anyone else it is
+  `command.host_only`.
+- **Not built.** Loading from the browser (its package carries `scene.json` alone; the worker
+  answers `project.no_root`), a scene that keeps chosen entities across a replace (a player
+  carried into the next level is spawned again by the next scene, or `add`ed into), and unloading
+  what an `add` brought in other than by despawning it.
+
 ## 8. Iteration order
 
 ### 8.1 The rule
@@ -840,6 +882,11 @@ what tick semantics add.
     group, standing inside says nothing, a despawned sensor is left) and amoris-runtime's
     `tests/sensors.rs` (a script's sensor, its events and a filter written from a script; the
     walker's `SensorOverlaps` through a snapshot, a fork and a replay).
+13. **Scenes loaded at run time** (7.6): amoris-runtime's `tests/scenes.rs` (`replace` and `add`
+    with the file's places renumbered to the new ids, `scene.loaded`, the cleared history; every
+    refusal changes nothing; a script's load applied after its tick, a fork, and a recording that
+    replays identically after the file is deleted, while the same request with the file gone is a
+    tick error).
 
 ## 13. Performance
 

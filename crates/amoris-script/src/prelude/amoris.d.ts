@@ -148,7 +148,7 @@ export interface GameEvent {
 	readonly data: Data;
 }
 /** Event kind prefixes the engine reserves. */
-export type ReservedEventPrefix = "entity" | "component" | "script" | "scripts" | "sim" | "intent" | "contact" | "physics" | "interface" | "time" | "decision" | "perception";
+export type ReservedEventPrefix = "entity" | "component" | "script" | "scripts" | "sim" | "intent" | "contact" | "physics" | "interface" | "time" | "decision" | "perception" | "scene";
 type LowerLetter = "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j" | "k" | "l" | "m" | "n" | "o" | "p" | "q" | "r" | "s" | "t" | "u" | "v" | "w" | "x" | "y" | "z";
 type WordChar = LowerLetter | "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "_";
 type WordTail<S extends string> = S extends `${infer C}${infer R}` ? C extends WordChar ? WordTail<R> : false : true;
@@ -261,6 +261,19 @@ export interface PhysicsAccess {
 	sweep(from: Triple, to: Triple, radius: number, options?: PhysicsOptions): PhysicsHit | null;
 	/** The entities a ball overlaps, ascending by id. */
 	sphere(center: Triple, radius: number, options?: PhysicsOptions): readonly Entity[];
+}
+/** The project's scene files (docs/sdk.md, Scenes). */
+export interface SceneAccess {
+	/**
+	* Loads a scene file of the project (`"scenes/two.json"`) at the boundary after this tick:
+	* `replace` (the default) despawns every entity and spawns the scene's, `add` spawns them
+	* beside the world's. Nothing happens if the system throws. The next tick's
+	* `scene.loaded {path, mode, entities}` says it was loaded; a load refused (no such file)
+	* is a tick error.
+	*/
+	load(path: string, options?: {
+		readonly mode?: "replace" | "add";
+	}): void;
 }
 /** Navigation over a `NavGrid`'s walkable floors (docs/spec/animation.md 8). */
 export interface NavAccess {
@@ -423,6 +436,8 @@ export interface SystemContext {
 	readonly anim: AnimAccess;
 	/** Paths over navigation grids. */
 	readonly nav: NavAccess;
+	/** Scene files to load after the tick. */
+	readonly scene: SceneAccess;
 }
 /** A field's type as scripts see it (script-host.md 6). */
 export type FieldType = "f64" | "i32" | "u32" | "tick" | "bool" | "str" | "entity" | "vec2" | "vec3" | "vec4" | "quat" | "enum";

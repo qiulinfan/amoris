@@ -863,7 +863,8 @@ a `ctx` over a snapshot exported as JSON [persist] (not in slice 1).
     (`script.bad_definition`). `ctx.part.entity(e)` is a frozen `{__amorisEntityPart: e}`; a forged
     one names the same stream, which is harmless. The reserved event prefixes are `entity.`,
     `component.`, `script.`, `scripts.`, `sim.`, `intent.`, `contact.`, `physics.`, `interface.`,
-    `time.`, `decision.` and `perception.`.
+    `time.`, `decision.`, `perception.` and, since 2026-11-12, `scene.` (simulation.md 7.6: the
+    engine's `scene.loaded`, and `scene.load_requested`, which `ctx.scene.load` stages).
 13. **Slice 1: crate edges.** `amoris-script` links `amoris-sim`, `amoris-contract`, `bevy_ecs`
     (architecture.md 6), `rquickjs`, `serde` and `serde_json`, and oxc under `transpile`; its edges
     to `amoris-physics` and `amoris-interface` stay unused until physics queries and perception for

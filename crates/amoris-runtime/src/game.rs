@@ -36,6 +36,7 @@ use crate::inspect::{self, WorldQueryParams, WorldSchemaParams, WorldTreeParams}
 use crate::project::GameSetup;
 use crate::saves::{self, SavesLoadParams, SavesWriteParams};
 use crate::scene::Scene;
+use crate::scene_load::{self, SceneLoadParams, SceneLoadRecorded};
 use crate::scripts::{
     self, ScriptsApplyParams, ScriptsSwapParams, bundle_record, compiled_from_record,
 };
@@ -188,6 +189,9 @@ pub struct Game {
     player: Controller,
     /// The wall clock the players' session reads (the game thread's), if any.
     wall: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
+    /// A replay's stepper: the scene loads its scripts ask for are the recording's writes, so
+    /// a tick does not apply them again ([`Game::poll_step_with`]).
+    replay: bool,
 }
 
 /// A player's `wait` the game thread drives (`Game::begin_player_wait`).
@@ -307,6 +311,7 @@ impl Game {
             history: History::default(),
             diagnostics: Vec::new(),
             tainted: None,
+            replay: false,
         })
     }
 
@@ -946,6 +951,15 @@ impl Game {
             "history.redo" => {
                 decode::<NoParams>(&cmd.params, name).and_then(|_| self.undo_redo(false, None))
             }
+            "scene.load" | "scene_load" => {
+                self.scene_load(cmd, name, src)
+                    .map(|(result, canonical)| Written {
+                        result,
+                        canonical,
+                        recorded: "scene_load",
+                        history: None,
+                    })
+            }
             "scripts.swap" => self
                 .swap(&cmd.params, src)
                 .map(|(result, canonical)| Written {
@@ -1010,6 +1024,37 @@ impl Game {
                 Err(p)
             }
         }
+    }
+
+    /// `scene.load {path, mode}` read from the project, or its recorded form `scene_load {path,
+    /// mode, scene}` with the bytes from the recording's data (simulation.md 7.6): the scene
+    /// spawned at this boundary. The recorder gets the bytes before the write, and the history
+    /// is cleared: the edits it holds named a world the load may have replaced.
+    fn scene_load(
+        &mut self,
+        cmd: &Command,
+        name: &str,
+        src: &dyn ReplaySource,
+    ) -> Result<(Value, Value), Problem> {
+        let (scene, path, mode, hash) = if name == "scene_load" {
+            let p: SceneLoadRecorded = decode(&cmd.params, name)?;
+            let hash = ContentHash::from_hex(&p.scene).ok_or_else(|| bad_hash(&p.scene))?;
+            let bytes = src
+                .data(&hash)
+                .ok_or_else(|| amoris_persist::error::data_unavailable(&p.scene, &p.path))?;
+            (scene_load::from_bytes(&bytes)?, p.path, p.mode, hash)
+        } else {
+            let p: SceneLoadParams = decode(&cmd.params, name)?;
+            let (scene, bytes, hash) = scene_load::read(self.root(name)?, &p.path)?;
+            if let Some(r) = &mut self.recorder {
+                r.data(hash, &bytes);
+            }
+            (scene, p.path, p.mode, hash)
+        };
+        let result = scene_load::apply(&mut self.sim.boundary(), &scene, &path, mode)?;
+        self.history.clear();
+        let canonical = json!({"path": path, "mode": mode, "scene": hash.to_hex()});
+        Ok((result, canonical))
     }
 
     /// `scripts.swap {bundle}` (hot-update.md 5): the prepared bundle, one this game has, or one a
@@ -1420,12 +1465,15 @@ impl Game {
             }
         }
         match stepped {
-            Ok(std::task::Poll::Ready(r)) => {
+            Ok(std::task::Poll::Ready(mut r)) => {
                 self.writes = 0;
                 self.clear_boundary_log();
                 self.sync_context();
                 if let Some(rec) = &mut self.recorder {
                     rec.end_tick(self.sim.world())?;
+                }
+                if !self.replay {
+                    self.load_requested_scenes(&mut r);
                 }
                 Ok(std::task::Poll::Ready(r))
             }
@@ -1441,6 +1489,20 @@ impl Game {
                     rec.fault(poison.tick, &system, &p.code);
                 }
                 Err(p)
+            }
+        }
+    }
+
+    /// The scenes the tick's scripts asked for (`ctx.scene.load`, its `scene.load_requested`
+    /// events), each loaded at the boundary after the tick by a Host `scene.load` write, in the
+    /// order asked (simulation.md 7.6). A load refused (no such file, a bad scene) changes nothing
+    /// and joins the tick's report as an error.
+    fn load_requested_scenes(&mut self, report: &mut StepReport) {
+        for params in scene_load::requested(&report.events) {
+            let seq = self.next_host_seq();
+            let cmd = Command::new(Source::Host, seq, "scene.load", params);
+            if let Err(p) = self.apply(&cmd) {
+                report.errors.push(p);
             }
         }
     }
@@ -1670,7 +1732,9 @@ impl Game {
             player: None,
             animation,
         };
-        configure(GameBuilder::new(Arc::new(setup))).build_empty(&set)
+        let mut g = configure(GameBuilder::new(Arc::new(setup))).build_empty(&set)?;
+        g.replay = true;
+        Ok(g)
     }
 
     /// The bundle record of a bundle this game has.
