@@ -76,6 +76,7 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
         .component::<Collider>()
         .component::<CollisionFilter>()
         .component::<crate::sensors::SensorOverlaps>()
+        .component::<crate::joints::Joint>()
         .component::<ExternalForce>()
         .component::<Floater>()
         .component::<crate::vessel::Vessel>()
@@ -578,6 +579,16 @@ impl Persisted for Collider {
     fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
         t.trace_type::<PartShape>(s)?;
         t.trace_type::<Shape>(s)?;
+        t.trace_type::<Self>(s).map(|_| ())
+    }
+}
+
+impl Persisted for crate::joints::Joint {
+    const NAME: &'static str = "Joint";
+    const VERSION: u32 = 1;
+
+    fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
+        t.trace_type::<crate::joints::JointKind>(s)?;
         t.trace_type::<Self>(s).map(|_| ())
     }
 }

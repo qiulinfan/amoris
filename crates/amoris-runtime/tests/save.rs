@@ -185,6 +185,7 @@ fn the_engine_components_that_hold_entity_ids() {
                 "Board",
                 "CameraRig",
                 "Controls",
+                "Joint",
                 "ObserverEvents",
                 "Parent",
                 "SensorOverlaps",

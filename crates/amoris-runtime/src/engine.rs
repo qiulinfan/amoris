@@ -93,7 +93,7 @@ where
 /// Every engine component a scene or `world_edit` can name (`Name` is the entity's own `name`);
 /// the first three are the player layer's (perception.md: who observes, what can be perceived,
 /// what blocks sight).
-pub fn engine_components() -> [EngineComponent; 51] {
+pub fn engine_components() -> [EngineComponent; 52] {
     [
         entry::<amoris_interface::perception::Observer>(),
         entry::<amoris_interface::perception::Perceivable>(),
@@ -116,6 +116,7 @@ pub fn engine_components() -> [EngineComponent; 51] {
         entry::<Collider>(),
         entry::<CollisionFilter>(),
         entry::<SensorOverlaps>(),
+        entry::<amoris_physics::Joint>(),
         entry::<ExternalForce>(),
         entry::<Floater>(),
         entry::<Hull>(),
@@ -2002,6 +2003,7 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
         Some(bodies::collision_filter_schema()?),
     )?;
     ComponentRegistry::register::<SensorOverlaps>(world, None)?;
+    ComponentRegistry::register::<amoris_physics::Joint>(world, Some(bodies::joint_schema()?))?;
     ComponentRegistry::register::<ExternalForce>(world, Some(bodies::external_force_schema()?))?;
     ComponentRegistry::register::<Floater>(world, None)?;
     ComponentRegistry::register::<Vessel>(world, None)?;

@@ -203,8 +203,34 @@ bodies.cols.ExternalForce.force.x[r] += 6 / ctx.dt;  // an impulse of 6 N s
 - Contacts arrive a tick later: declare `events: ["physics."]` and read `physics.contact_began` and
   `physics.contact_ended` from `ctx.events`, `subject` the lower id, `data.other` the other.
 - Limits: no continuous collision detection, so a small fast body passes through a thin one (keep
-  `ctx.physics.sweep` for bullets); no joints or kinematic bodies; a `Walker` stands on fixed
-  colliders only, and dynamic bodies neither block nor push it.
+  `ctx.physics.sweep` for bullets); no kinematic bodies; a `Walker` stands on fixed colliders
+  only, and dynamic bodies neither block nor push it.
+
+### Joints
+
+A `Joint` on a body's entity ties it to another body (both have a `Transform` and a `Collider`):
+
+```ts
+const post = ctx.world.spawn({ Transform: { position: { y: 5 } }, Collider: { kind: "Ball", radius: 0.1 } });
+const bob = ctx.world.spawn({
+    Transform: { position: { x: 2, y: 5 } }, Velocity: {}, RigidBody: { kind: "Dynamic" },
+    Collider: { kind: "Ball", radius: 0.2, density: 500 },
+    Joint: { kind: "Spherical", with: post, anchor: { x: -2 } },  // a 2 m rope
+});
+// A door hinged at its edge about +y, opening at most a quarter turn either way:
+// Joint: { kind: "Revolute", with: frame, anchor: { x: -0.5 }, axis: { y: 1 },
+//          limited: true, min: -1.57, max: 1.57 }
+```
+
+- Kinds: `Fixed` welds, `Revolute` turns about `axis`, `Prismatic` slides along `axis`,
+  `Spherical` turns every way. `anchor` is in this body's frame, `other_anchor` in the other's;
+  `limited` with `min` and `max` bounds the turn (radians) or the slide (metres).
+- The two bodies stop colliding with each other unless `contacts: true`.
+- Rotations line up the bodies' own frames: a `Fixed` joint keeps the two turned alike, so place
+  them turned alike.
+- One joint per entity; a chain puts each link's joint on the link. A joint that cannot be built
+  (to itself, to an entity without a body, a zero axis) is reported by `physics.step` as
+  `sim.joint_invalid` every tick until mended. Remove the `Joint` to free the body.
 
 ### Sensors and collision groups
 

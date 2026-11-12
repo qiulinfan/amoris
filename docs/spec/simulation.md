@@ -716,6 +716,31 @@ meets every group (`groups` and `mask` are 32-bit masks, default all bits).
 - A world without a `CollisionFilter` builds every collider as before, and `SensorOverlaps` has no
   row, so its snapshots, hashes and recorded chains are unchanged.
 
+**Joints** (2026-11-12). `Joint {kind, with, anchor, other_anchor, axis, limits, contacts}` on a
+body's entity ties its body to the body on `with` with one of Rapier's impulse joints: `Fixed`
+(the two move as one), `Revolute` (a turn about `axis`), `Prismatic` (a slide along `axis`) or
+`Spherical` (a turn every way about the anchor). The anchors are points in each body's own frame,
+`axis` is in this body's frame (normalized with `amoris_sim::math::sqrt` before the solver gets
+it), `limits` bounds the turn (radians) or travel (metres) from the frames' alignment, and
+`contacts` says whether the two bodies still collide (default no). The joint frames' rotations are
+the identity, so a `Fixed` joint keeps the two bodies turned alike and a hinge's turn is measured
+from that alignment.
+
+- `physics.step` syncs the joints after the bodies, in `EntityId` order: a solver joint whose
+  entity lost its `Joint`, whose `Joint` changed, or whose bodies were rebuilt or removed (Rapier
+  removes a body's joints with it) is removed, then the missing ones are inserted. Each solver
+  joint carries its entity in the low 64 bits of its `user_data` and a hash of its `Joint` in the
+  high 64, inside the physics cache, as bodies do: nothing derived is rebuilt after a restore, and
+  a changed `Joint` is seen by any route without change detection.
+- A joint that cannot be built (`with` its own entity, either entity without a body, a zero or
+  non-finite axis for the kinds that use one, limits not finite or upside down) is not built and
+  `physics.step` reports `sim.joint_invalid {entity, reason}` every tick until a write mends it.
+- One `Joint` per entity: a body held by two joints (a door on two hinges, a chain link held
+  from both ends) has the second on the other body's entity. Multibody (reduced-coordinate)
+  joints, motors and breaking forces are not built.
+- A world without a `Joint` has no solver joint, so its snapshots, hashes and chains are
+  unchanged.
+
 ## 9. Why this is deterministic
 
 | Source of nondeterminism | How it is closed |
@@ -887,6 +912,12 @@ what tick semantics add.
     refusal changes nothing; a script's load applied after its tick, a fork, and a recording that
     replays identically after the file is deleted, while the same request with the file gone is a
     tick error).
+14. **Joints** (8.5): amoris-physics' `tests/joints.rs` (a pendulum keeps its length and falls away
+    once its `Joint` is removed; a hinged door turns within its limits about its hinge; a slider
+    keeps to its axis and stops at its travel; welded boxes fall as one and a lengthened weld is
+    rebuilt; each refusal is reported every tick) and amoris-runtime's `tests/joints.rs` and
+    `engine/bodies.rs` tests (a scene's hinge and a script's pendulum, a script's `with` of none
+    refused, the slots round trip; a recording, a fork and a restore through a changed joint).
 
 ## 13. Performance
 

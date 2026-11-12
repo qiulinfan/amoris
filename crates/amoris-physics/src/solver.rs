@@ -4,7 +4,8 @@
 //!
 //! `physics.step` syncs the bodies in from their components in `EntityId` order (new bodies made,
 //! gone ones removed, changed ones rebuilt, moved ones teleported, a changed `CollisionFilter` set
-//! on the built collider in place), applies each body's
+//! on the built collider in place, then the joints synced to the bodies as built, `crate::joints`),
+//! applies each body's
 //! `ExternalForce` after resetting Rapier's user forces, steps once, and writes `Transform`,
 //! `Velocity` and the boats' readings back in `EntityId` order. Each body carries its entity in
 //! the low 64 bits of its `user_data` and a hash of its `RigidBody` and `Collider` in the high 64
@@ -550,6 +551,7 @@ pub(crate) fn step(
     mut loose: Query<(&EntityId, &mut ExternalForce), Without<Collider>>,
     volumes: Query<(&EntityId, &Voxels, Option<&Transform>), Without<Collider>>,
     clad: Query<(&EntityId, &Voxels), With<Collider>>,
+    joints: Query<(&EntityId, &crate::joints::Joint)>,
     rebuilt: Option<ResMut<RebuiltSolver>>,
 ) {
     let key = SystemKey::new("physics.step").ok();
@@ -723,6 +725,10 @@ pub(crate) fn step(
         }
     }
     index.entries = entries;
+    // 2b. The joints, between the bodies as now built.
+    let wanted: Vec<(EntityId, &crate::joints::Joint)> =
+        by_id(&joints).map(|(id, j)| (*id, j)).collect();
+    crate::joints::sync(world, &index, &wanted, &mut report);
     // A force gathered on an entity without a collider has no body to act on; it does not carry
     // over to the next tick either.
     for (_, mut f) in by_id_mut(&mut loose) {

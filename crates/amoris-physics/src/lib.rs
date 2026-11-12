@@ -14,7 +14,8 @@
 //! - **Determinism**: every force is `+ - * /`, `sqrt` and `amoris_sim::math`; `f64` components
 //!   meet the `f32` solver only in `physics.step` ([`geom::f32_of`]); a dynamic hull, mesh or
 //!   compound states its mass properties instead of a density ([`body::validate`],
-//!   `sim.collider_density`); there are no joints and no continuous collision detection.
+//!   `sim.collider_density`); joints are Rapier's impulse joints ([`joints`]); there is no
+//!   continuous collision detection.
 //! - **Block volumes** ([`volumes`]): each chunk of a `Voxels` holding a solid cell is a fixed
 //!   collider of its solid cells, which bodies land on and queries meet (voxels.md 5.1).
 //! - **Queries** ([`query`]): ray casts, overlaps, the water and the wind at a point.
@@ -32,6 +33,7 @@ pub mod body;
 mod cache;
 mod forces;
 pub mod geom;
+pub mod joints;
 pub mod nav;
 pub mod probe;
 pub mod query;
@@ -58,6 +60,7 @@ pub use body::{
 };
 pub use cache::{IDENTITY, PhysicsCache, declare};
 pub use forces::start_time;
+pub use joints::{Joint, JointKind};
 pub use sea::{GRAVITY, Rain, Sea, SeaLook, Water, Wave, WaveField, Wind};
 pub use sensors::SensorOverlaps;
 pub use solver::{BodyIndex, ContactLog, Physics, RebuiltSolver};
@@ -97,6 +100,7 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     ComponentRegistry::register::<Collider>(w, None)?;
     ComponentRegistry::register::<CollisionFilter>(w, None)?;
     ComponentRegistry::register::<SensorOverlaps>(w, None)?;
+    ComponentRegistry::register::<Joint>(w, None)?;
     ComponentRegistry::register::<ExternalForce>(w, None)?;
     ComponentRegistry::register::<Floater>(w, None)?;
     ComponentRegistry::register::<Vessel>(w, None)?;

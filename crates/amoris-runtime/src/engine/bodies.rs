@@ -20,7 +20,8 @@
 
 use amoris_contract::Problem;
 use amoris_physics::{
-    BodyKind, Collider, CollisionFilter, ExternalForce, MassProps, RigidBody, Shape,
+    BodyKind, Collider, CollisionFilter, ExternalForce, Joint, JointKind, MassProps, RigidBody,
+    Shape,
 };
 use amoris_script::{EngineFns, SlotRefusal, register_engine, register_engine_rule};
 use amoris_sim::Persisted;
@@ -203,6 +204,67 @@ pub(super) fn collision_filter_schema() -> Result<ComponentSchema, Problem> {
     )
 }
 
+/// `Joint.kind`'s variants in slot order: `JointKind`'s JSON names.
+const JOINT_KINDS: [&str; 4] = ["Fixed", "Revolute", "Prismatic", "Spherical"];
+
+pub(super) fn joint_schema() -> Result<ComponentSchema, Problem> {
+    let v = |name, value, doc| (name, FieldType::Vec3, FieldValue::Vec3(value), doc);
+    let f = |name, doc| (name, FieldType::F64, FieldValue::F64(0.0), doc);
+    schema(
+        "Joint",
+        Joint::VERSION,
+        "Ties the body on this entity to the body on `with` (both need a Transform and a \
+         Collider): Fixed moves them as one, Revolute turns about `axis`, Prismatic slides along \
+         it, Spherical turns every way about the anchor. Anchors and axis are in each body's \
+         own frame; a Fixed joint keeps the two turned alike. The solver's joint is rebuilt when \
+         this changes.",
+        vec![
+            (
+                "kind",
+                FieldType::Enum(JOINT_KINDS.map(Box::from).into()),
+                FieldValue::Enum(0),
+                "Fixed, Revolute, Prismatic or Spherical.",
+            ),
+            (
+                "with",
+                FieldType::Entity,
+                FieldValue::Entity(None),
+                "The other body's entity.",
+            ),
+            v(
+                "anchor",
+                [0.0; 3],
+                "The joint in this body's frame, metres.",
+            ),
+            v(
+                "other_anchor",
+                [0.0; 3],
+                "The joint in the other body's frame, metres.",
+            ),
+            v(
+                "axis",
+                [1.0, 0.0, 0.0],
+                "A Revolute joint's turning axis or a Prismatic joint's sliding axis, in this \
+                 body's frame; not zero.",
+            ),
+            (
+                "limited",
+                FieldType::Bool,
+                FieldValue::Bool(false),
+                "Whether min and max limit the turn (radians) or the travel (metres).",
+            ),
+            f("min", "The least turn or travel, when limited."),
+            f("max", "The most turn or travel, when limited."),
+            (
+                "contacts",
+                FieldType::Bool,
+                FieldValue::Bool(false),
+                "Whether the two bodies still collide with each other.",
+            ),
+        ],
+    )
+}
+
 pub(super) fn external_force_schema() -> Result<ComponentSchema, Problem> {
     let v = |name, doc| (name, FieldType::Vec3, FieldValue::Vec3([0.0; 3]), doc);
     schema(
@@ -377,6 +439,81 @@ fn collision_filter_fns() -> EngineFns<CollisionFilter> {
     }
 }
 
+fn joint_read(j: &Joint) -> ProjectValues {
+    let kind = match j.kind {
+        JointKind::Fixed => 0.0,
+        JointKind::Revolute => 1.0,
+        JointKind::Prismatic => 2.0,
+        JointKind::Spherical => 3.0,
+    };
+    let [lo, hi] = j.limits.unwrap_or([0.0, 0.0]);
+    let (a, o, x) = (j.anchor, j.other_anchor, j.axis);
+    nums(&[
+        kind,
+        j.with.to_f64(),
+        a[0],
+        a[1],
+        a[2],
+        o[0],
+        o[1],
+        o[2],
+        x[0],
+        x[1],
+        x[2],
+        if j.limits.is_some() { 1.0 } else { 0.0 },
+        lo,
+        hi,
+        if j.contacts { 1.0 } else { 0.0 },
+    ])
+}
+
+fn joint_write(j: &mut Joint, v: &ProjectValues) {
+    let n = &v.nums;
+    j.kind = match index(n[0]) {
+        1 => JointKind::Revolute,
+        2 => JointKind::Prismatic,
+        3 => JointKind::Spherical,
+        _ => JointKind::Fixed,
+    };
+    // The slot rule refuses a slot of 0 before anything is staged.
+    if let Ok(with) = amoris_sim::EntityId::from_f64(n[1]) {
+        j.with = with;
+    }
+    j.anchor = v3(n, 2);
+    j.other_anchor = v3(n, 5);
+    j.axis = v3(n, 8);
+    j.limits = (n[11] != 0.0).then_some([n[12], n[13]]);
+    j.contacts = n[14] != 0.0;
+}
+
+fn joint_fns() -> EngineFns<Joint> {
+    EngineFns {
+        read: joint_read,
+        write: joint_write,
+        make: |v| {
+            let mut j = Joint::new(JointKind::Fixed, amoris_sim::EntityId::FIRST);
+            joint_write(&mut j, v);
+            j
+        },
+    }
+}
+
+/// `Joint`'s slot rule: a joint names its other body (a `with` of 0 is none).
+fn joint_rule(
+    _before: Option<&ProjectValues>,
+    after: &mut ProjectValues,
+) -> Result<(), SlotRefusal> {
+    if after.nums[1] == 0.0 {
+        return Err(SlotRefusal {
+            field: "with",
+            message: "Joint.with is none: a joint ties this body to another body's entity; \
+                      remove the Joint to free the body."
+                .to_owned(),
+        });
+    }
+    Ok(())
+}
+
 fn external_force_fns() -> EngineFns<ExternalForce> {
     EngineFns {
         read: |c| {
@@ -508,6 +645,8 @@ pub(super) fn register(world: &mut World) -> Result<(), Problem> {
     register_engine::<RigidBody>(world, rigid_body_fns())?;
     register_engine::<Collider>(world, collider_fns())?;
     register_engine::<CollisionFilter>(world, collision_filter_fns())?;
+    register_engine::<Joint>(world, joint_fns())?;
+    register_engine_rule::<Joint>(world, joint_rule)?;
     register_engine::<ExternalForce>(world, external_force_fns())?;
     register_engine_rule::<RigidBody>(world, rigid_body_rule)?;
     register_engine_rule::<Collider>(world, collider_rule)
@@ -1027,5 +1166,46 @@ mod tests {
             shared(&ExternalForce::default(), &external_force_schema().unwrap()),
             ["force", "torque"]
         );
+        let joint = Joint::new(JointKind::Revolute, amoris_sim::EntityId::FIRST);
+        assert_eq!(
+            shared(&joint, &joint_schema().unwrap()),
+            ["kind", "with", "anchor", "other_anchor", "axis", "contacts"]
+        );
+    }
+
+    /// Every joint reads back as it was through its slots, limits and kinds included, and the
+    /// slot rule refuses a joint to nothing.
+    #[test]
+    fn joints_round_trip_through_their_slots() {
+        let with = amoris_sim::EntityId::new(7).unwrap();
+        let schema = joint_schema().unwrap();
+        let fns = joint_fns();
+        for kind in [
+            JointKind::Fixed,
+            JointKind::Revolute,
+            JointKind::Prismatic,
+            JointKind::Spherical,
+        ] {
+            for limits in [None, Some([-0.25, 1.5])] {
+                let j = Joint {
+                    anchor: [0.5, -1.0, 2.0],
+                    other_anchor: [0.0, 0.25, 0.0],
+                    axis: [0.0, 0.0, 1.0],
+                    limits,
+                    contacts: limits.is_some(),
+                    ..Joint::new(kind, with)
+                };
+                let v = (fns.read)(&j);
+                assert_eq!(v.nums.len(), usize::from(schema.slots()));
+                assert_eq!((fns.make)(&v), j);
+                let mut back = j;
+                (fns.write)(&mut back, &v);
+                assert_eq!(back, j);
+            }
+        }
+        let mut none = (fns.read)(&Joint::new(JointKind::Fixed, with));
+        none.nums[1] = 0.0;
+        let refused = joint_rule(None, &mut none).unwrap_err();
+        assert_eq!(refused.field, "with");
     }
 }
