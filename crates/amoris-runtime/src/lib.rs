@@ -48,6 +48,7 @@ mod stirs;
 #[cfg(feature = "thread")]
 pub mod thread;
 pub mod types;
+pub mod ui;
 mod values;
 pub mod version;
 pub mod voxel_file;

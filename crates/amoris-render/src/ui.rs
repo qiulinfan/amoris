@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use amoris_assets::frame::UiView;
+use amoris_assets::frame::{UiKind, UiView};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 
@@ -222,8 +222,12 @@ impl Ui {
         ];
         let items = std::mem::take(&mut self.items);
         for it in &items {
+            // Images, buttons and stacks are not drawn yet.
+            if !matches!(it.kind, UiKind::Text | UiKind::Bar) {
+                continue;
+            }
             let px = (it.size[1] * s).round().max(4.0) as u32;
-            let (bw, bh) = if it.bar {
+            let (bw, bh) = if it.is_bar() {
                 (it.size[0] * s, it.size[1] * s)
             } else {
                 (self.text_width(&it.text, px), px as f32)
@@ -248,7 +252,7 @@ impl Ui {
                     ay * (h - bh) + it.offset[1] * s * sy,
                 )
             };
-            if it.bar {
+            if it.is_bar() {
                 quad(&mut verts, bx, by, bx + bw, by + bh, white, it.back);
                 let inset = s.max(1.0);
                 let fw = (bw - 2.0 * inset) * it.fill.clamp(0.0, 1.0);

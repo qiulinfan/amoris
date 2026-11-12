@@ -137,7 +137,7 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "player",
         "player.observe",
-        "amoris player observe | describe | act | wait | nearby | events | affordances | intents | continue | session | pacing ['<json params>'] [--seat <seat>] [--ticks n]   (--seat plays as that seat; act also takes '[actions]')",
+        "amoris player observe | describe | act | wait | nearby | events | affordances | intents | continue | session | pacing | ui | press <entity> ['<json params>'] [--seat <seat>] [--ticks n]   (--seat plays as that seat; act also takes '[actions]'; ui lists the game UI on the screen, press presses one of its buttons)",
     ),
     ("help", "", "amoris help [command|method]"),
 ];
@@ -908,13 +908,14 @@ fn request(cmd: &str, args: &Args) -> Result<(String, Value), Problem> {
     Ok((method.to_owned(), Value::Object(p)))
 }
 
-/// The `player` tool's actions (`amoris-mcp`'s, the `player.*` catalog methods).
-const PLAYER_ACTIONS: [&str; 15] = amoris_mcp::tools::PLAYER_ACTIONS;
+/// The `player` tool's actions (`amoris-mcp`'s: the `player.*` catalog methods and the UI's).
+const PLAYER_ACTIONS: [&str; 17] = amoris_mcp::tools::PLAYER_ACTIONS;
 
 /// `amoris player <action> ['<json params>'] [--seat s]` (docs/spec/player.md): a `player.*`
 /// method. Observations, nearby percepts, events and a described entity come as their text
 /// projection unless `--json` or the parameters ask otherwise; `act` also takes the actions alone
-/// (`amoris player act '[{"do": "start", ...}]'`).
+/// (`amoris player act '[{"do": "start", ...}]'`), and `press` a button's id or name alone
+/// (`amoris player press Start`, the UI's `ui.press`; `ui` is `ui.list`).
 fn player_request(args: &Args) -> Result<(String, Value), Problem> {
     let action = pos(args, 0).unwrap_or("observe");
     if !PLAYER_ACTIONS.contains(&action) {
@@ -925,6 +926,13 @@ fn player_request(args: &Args) -> Result<(String, Value), Problem> {
         ));
     }
     let mut p = match pos(args, 1) {
+        // `amoris player press Start`: the button by id or name.
+        Some(text) if action == "press" && !text.trim_start().starts_with('{') => {
+            let entity = text
+                .parse::<u64>()
+                .map_or_else(|_| json!(text), |id| json!(id));
+            Map::from_iter([("entity".to_owned(), entity)])
+        }
         Some(text) => match json_arg(text)? {
             Value::Object(m) => m,
             Value::Array(actions) if action == "act" => {
@@ -946,7 +954,7 @@ fn player_request(args: &Args) -> Result<(String, Value), Problem> {
     if let Some(t) = args.number::<u64>("ticks")? {
         p.insert("ticks".into(), json!(t));
     }
-    Ok((format!("player.{action}"), Value::Object(p)))
+    Ok((amoris_mcp::tools::player_method(action), Value::Object(p)))
 }
 
 /// `amoris debug ...`: the debugger's short forms, or `<action> ['<json params>']` for any
@@ -2143,9 +2151,9 @@ fn text(method: &str, v: &Value, full: bool) -> String {
                 let _ = writeln!(out, "{k}: {shown}");
             }
         }
-        // A player's JSON answers (act, wait, session, describe) on one line: what an agent reads
-        // in its shell costs tokens.
-        m if m.starts_with("player.") => {
+        // A player's JSON answers (act, wait, session, describe; the UI's) on one line: what an
+        // agent reads in its shell costs tokens.
+        m if m.starts_with("player.") || m.starts_with("ui.") => {
             out = serde_json::to_string(v).unwrap_or_default() + "\n";
         }
         _ => {
@@ -2645,6 +2653,20 @@ mod tests {
         );
         assert_eq!(m, "player.act");
         assert_eq!(p["actions"][0]["intent"], json!("sail_to"));
+        // The game UI (docs/spec/ui.md 6): a button by name or id, or the JSON parameters.
+        assert_eq!(
+            req("player", &["press", "Start"]),
+            ("ui.press".into(), json!({"entity": "Start"}))
+        );
+        assert_eq!(
+            req("player", &["press", "12"]),
+            ("ui.press".into(), json!({"entity": 12}))
+        );
+        assert_eq!(
+            req("player", &["press", r#"{"entity": "Sound"}"#]),
+            ("ui.press".into(), json!({"entity": "Sound"}))
+        );
+        assert_eq!(req("player", &["ui"]), ("ui.list".into(), json!({})));
         let raw: Vec<String> = ["observ"].iter().map(|s| (*s).to_owned()).collect();
         let e = request("player", &Args::parse(&raw, FLAGS).unwrap()).unwrap_err();
         assert!(format!("{e:?}").contains("observe"), "{e:?}");

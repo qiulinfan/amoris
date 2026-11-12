@@ -378,17 +378,27 @@ pub fn player_command(command: &str) -> bool {
     command.starts_with("player.")
 }
 
+/// The game UI's commands a player sends besides the player tools (docs/spec/ui.md 6, Agents):
+/// the screen's UI is what every player sees (charter 3, principle 2, the 2026-11-12 note).
+pub fn ui_command(command: &str) -> bool {
+    matches!(command, "ui.press" | "ui.list")
+}
+
 /// Whether `source` may send `command` (a catalog name with aliases resolved, or a game's own) to
 /// this world. In a game that declares players, `Source::Player(i)` is the player at seat `i` and
-/// sends the player tools alone: every other command (reading the world as it is, editing it,
-/// running time, the kept snapshots, a game's own commands) is a developer's and is refused with
-/// `permission.denied`, so a player never gets the world beyond its seat's perception (charter
-/// 3, principle 2; docs/spec/player.md 7). A game without players keeps slice 1's player source:
+/// sends the player tools and the UI's (`ui_command`) alone: every other command (reading the world
+/// as it is, editing it, running time, the kept snapshots, a game's own commands) is a developer's
+/// and is refused with `permission.denied`, so a player never gets the world beyond its seat's
+/// perception and the screen (charter 3, principle 2; docs/spec/player.md 7). A game without players keeps slice 1's player source:
 /// an input source ordered after developers (threads.md 5.2), as the web form's human player and
 /// the `sailing` sample's checks use it; it has no seat and no perception to keep it to.
 /// A replay is not asked: it applies what was recorded.
 pub fn permitted(world: &World, command: &str, source: Source) -> Result<(), Problem> {
-    if !matches!(source, Source::Player(_)) || player_command(command) || !declared(world) {
+    if !matches!(source, Source::Player(_))
+        || player_command(command)
+        || ui_command(command)
+        || !declared(world)
+    {
         return Ok(());
     }
     Err(codes::permission_denied(command, "player", "developer"))

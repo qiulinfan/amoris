@@ -388,14 +388,10 @@ impl Viewport {
         r.scene.ui.push(amoris_assets::frame::UiView {
             id: CROSSHAIR_ID,
             text: "+".into(),
-            fill: 0.0,
-            bar: false,
             size: [24.0, 24.0],
             color: [1.0, 1.0, 1.0, 1.0],
-            back: [0.0; 4],
             anchor: 4,
-            offset: [0.0, 0.0],
-            world: [0.0; 3],
+            ..Default::default()
         });
         vec![yaw, pitch]
     }

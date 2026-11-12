@@ -558,10 +558,11 @@ component, event kinds (`IsEventKind`: snake_case words joined by dots, with non
 only). A kind or name held in a `string` is checked at run time only. Registered components without
 a script schema (`Camera`, `Splat`, `AudioSource`, `Animator`, `Floater`, `Vessel`, `Hull`, `Sail`,
 `Sea`, ...) are listed in a comment and are not `ComponentName`s. `Model`, `Light`, `Environment`,
-`UiBar` and `ParticleEmitter` have schemas, so a game can animate a look, a lamp or the dawn, and so
-do `RigidBody`, `Collider`, `CollisionFilter`, `Joint` and `ExternalForce` (7.2), so its rules can
-make, tune, filter, join and push rigid bodies and make sensors (`docs/sdk.md`). `SensorOverlaps`,
-which the engine keeps on a walker, has none: scripts read sensors by their events.
+`UiBar`, `UiImage`, `UiButton`, `UiStack` (ui.md) and `ParticleEmitter` have schemas, so a game can
+animate a look, a lamp or the dawn, and so do `RigidBody`, `Collider`, `CollisionFilter`, `Joint`
+and `ExternalForce` (7.2), so its rules can make, tune, filter, join and push rigid bodies and make
+sensors (`docs/sdk.md`). `SensorOverlaps`, which the engine keeps on a walker, has none: scripts
+read sensors by their events.
 
 Departures from the first design of this section, which listed more files: a component's value is
 reached as `Components["Boat"]` (or `ComponentValue<"Boat">`), not as a named interface per
@@ -865,7 +866,8 @@ a `ctx` over a snapshot exported as JSON [persist] (not in slice 1).
     one names the same stream, which is harmless. The reserved event prefixes are `entity.`,
     `component.`, `script.`, `scripts.`, `sim.`, `intent.`, `contact.`, `physics.`, `interface.`,
     `time.`, `decision.`, `perception.` and, since 2026-11-12, `scene.` (simulation.md 7.6: the
-    engine's `scene.loaded`, and `scene.load_requested`, which `ctx.scene.load` stages).
+    engine's `scene.loaded`, and `scene.load_requested`, which `ctx.scene.load` stages), and `ui.`
+    (ui.md 7: the engine's `ui.pressed`).
 13. **Slice 1: crate edges.** `amoris-script` links `amoris-sim`, `amoris-contract`, `bevy_ecs`
     (architecture.md 6), `rquickjs`, `serde` and `serde_json`, and oxc under `transpile`; its edges
     to `amoris-physics` and `amoris-interface` stay unused until physics queries and perception for

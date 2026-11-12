@@ -268,7 +268,9 @@ pub fn tools() -> Vec<ToolDef> {
                 ticks, observe}; continue; session. Lookahead: fork {label} gives you a branch \
                 b1, b2, ... of main that only you reach; every action takes world to act on a \
                 branch (wait on a branch runs at most 600 ticks while main stays at one tick); \
-                branches lists yours; discard {branch}. A developer names the seat.",
+                branches lists yours; discard {branch}. The game UI on the screen: ui lists \
+                its texts, bars, images, buttons and stacks; press {entity} presses a button as \
+                a click does. A developer names the seat.",
             schema: obj(
                 json!({
                     "action": action(&PLAYER_ACTIONS),
@@ -306,8 +308,9 @@ pub fn tools() -> Vec<ToolDef> {
     ]
 }
 
-/// The `player` tool's actions: the `player.*` catalog methods.
-pub const PLAYER_ACTIONS: [&str; 15] = [
+/// The `player` tool's actions: the `player.*` catalog methods, then the game UI's (`ui` is
+/// `ui.list`, `press` is `ui.press`; docs/spec/ui.md 6).
+pub const PLAYER_ACTIONS: [&str; 17] = [
     "session",
     "describe",
     "observe",
@@ -323,7 +326,18 @@ pub const PLAYER_ACTIONS: [&str; 15] = [
     "fork",
     "discard",
     "branches",
+    "ui",
+    "press",
 ];
+
+/// The catalog method a `player` action names.
+pub fn player_method(action: &str) -> String {
+    match action {
+        "ui" => "ui.list".into(),
+        "press" => "ui.press".into(),
+        a => format!("player.{a}"),
+    }
+}
 
 /// The player's reads an LLM reads as text unless it asks for JSON (mcp.md 4.3: text by default
 /// for MCP): an observation, nearby percepts, events, one entity described.
@@ -393,7 +407,7 @@ pub fn route(tool: &str, mut args: Map<String, Value>) -> Result<(String, Value)
             if text_by_default(&a, &args) {
                 args.insert("projection".into(), json!("text"));
             }
-            (format!("player.{a}"), rest(args))
+            (player_method(&a), rest(args))
         }
         other => return Err(format!("there is no tool '{other}'")),
     };
@@ -430,6 +444,14 @@ mod tests {
     /// asks for JSON; a player session lists the player tool alone.
     #[test]
     fn the_player_tool_routes_to_the_player_methods() {
+        let (m, p) = route(
+            "player",
+            args(json!({"action": "press", "entity": "Start"})),
+        )
+        .unwrap();
+        assert_eq!((m.as_str(), p), ("ui.press", json!({"entity": "Start"})));
+        let (m, _) = route("player", args(json!({"action": "ui"}))).unwrap();
+        assert_eq!(m, "ui.list");
         let (m, p) = route("player", args(json!({"action": "observe"}))).unwrap();
         assert_eq!(
             (m.as_str(), p),

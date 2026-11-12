@@ -173,7 +173,8 @@ export type ReservedEventPrefix =
     | "time"
     | "decision"
     | "perception"
-    | "scene";
+    | "scene"
+    | "ui";
 
 type LowerLetter =
     | "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j" | "k" | "l" | "m"

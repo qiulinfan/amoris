@@ -18,12 +18,12 @@ use amoris_assets::frame::{
     AnimView, AudioView, BlockLook, CameraView, ChunkUpdate, EmitterView, EnvironmentView,
     InstanceUpdate, LightKindView, LightView, Look, Pose, RainView, RenderFrame,
     ResidentWaterUpdate, SeaLookView, SeaView, SplatView, StirView, TerrainLayerView, TerrainView,
-    UiView, VoxelUpdate, WaterLookView, WaterTileView, WaterUpdate, WaveView, WeatherView,
+    UiKind, UiView, VoxelUpdate, WaterLookView, WaterTileView, WaterUpdate, WaveView, WeatherView,
     WindSeaView,
 };
 use amoris_assets::{
     Animator, AudioSource, Camera, Environment, Feed, Light, LightKind, Model, ParticleEmitter,
-    SkyKind, Splat, UiAnchor, UiBar, UiText,
+    SkyKind, Splat, UiAlign, UiAnchor, UiBar, UiButton, UiDirection, UiImage, UiStack, UiText,
 };
 use amoris_physics::water::{
     Edge, Solver,
@@ -368,8 +368,24 @@ type InstanceRow = (
     Opt<Animator>,
     Opt<amoris_assets::anim::AnimPose>,
 );
-type UiRow = (Opt<Transform>, Opt<UiText>, Opt<UiBar>);
-type UiFilter = Or<(With<UiText>, With<UiBar>)>;
+type UiRow = (
+    Opt<Transform>,
+    Opt<amoris_sim::Parent>,
+    (
+        Opt<UiText>,
+        Opt<UiBar>,
+        Opt<UiImage>,
+        Opt<UiButton>,
+        Opt<UiStack>,
+    ),
+);
+type UiFilter = Or<(
+    With<UiText>,
+    With<UiBar>,
+    With<UiImage>,
+    With<UiButton>,
+    With<UiStack>,
+)>;
 
 /// What a delta reads each time: the drawn instances and whether each list changed. Kept between
 /// extractions (a query made again every tick cost about a microsecond each).
@@ -764,12 +780,20 @@ impl Extractor {
             .iter(w)
             .any(|(t, a)| a.is_changed() || t.is_some_and(|t| t.is_changed()))
             || w.removed::<AudioSource>().next().is_some();
-        let ui = q.ui.iter(w).any(|(t, a, b)| {
+        let ui = q.ui.iter(w).any(|(t, p, (a, b, i, k, s))| {
             t.is_some_and(|t| t.is_changed())
+                || p.is_some_and(|p| p.is_changed())
                 || a.is_some_and(|a| a.is_changed())
                 || b.is_some_and(|b| b.is_changed())
+                || i.is_some_and(|i| i.is_changed())
+                || k.is_some_and(|k| k.is_changed())
+                || s.is_some_and(|s| s.is_changed())
         }) || w.removed::<UiText>().next().is_some()
-            || w.removed::<UiBar>().next().is_some();
+            || w.removed::<UiBar>().next().is_some()
+            || w.removed::<UiImage>().next().is_some()
+            || w.removed::<UiButton>().next().is_some()
+            || w.removed::<UiStack>().next().is_some()
+            || w.removed::<amoris_sim::Parent>().next().is_some();
         let splats = q
             .splats
             .iter(w)
@@ -1169,17 +1193,95 @@ impl Extractor {
         v
     }
 
+    /// The UI elements to draw (docs/spec/ui.md 8): every visible element of an entity that is not
+    /// under an invisible stack, by id and then stack, button, image, text, bar.
     fn ui(world: &mut World) -> Vec<UiView> {
+        let hidden = crate::ui::hidden(world);
         let mut v: Vec<UiView> = Vec::new();
         let mut q = world.query::<(
             &EntityId,
             Option<&Transform>,
-            Option<&UiText>,
-            Option<&UiBar>,
+            Option<&amoris_sim::Parent>,
+            (
+                Option<&UiText>,
+                Option<&UiBar>,
+                Option<&UiImage>,
+                Option<&UiButton>,
+                Option<&UiStack>,
+            ),
         )>();
-        for (id, t, text, bar) in q.iter(world) {
+        for (id, t, parent, (text, bar, image, button, stack)) in q.iter(world) {
+            if hidden.contains(id) {
+                continue;
+            }
             let base = t.map_or([0.0; 3], |t| f3(t.position));
             let at = |o: [f64; 3]| [base[0] + f(o[0]), base[1] + f(o[1]), base[2] + f(o[2])];
+            let c4 = |c: [f64; 4]| [f(c[0]), f(c[1]), f(c[2]), f(c[3])];
+            let node = UiView {
+                id: id.get(),
+                parent: parent.map_or(0, |p| p.parent.get()),
+                ..UiView::default()
+            };
+            if let Some(s) = stack.filter(|s| s.visible) {
+                v.push(UiView {
+                    kind: UiKind::Stack,
+                    size: [f(s.min_size[0]), f(s.min_size[1])],
+                    color: c4(s.color),
+                    anchor: anchor_code(s.anchor),
+                    offset: [f(s.offset[0]), f(s.offset[1])],
+                    world: at(s.world_offset),
+                    column: s.direction == UiDirection::Column,
+                    align: match s.align {
+                        UiAlign::Start => 0,
+                        UiAlign::Center => 1,
+                        UiAlign::End => 2,
+                    },
+                    spacing: f(s.spacing),
+                    padding: f(s.padding),
+                    reference_height: f(s.reference_height),
+                    ..node.clone()
+                });
+            }
+            if let Some(b) = button.filter(|b| b.visible) {
+                v.push(UiView {
+                    kind: UiKind::Button,
+                    size: [f(b.size[0]), f(b.size[1])],
+                    color: c4(b.color),
+                    hover: c4(b.hover_color),
+                    press: c4(b.press_color),
+                    anchor: anchor_code(b.anchor),
+                    offset: [f(b.offset[0]), f(b.offset[1])],
+                    world: at(b.world_offset),
+                    enabled: b.enabled,
+                    on: b.toggle && b.on,
+                    ..node.clone()
+                });
+            }
+            if let Some(i) = image.filter(|i| i.visible && !i.image.is_empty()) {
+                v.push(UiView {
+                    kind: UiKind::Image,
+                    asset: i.image.clone(),
+                    size: [f(i.size[0]), f(i.size[1])],
+                    color: c4(i.tint),
+                    anchor: anchor_code(i.anchor),
+                    offset: [f(i.offset[0]), f(i.offset[1])],
+                    world: at(i.world_offset),
+                    ..node.clone()
+                });
+            }
+            if let Some(x) = text.filter(|x| x.visible && !x.text.is_empty()) {
+                v.push(UiView {
+                    kind: UiKind::Text,
+                    text: x.text.clone(),
+                    asset: x.font.clone(),
+                    size: [f(x.size), f(x.size)],
+                    color: c4(x.color),
+                    anchor: anchor_code(x.anchor),
+                    offset: [f(x.offset[0]), f(x.offset[1])],
+                    world: at(x.world_offset),
+                    ..node.clone()
+                });
+            }
             if let Some(b) = bar.filter(|b| b.visible) {
                 let fill = if b.max > 0.0 {
                     (b.value / b.max).clamp(0.0, 1.0)
@@ -1187,34 +1289,20 @@ impl Extractor {
                     0.0
                 };
                 v.push(UiView {
-                    id: id.get(),
-                    text: String::new(),
+                    kind: UiKind::Bar,
                     fill: f(fill),
-                    bar: true,
                     size: [f(b.size[0]), f(b.size[1])],
-                    color: [f(b.color[0]), f(b.color[1]), f(b.color[2]), f(b.color[3])],
-                    back: [f(b.back[0]), f(b.back[1]), f(b.back[2]), f(b.back[3])],
+                    color: c4(b.color),
+                    back: c4(b.back),
                     anchor: anchor_code(b.anchor),
                     offset: [f(b.offset[0]), f(b.offset[1])],
                     world: at(b.world_offset),
-                });
-            }
-            if let Some(x) = text.filter(|x| x.visible && !x.text.is_empty()) {
-                v.push(UiView {
-                    id: id.get(),
-                    text: x.text.clone(),
-                    fill: 0.0,
-                    bar: false,
-                    size: [f(x.size), f(x.size)],
-                    color: [f(x.color[0]), f(x.color[1]), f(x.color[2]), f(x.color[3])],
-                    back: [0.0; 4],
-                    anchor: anchor_code(x.anchor),
-                    offset: [f(x.offset[0]), f(x.offset[1])],
-                    world: at(x.world_offset),
+                    ..node
                 });
             }
         }
-        v.sort_by_key(|u| (u.id, u.bar));
+        // Stable: within an entity, the order pushed above.
+        v.sort_by_key(|u| u.id);
         v
     }
 }

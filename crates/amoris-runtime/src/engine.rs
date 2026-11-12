@@ -13,7 +13,7 @@
 
 use amoris_assets::{
     Animator, AudioSource, Camera, Environment, Light, LightKind, Model, ParticleEmitter, SkyKind,
-    Splat, UiBar, UiText,
+    Splat, UiAlign, UiBar, UiButton, UiDirection, UiImage, UiStack, UiText,
 };
 use amoris_contract::{CheckOptions, Problem, Shape, detail};
 use amoris_physics::water::displacement::WaterDisplacement;
@@ -93,7 +93,7 @@ where
 /// Every engine component a scene or `world_edit` can name (`Name` is the entity's own `name`);
 /// the first three are the player layer's (perception.md: who observes, what can be perceived,
 /// what blocks sight).
-pub fn engine_components() -> [EngineComponent; 52] {
+pub fn engine_components() -> [EngineComponent; 55] {
     [
         entry::<amoris_interface::perception::Observer>(),
         entry::<amoris_interface::perception::Perceivable>(),
@@ -113,6 +113,9 @@ pub fn engine_components() -> [EngineComponent; 52] {
         entry::<Splat>(),
         entry::<UiBar>(),
         entry::<UiText>(),
+        entry::<UiImage>(),
+        entry::<UiButton>(),
+        entry::<UiStack>(),
         entry::<Collider>(),
         entry::<CollisionFilter>(),
         entry::<SensorOverlaps>(),
@@ -1209,6 +1212,12 @@ fn ui_text_schema() -> Result<ComponentSchema, Problem> {
                 FieldValue::Bool(true),
                 "Whether it is drawn.",
             ),
+            (
+                "font",
+                FieldType::Str,
+                FieldValue::Str("".into()),
+                "A TrueType or OpenType file of the project; empty: the engine's font.",
+            ),
         ],
     )
 }
@@ -1321,7 +1330,7 @@ fn ui_text_fns() -> EngineFns<UiText> {
                 bit(u.visible),
             ]
             .into(),
-            strs: Box::new([u.text.as_str().into()]),
+            strs: Box::new([u.text.as_str().into(), u.font.as_str().into()]),
         }
     }
     fn write(u: &mut UiText, v: &ProjectValues) {
@@ -1333,12 +1342,335 @@ fn ui_text_fns() -> EngineFns<UiText> {
         if let Some(t) = v.strs.first() {
             u.text = t.to_string();
         }
+        if let Some(t) = v.strs.get(1) {
+            u.font = t.to_string();
+        }
     }
     EngineFns {
         read,
         write,
         make: |v| {
             let mut u = UiText::default();
+            write(&mut u, v);
+            u
+        },
+    }
+}
+
+fn f64_field<'a>(
+    name: &'a str,
+    value: f64,
+    doc: &'a str,
+) -> (&'a str, FieldType, FieldValue, &'a str) {
+    (name, FieldType::F64, FieldValue::F64(value), doc)
+}
+
+fn vec2_field<'a>(
+    name: &'a str,
+    value: [f64; 2],
+    doc: &'a str,
+) -> (&'a str, FieldType, FieldValue, &'a str) {
+    (name, FieldType::Vec2, FieldValue::Vec2(value), doc)
+}
+
+fn vec3_field<'a>(
+    name: &'a str,
+    value: [f64; 3],
+    doc: &'a str,
+) -> (&'a str, FieldType, FieldValue, &'a str) {
+    (name, FieldType::Vec3, FieldValue::Vec3(value), doc)
+}
+
+fn vec4_field<'a>(
+    name: &'a str,
+    value: [f64; 4],
+    doc: &'a str,
+) -> (&'a str, FieldType, FieldValue, &'a str) {
+    (name, FieldType::Vec4, FieldValue::Vec4(value), doc)
+}
+
+fn bool_field<'a>(
+    name: &'a str,
+    value: bool,
+    doc: &'a str,
+) -> (&'a str, FieldType, FieldValue, &'a str) {
+    (name, FieldType::Bool, FieldValue::Bool(value), doc)
+}
+
+fn ui_image_schema() -> Result<ComponentSchema, Problem> {
+    let d = UiImage::default();
+    schema(
+        "UiImage",
+        UiImage::VERSION,
+        "An image of the project on the screen (its anchor stays as the scene sets it).",
+        vec![
+            (
+                "image",
+                FieldType::Str,
+                FieldValue::Str("".into()),
+                "The PNG or JPEG file, relative to the project.",
+            ),
+            vec4_field(
+                "tint",
+                d.tint,
+                "sRGB with alpha, multiplied into the image.",
+            ),
+            vec2_field(
+                "size",
+                d.size,
+                "Logical pixels; a side of 0 takes the image's own.",
+            ),
+            vec2_field("offset", d.offset, "Logical pixels from the anchor."),
+            vec3_field(
+                "world_offset",
+                d.world_offset,
+                "Metres above the entity, for an entity-anchored image.",
+            ),
+            bool_field("visible", true, "Whether it is drawn."),
+        ],
+    )
+}
+
+fn ui_image_fns() -> EngineFns<UiImage> {
+    fn write(u: &mut UiImage, v: &ProjectValues) {
+        let n = &v.nums;
+        u.tint = [n[0], n[1], n[2], n[3]];
+        u.size = [n[4], n[5]];
+        u.offset = [n[6], n[7]];
+        u.world_offset = v3(n, 8);
+        u.visible = n[11] != 0.0;
+        if let Some(t) = v.strs.first() {
+            u.image = t.to_string();
+        }
+    }
+    EngineFns {
+        read: |u| {
+            let t = u.tint;
+            ProjectValues {
+                nums: [
+                    t[0],
+                    t[1],
+                    t[2],
+                    t[3],
+                    u.size[0],
+                    u.size[1],
+                    u.offset[0],
+                    u.offset[1],
+                    u.world_offset[0],
+                    u.world_offset[1],
+                    u.world_offset[2],
+                    bit(u.visible),
+                ]
+                .into(),
+                strs: Box::new([u.image.as_str().into()]),
+            }
+        },
+        write,
+        make: |v| {
+            let mut u = UiImage::default();
+            write(&mut u, v);
+            u
+        },
+    }
+}
+
+fn ui_button_schema() -> Result<ComponentSchema, Problem> {
+    let d = UiButton::default();
+    schema(
+        "UiButton",
+        UiButton::VERSION,
+        "A button the pointer and ui.press press; the entity's UiText is its label (docs/spec/ui.md).",
+        vec![
+            vec2_field("size", d.size, "Logical pixels."),
+            vec4_field("color", d.color, "sRGB with alpha: the face."),
+            vec4_field("hover_color", d.hover_color, "The face under the pointer."),
+            vec4_field("press_color", d.press_color, "The face held, or on."),
+            bool_field(
+                "enabled",
+                true,
+                "A disabled button is faded and refuses presses.",
+            ),
+            bool_field("toggle", false, "A press flips on."),
+            bool_field("on", false, "A toggle that is on draws with press_color."),
+            (
+                "presses",
+                FieldType::U32,
+                FieldValue::U32(0),
+                "Presses so far (ui.press counts them).",
+            ),
+            vec2_field("offset", d.offset, "Logical pixels from the anchor."),
+            vec3_field(
+                "world_offset",
+                d.world_offset,
+                "Metres above the entity, for an entity-anchored button.",
+            ),
+            bool_field("visible", true, "Whether it is drawn."),
+        ],
+    )
+}
+
+fn ui_button_fns() -> EngineFns<UiButton> {
+    fn write(u: &mut UiButton, v: &ProjectValues) {
+        let n = &v.nums;
+        u.size = [n[0], n[1]];
+        u.color = [n[2], n[3], n[4], n[5]];
+        u.hover_color = [n[6], n[7], n[8], n[9]];
+        u.press_color = [n[10], n[11], n[12], n[13]];
+        u.enabled = n[14] != 0.0;
+        u.toggle = n[15] != 0.0;
+        u.on = n[16] != 0.0;
+        u.presses = amoris_sim::num::to_u32(n[17]).unwrap_or(0);
+        u.offset = [n[18], n[19]];
+        u.world_offset = v3(n, 20);
+        u.visible = n[23] != 0.0;
+    }
+    EngineFns {
+        read: |u| {
+            let (c, h, p) = (u.color, u.hover_color, u.press_color);
+            nums(&[
+                u.size[0],
+                u.size[1],
+                c[0],
+                c[1],
+                c[2],
+                c[3],
+                h[0],
+                h[1],
+                h[2],
+                h[3],
+                p[0],
+                p[1],
+                p[2],
+                p[3],
+                bit(u.enabled),
+                bit(u.toggle),
+                bit(u.on),
+                f64::from(u.presses),
+                u.offset[0],
+                u.offset[1],
+                u.world_offset[0],
+                u.world_offset[1],
+                u.world_offset[2],
+                bit(u.visible),
+            ])
+        },
+        write,
+        make: |v| {
+            let mut u = UiButton::default();
+            write(&mut u, v);
+            u
+        },
+    }
+}
+
+fn ui_stack_schema() -> Result<ComponentSchema, Problem> {
+    let d = UiStack::default();
+    schema(
+        "UiStack",
+        UiStack::VERSION,
+        "A box that lays out its children (the entities under it) in a row or a column.",
+        vec![
+            (
+                "direction",
+                FieldType::Enum(["column", "row"].map(Box::from).into()),
+                FieldValue::Enum(0),
+                "column (top to bottom) or row (left to right).",
+            ),
+            f64_field("spacing", d.spacing, "Logical pixels between children."),
+            f64_field(
+                "padding",
+                d.padding,
+                "Logical pixels around them inside the box.",
+            ),
+            (
+                "align",
+                FieldType::Enum(["start", "center", "end"].map(Box::from).into()),
+                FieldValue::Enum(1),
+                "Where children sit across the direction.",
+            ),
+            vec4_field("color", d.color, "sRGB with alpha: the background."),
+            vec2_field(
+                "min_size",
+                d.min_size,
+                "Logical pixels: the box's least size.",
+            ),
+            f64_field(
+                "reference_height",
+                d.reference_height,
+                "Above 0 on a root stack: it scales by the window's height over this.",
+            ),
+            vec2_field("offset", d.offset, "Logical pixels from the anchor."),
+            vec3_field(
+                "world_offset",
+                d.world_offset,
+                "Metres above the entity, for an entity-anchored stack.",
+            ),
+            bool_field(
+                "visible",
+                true,
+                "Whether it and what is under it are drawn.",
+            ),
+        ],
+    )
+}
+
+fn ui_stack_fns() -> EngineFns<UiStack> {
+    fn write(u: &mut UiStack, v: &ProjectValues) {
+        let n = &v.nums;
+        u.direction = if n[0] == 1.0 {
+            UiDirection::Row
+        } else {
+            UiDirection::Column
+        };
+        u.spacing = n[1];
+        u.padding = n[2];
+        u.align = if n[3] == 0.0 {
+            UiAlign::Start
+        } else if n[3] == 2.0 {
+            UiAlign::End
+        } else {
+            UiAlign::Center
+        };
+        u.color = [n[4], n[5], n[6], n[7]];
+        u.min_size = [n[8], n[9]];
+        u.reference_height = n[10];
+        u.offset = [n[11], n[12]];
+        u.world_offset = v3(n, 13);
+        u.visible = n[16] != 0.0;
+    }
+    EngineFns {
+        read: |u| {
+            let c = u.color;
+            nums(&[
+                match u.direction {
+                    UiDirection::Column => 0.0,
+                    UiDirection::Row => 1.0,
+                },
+                u.spacing,
+                u.padding,
+                match u.align {
+                    UiAlign::Start => 0.0,
+                    UiAlign::Center => 1.0,
+                    UiAlign::End => 2.0,
+                },
+                c[0],
+                c[1],
+                c[2],
+                c[3],
+                u.min_size[0],
+                u.min_size[1],
+                u.reference_height,
+                u.offset[0],
+                u.offset[1],
+                u.world_offset[0],
+                u.world_offset[1],
+                u.world_offset[2],
+                bit(u.visible),
+            ])
+        },
+        write,
+        make: |v| {
+            let mut u = UiStack::default();
             write(&mut u, v);
             u
         },
@@ -2024,6 +2356,9 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     ComponentRegistry::register::<amoris_assets::anim::Attach>(world, Some(attach_schema()?))?;
     ComponentRegistry::register::<UiText>(world, Some(ui_text_schema()?))?;
     ComponentRegistry::register::<UiBar>(world, Some(ui_bar_schema()?))?;
+    ComponentRegistry::register::<UiImage>(world, Some(ui_image_schema()?))?;
+    ComponentRegistry::register::<UiButton>(world, Some(ui_button_schema()?))?;
+    ComponentRegistry::register::<UiStack>(world, Some(ui_stack_schema()?))?;
     ComponentRegistry::register::<AudioSource>(world, None)?;
     ComponentRegistry::register::<ParticleEmitter>(world, Some(particle_emitter_schema()?))?;
     let after = names(world);
@@ -2066,6 +2401,9 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     register_engine::<amoris_assets::anim::Attach>(world, attach_fns())?;
     register_engine::<UiText>(world, ui_text_fns())?;
     register_engine::<UiBar>(world, ui_bar_fns())?;
+    register_engine::<UiImage>(world, ui_image_fns())?;
+    register_engine::<UiButton>(world, ui_button_fns())?;
+    register_engine::<UiStack>(world, ui_stack_fns())?;
     register_engine::<Model>(world, model_fns())?;
     register_engine::<Light>(world, light_fns())?;
     register_engine::<ParticleEmitter>(world, particle_emitter_fns())?;

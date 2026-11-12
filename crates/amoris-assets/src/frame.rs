@@ -194,22 +194,61 @@ pub struct SplatView {
     pub visible: bool,
 }
 
-/// One UI element to draw this frame (text or bar), anchored on the screen or at a world point.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// What a [`UiView`] draws (docs/spec/ui.md 2). Within one entity the feed orders them stack,
+/// button, image, text, bar.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiKind {
+    #[default]
+    Text,
+    Bar,
+    Image,
+    Button,
+    Stack,
+}
+
+/// One UI element to draw this frame, anchored on the screen or at a world point, or laid out in
+/// a stack (docs/spec/ui.md 8).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct UiView {
     pub id: u64,
-    /// The text; empty for a bar.
+    pub kind: UiKind,
+    /// A text's text.
     pub text: String,
+    /// A text's font, an image's file (project paths); empty: the engine's font.
+    pub asset: String,
     /// Bar fill 0..1 (bars only).
     pub fill: f32,
-    pub bar: bool,
+    /// Logical pixels (a text's: its line height twice).
     pub size: [f32; 2],
+    /// A text's, bar's fill, image's tint, button's face or stack's background colour.
     pub color: [f32; 4],
     pub back: [f32; 4],
+    /// A button's colour under the pointer, and held or on.
+    pub hover: [f32; 4],
+    pub press: [f32; 4],
     /// 0 top-left .. 8 bottom-right (row-major 3x3), 9: at `world`.
     pub anchor: u32,
     pub offset: [f32; 2],
     pub world: [f32; 3],
+    /// The entity's `Parent`, 0 for none: a stack lays out the nodes under it.
+    pub parent: u64,
+    /// A button's.
+    pub enabled: bool,
+    pub on: bool,
+    /// A stack's: a column (else a row), children placed 0 start, 1 centre, 2 end across it.
+    pub column: bool,
+    pub align: u32,
+    pub spacing: f32,
+    pub padding: f32,
+    /// A root stack's height it scales from, 0 for none.
+    pub reference_height: f32,
+}
+
+impl UiView {
+    pub fn is_bar(&self) -> bool {
+        self.kind == UiKind::Bar
+    }
 }
 
 /// A particle emitter, posed.

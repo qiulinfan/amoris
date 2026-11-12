@@ -13,3 +13,4 @@ site/licenses/** -text -whitespace
 third_party/patches/p4-p7-build.diff -whitespace
 third_party/patches/p11-debug-eval-scope.diff -whitespace
 *.cells binary
+tests/fixtures/scenes/ui-hud/fonts/LICENSE.txt -text -whitespace
