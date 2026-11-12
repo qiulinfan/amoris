@@ -36,16 +36,13 @@ graphs = ["anim/sellsword.anim.json", "anim/brigand.anim.json", "anim/brute.anim
 
 [player]
 perception = "perception.json"
-actions = "first_person"
+actions = "third_person"
 camera = "game"
 done_event = "keep.freed"
-controls = "WASD move · Mouse look · Shift sprint · LMB swing · E heavy · Space roll · RMB guard (parry on time) · Q lock · 1 bolt · 2 knives · 3 flask · Esc menu"
+controls = "WASD move · Mouse orbit · Wheel zoom · Shift sprint · LMB swing · E heavy · Space/C roll · RMB guard (parry on time) · Q lock · 1 bolt · 2 knives · 3 flask · Esc menu"
+# The third_person catalog's verbs carry the fight (player.md 5.1); these are the game's own.
 buttons = [
-  { name = "dodge", keys = ["Space"] },
-  { name = "block", keys = ["MouseRight"] },
-  { name = "lock", keys = ["KeyQ", "MouseMiddle"] },
-  { name = "heavy", keys = ["KeyE"] },
   { name = "bolt", keys = ["Digit1"] },
   { name = "knives", keys = ["Digit2"] },
-  { name = "flask", keys = ["Digit3", "KeyC"] },
+  { name = "flask", keys = ["Digit3"] },
 ]

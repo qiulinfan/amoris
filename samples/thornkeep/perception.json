@@ -21,6 +21,9 @@
    "budget_tokens": 400,
    "instruments": [
     "position_m",
+    "heading_deg",
+    "look_deg",
+    "locked",
     "health",
     "stamina",
     "focus",
@@ -42,6 +45,42 @@
     "from": "field",
     "component": "Transform",
     "path": "position"
+   }
+  },
+  {
+   "name": "heading_deg",
+   "doc": "The way the sellsword faces.",
+   "unit": {
+    "unit": "bearing"
+   },
+   "precision": 0,
+   "source": {
+    "from": "derived",
+    "function": "third_person.heading_deg"
+   }
+  },
+  {
+   "name": "look_deg",
+   "doc": "The way the camera looks (forward moves this way).",
+   "unit": {
+    "unit": "bearing"
+   },
+   "precision": 0,
+   "source": {
+    "from": "derived",
+    "function": "third_person.look_deg"
+   }
+  },
+  {
+   "name": "locked",
+   "doc": "Locked on to a foe.",
+   "unit": {
+    "unit": "bool"
+   },
+   "precision": 0,
+   "source": {
+    "from": "derived",
+    "function": "third_person.locked"
    }
   },
   {
@@ -123,7 +162,75 @@
    }
   }
  ],
- "kinds": [],
+ "kinds": [
+  {
+   "kind": "foe",
+   "doc": "One of the keep's fighters: a brigand, a brute behind a shield, an archer or the Warden.",
+   "facts": [
+    {
+     "name": "type",
+     "doc": "1 brigand, 2 brute, 3 archer, 4 the Warden.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 0,
+     "exposure": "full",
+     "source": {
+      "from": "field",
+      "component": "Fighter",
+      "path": "kind"
+     }
+    },
+    {
+     "name": "health",
+     "doc": "Its health.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 0,
+     "exposure": "full",
+     "source": {
+      "from": "field",
+      "component": "Fighter",
+      "path": "hp"
+     }
+    },
+    {
+     "name": "action",
+     "doc": "What it does: 0 free, 1 attacking, 2 rolling, 3 hurt, 4 staggered, 5 casting, 6 dead.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 0,
+     "exposure": "full",
+     "source": {
+      "from": "field",
+      "component": "Fighter",
+      "path": "action"
+     }
+    }
+   ],
+   "affordances": [
+    {
+     "verb": "lock_on",
+     "doc": "Lock on to it: the camera and the sellsword turn to it.",
+     "effect": {
+      "effect": "pulse",
+      "control": "lock_on"
+     },
+     "requires": [
+      {
+       "requires": "seen"
+      },
+      {
+       "requires": "within",
+       "max_m": 22
+      }
+     ]
+    }
+   ]
+  }
+ ],
  "events": [
   {
    "kind": "keep.freed",
