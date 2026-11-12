@@ -78,7 +78,7 @@ files).
 | `catalog.list` | read | `{}` | the catalog |
 | `status` | read | `{}` | `{tick, t_s, pacing, paused, halted, behind_ms, mode, epoch, world_hash, entities, bundle, writes, poisoned, steps_due, kept, tainted}`; while the debugger holds the game, from the last publication with `state: "breakpoint"` and `paused_at` (3.4) |
 | `project.info` | read | `{}` | `{name, root, rate, scenes, scripts, assets}` |
-| `project.save` | request | `{}` | `{files: ["scene.json"], entities}`: the edit world, one entity per line, every component whole |
+| `project.save` | request | `{}` | `{files: ["scene.json"], entities}`: the edit world, one entity per line, every component whole, entity ids as places in the file (simulation.md 7.4) |
 | `world.tree` | read | `{root?, depth?, filter?, with?, limit?}` | `[{id, name, components: [name], children: []}]` (no hierarchy yet; `depth` is accepted) |
 | `world.get` (`world_get`) | read | `{entity, components?, fields?}` | `{id, name, components: {Name: value}, fields?: {"C.f.path": value}}`; `fields` (or a dotted entry of `components`) reads `Component.field` or a path into it alone, `null` where the entity lacks the component; a path the component lacks is refused with its fields and a suggestion |
 | `world.query` | read | `{with: [C], fields?: ["C.f.path"], name?, limit? = 100}` | `[{id, name, "C.f": value}]` |

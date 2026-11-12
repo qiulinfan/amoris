@@ -1,8 +1,10 @@
 //! Values as commands and scenes write them (shared/contract/mcp.md 6.1): entity references (an id,
 //! a name or `Name#id`) resolved to `EntityId`s, and project components read and written as JSON
 //! objects of their fields through their schemas (vectors as `{x, y, z}`, enums by name, entities as
-//! ids or `null`).
+//! ids or `null`), and the places of an engine component's JSON that hold entity ids, read from
+//! its JSON Schema ([`entity_refs`]).
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use amoris_contract::codes::{
@@ -287,4 +289,226 @@ pub fn canonical_patch(
         out.insert(key.clone(), v);
     }
     Ok(out)
+}
+
+/// How many `$ref`s deep [`entity_refs`] follows a schema: a recursive type ends the walk there.
+const MAX_REFS: u32 = 32;
+
+/// The JSON pointers (RFC 6901) of `value` that hold an entity id according to `schema`, a
+/// component's JSON Schema as `schemars` writes it: every place whose schema is a `$ref` to
+/// `EntityId` and whose value is an integer. The walk follows the value and the schema together:
+/// other `$ref`s into the root's `$defs`, the alternatives of `anyOf`, `oneOf` and `allOf` (one
+/// whose tag, a property with a `const`, the value does not carry is passed over), `properties`,
+/// `additionalProperties`, `prefixItems` and `items`. Map keys are not places. `project.save`
+/// renumbers engine components through it (files.rs), since an engine component's decoding sees
+/// no world and its entity fields have no `FieldType`.
+pub fn entity_refs(schema: &Value, value: &Value) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    walk_refs(schema, schema, value, &mut String::new(), 0, &mut out);
+    out
+}
+
+/// Whether `alt` is an alternative tagged for another value: it gives a property a `const` that
+/// `value` does not hold there.
+fn other_tag(alt: &Value, value: &Value) -> bool {
+    let Some(props) = alt.get("properties").and_then(Value::as_object) else {
+        return false;
+    };
+    props.iter().any(|(k, p)| {
+        p.get("const")
+            .is_some_and(|c| value.as_object().and_then(|m| m.get(k)) != Some(c))
+    })
+}
+
+fn walk_refs(
+    root: &Value,
+    schema: &Value,
+    value: &Value,
+    at: &mut String,
+    refs: u32,
+    out: &mut BTreeSet<String>,
+) {
+    let Some(s) = schema.as_object() else {
+        return;
+    };
+    if let Some(r) = s.get("$ref").and_then(Value::as_str) {
+        let name = r.rsplit('/').next().unwrap_or(r);
+        if name == "EntityId" {
+            if value.as_u64().is_some() {
+                out.insert(at.clone());
+            }
+        } else if refs < MAX_REFS
+            && let Some(target) = root
+                .get("$defs")
+                .or_else(|| root.get("definitions"))
+                .and_then(|d| d.get(name))
+        {
+            walk_refs(root, target, value, at, refs + 1, out);
+        }
+    }
+    for key in ["anyOf", "oneOf", "allOf"] {
+        for alt in s.get(key).and_then(Value::as_array).into_iter().flatten() {
+            if !other_tag(alt, value) {
+                walk_refs(root, alt, value, at, refs, out);
+            }
+        }
+    }
+    let len = at.len();
+    match value {
+        Value::Object(m) => {
+            let props = s.get("properties").and_then(Value::as_object);
+            let rest = s.get("additionalProperties");
+            for (k, v) in m {
+                if let Some(sub) = props.and_then(|p| p.get(k)).or(rest) {
+                    at.push('/');
+                    at.push_str(&k.replace('~', "~0").replace('/', "~1"));
+                    walk_refs(root, sub, v, at, refs, out);
+                    at.truncate(len);
+                }
+            }
+        }
+        Value::Array(a) => {
+            let prefix = s.get("prefixItems").and_then(Value::as_array);
+            let items = s.get("items");
+            for (i, v) in a.iter().enumerate() {
+                if let Some(sub) = prefix.and_then(|p| p.get(i)).or(items) {
+                    at.push('/');
+                    at.push_str(&i.to_string());
+                    walk_refs(root, sub, v, at, refs, out);
+                    at.truncate(len);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn refs(schema: &Value, value: &Value) -> Vec<String> {
+        entity_refs(schema, value).into_iter().collect()
+    }
+
+    fn id_def() -> Value {
+        json!({"type": "integer", "minimum": 1})
+    }
+
+    /// A plain field, an optional one (`anyOf` with null) that is set or not, and a field that
+    /// only looks like an id.
+    #[test]
+    fn fields_typed_as_entity_ids_are_found() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "to": {"description": "Who.", "$ref": "#/$defs/EntityId"},
+                "mount": {"anyOf": [{"$ref": "#/$defs/EntityId"}, {"type": "null"}]},
+                "count": {"type": "integer"},
+            },
+            "$defs": {"EntityId": id_def()},
+        });
+        let v = json!({"to": 4, "mount": 9, "count": 4});
+        assert_eq!(refs(&schema, &v), ["/mount", "/to"]);
+        let v = json!({"to": 4, "mount": null, "count": 4});
+        assert_eq!(refs(&schema, &v), ["/to"]);
+        assert!(refs(&schema, &json!({"count": 1})).is_empty());
+    }
+
+    /// Through another definition, a tuple (`prefixItems`), a list (`items`) and a map's values
+    /// (`additionalProperties`); a key that needs escaping is escaped as a JSON pointer asks.
+    #[test]
+    fn nested_places_are_followed() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "cover": {"anyOf": [{"$ref": "#/$defs/Cover"}, {"type": "null"}]},
+                "targets": {"type": "array", "items": {"$ref": "#/$defs/EntityId"}},
+                "by_name": {"type": "object",
+                            "additionalProperties": {"$ref": "#/$defs/EntityId"}},
+            },
+            "$defs": {
+                "EntityId": id_def(),
+                "Cover": {"type": "array",
+                          "prefixItems": [{"$ref": "#/$defs/EntityId"}, {"type": "number"}]},
+            },
+        });
+        let v = json!({"cover": [3, 5], "targets": [1, 2], "by_name": {"a/b": 7, "c~d": 8}});
+        assert_eq!(
+            refs(&schema, &v),
+            [
+                "/by_name/a~1b",
+                "/by_name/c~0d",
+                "/cover/0",
+                "/targets/0",
+                "/targets/1"
+            ]
+        );
+        for p in refs(&schema, &v) {
+            assert!(v.pointer(&p).is_some_and(Value::is_u64), "{p}");
+        }
+    }
+
+    /// Enums: an externally tagged variant is found under its key, and of two internally tagged
+    /// alternatives only the one the value's tag names is followed.
+    #[test]
+    fn enum_alternatives_follow_the_value() {
+        let schema = json!({
+            "oneOf": [
+                {"type": "string", "enum": ["Free"]},
+                {"type": "object", "required": ["Follow"],
+                 "properties": {"Follow": {"$ref": "#/$defs/EntityId"}}},
+                {"type": "object", "required": ["Orbit"],
+                 "properties": {"Orbit": {"type": "object", "properties": {
+                     "around": {"$ref": "#/$defs/EntityId"}, "turns": {"type": "integer"}}}}},
+            ],
+            "$defs": {"EntityId": id_def()},
+        });
+        assert!(refs(&schema, &json!("Free")).is_empty());
+        assert_eq!(refs(&schema, &json!({"Follow": 2})), ["/Follow"]);
+        assert_eq!(
+            refs(&schema, &json!({"Orbit": {"around": 2, "turns": 2}})),
+            ["/Orbit/around"]
+        );
+        let tagged = json!({
+            "oneOf": [
+                {"type": "object", "properties": {
+                    "kind": {"type": "string", "const": "seat"},
+                    "who": {"$ref": "#/$defs/EntityId"}}},
+                {"type": "object", "properties": {
+                    "kind": {"type": "string", "const": "count"},
+                    "who": {"type": "integer"}}},
+            ],
+            "$defs": {"EntityId": id_def()},
+        });
+        assert_eq!(refs(&tagged, &json!({"kind": "seat", "who": 5})), ["/who"]);
+        assert!(refs(&tagged, &json!({"kind": "count", "who": 5})).is_empty());
+    }
+
+    /// A type that refers to itself is followed as deep as the value goes, up to [`MAX_REFS`]
+    /// `$ref`s, where the walk ends instead of looping.
+    #[test]
+    fn a_recursive_schema_ends() {
+        let schema = json!({
+            "$ref": "#/$defs/Node",
+            "$defs": {
+                "EntityId": id_def(),
+                "Node": {"type": "object", "properties": {
+                    "id": {"$ref": "#/$defs/EntityId"},
+                    "next": {"anyOf": [{"$ref": "#/$defs/Node"}, {"type": "null"}]}}},
+                "Loop": {"$ref": "#/$defs/Loop"},
+            },
+        });
+        assert_eq!(
+            refs(&schema, &json!({"id": 1, "next": {"id": 2, "next": null}})),
+            ["/id", "/next/id"]
+        );
+        let mut deep = json!({"id": 1, "next": null});
+        for _ in 0..40 {
+            deep = json!({"id": 1, "next": deep});
+        }
+        assert_eq!(refs(&schema, &deep).len(), 32, "one id per `$ref` followed");
+        let looping = json!({"$ref": "#/$defs/Loop", "$defs": schema["$defs"].clone()});
+        assert!(refs(&looping, &json!(3)).is_empty());
+    }
 }

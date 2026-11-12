@@ -517,6 +517,11 @@ impl EntityAllocator {
 - Loading a scene or instantiating a prefab allocates ids in document order, depth first, a parent
   before its children, and rewrites the document's local references to the new ids. The same
   document loaded into the same world state yields the same ids.
+- `project.save` writes the world back as a scene: the live entities in id order, each entity id
+  inside a component renumbered to the entity's place in the file, and one naming an entity that is
+  gone written as `null`. Project components are renumbered by their schema's entity fields and
+  engine components by their JSON Schema (every place typed `EntityId`, nested ones and those
+  inside tagged variants included; ids that are a map's keys are left as they are).
 - Restore (spec-persist) recreates every entity with its recorded `EntityId` and restores the
   allocator. The `bevy_ecs::Entity` values and the storage order of the restored world differ from
   the original's; nothing observable depends on them (section 8).
