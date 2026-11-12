@@ -1234,5 +1234,7 @@ fn env_view(e: &Environment) -> EnvironmentView {
         fog_color: f3(e.fog_color),
         exposure_ev: f(e.exposure_ev),
         bloom: f(e.bloom),
+        color_lut: e.color_lut.clone(),
+        color_lut_intensity: f(e.color_lut_intensity),
     }
 }

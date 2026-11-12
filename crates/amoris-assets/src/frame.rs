@@ -133,6 +133,10 @@ pub struct EnvironmentView {
     pub fog_color: [f32; 3],
     pub exposure_ev: f32,
     pub bloom: f32,
+    /// Project-relative color-grading table (`.cube`); empty for none.
+    pub color_lut: String,
+    /// The graded color's share, 0 to 1.
+    pub color_lut_intensity: f32,
 }
 
 /// One wave of the sea, as amoris-physics computes it (a sine on the surface, deep-water speed).
@@ -908,6 +912,8 @@ mod tests {
                 fog_color: [0.0; 3],
                 exposure_ev: 0.0,
                 bloom: 0.0,
+                color_lut: String::new(),
+                color_lut_intensity: 1.0,
             }),
             ..RenderFrame::default()
         };

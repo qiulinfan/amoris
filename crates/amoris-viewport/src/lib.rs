@@ -10,6 +10,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use amoris_assets::gi::{BakedGi, NeuralGi};
+use amoris_assets::lut::ColorLut;
 use amoris_assets::mesh::ModelAsset;
 use amoris_assets::neural::NeuralTexture;
 use amoris_render::AssetSource;
@@ -28,6 +29,8 @@ pub struct PageAssets {
     neural_done: Loads<NeuralGi>,
     texture_requests: Rc<RefCell<std::collections::HashSet<String>>>,
     textures_done: Loads<NeuralTexture>,
+    lut_requests: Rc<RefCell<std::collections::HashSet<String>>>,
+    luts_done: Loads<ColorLut>,
 }
 
 impl AssetSource for PageAssets {
@@ -59,11 +62,24 @@ impl AssetSource for PageAssets {
     fn poll_neural_textures(&mut self) -> Vec<(String, Result<NeuralTexture, String>)> {
         std::mem::take(&mut *self.textures_done.borrow_mut())
     }
+    fn request_color_lut(&mut self, path: &str) {
+        self.lut_requests.borrow_mut().insert(path.to_owned());
+        self.requests.borrow_mut().push(path.to_owned());
+    }
+    fn poll_color_luts(&mut self) -> Vec<(String, Result<ColorLut, String>)> {
+        std::mem::take(&mut *self.luts_done.borrow_mut())
+    }
 }
 
 impl PageAssets {
     /// Imports a fetched `.glb` (or reports the fetch's failure).
     pub fn deliver(&self, path: &str, bytes: Result<&[u8], String>) {
+        if self.lut_requests.borrow_mut().remove(path) {
+            self.luts_done
+                .borrow_mut()
+                .push((path.to_owned(), bytes.and_then(ColorLut::from_cube)));
+            return;
+        }
         if self.texture_requests.borrow_mut().remove(path) {
             self.textures_done
                 .borrow_mut()

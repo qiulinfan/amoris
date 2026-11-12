@@ -85,8 +85,9 @@ export default game({ components: [Crew, Tally, Log, Cargo], systems: [muster, l
 `UiText`'s text, size, colour, offset and visibility, ...). A game may also animate a look through
 `Model` (scale, colour, emission, visibility), a `Light` (kind, colour, intensity, cone), a
 `ParticleEmitter` (rate, bursts, whether it emits, lifetime, speed, spread, acceleration, size,
-colours) and the `Environment` (sky colour, ambient, fog, exposure, bloom); the mesh and material
-paths a `Model` was built with are part of those fields too.
+colours) and the `Environment` (sky colour, ambient, fog, exposure, bloom, and the colour-grading
+table `color_lut` with its share `color_lut_intensity`, [color-grading.md](spec/color-grading.md));
+the mesh and material paths a `Model` was built with are part of those fields too.
 
 Characters (docs/spec/animation.md): a body's `AnimGraph` names its graph and is driven through
 `ctx.anim` (parameters, montages and their sections, its notifies' events, socket poses); an

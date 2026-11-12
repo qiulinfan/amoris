@@ -3,6 +3,7 @@
 //! browser the page fetches them and hands the bytes in.
 
 use amoris_assets::gi::{BakedGi, NeuralGi};
+use amoris_assets::lut::ColorLut;
 use amoris_assets::mesh::ModelAsset;
 use amoris_assets::neural::NeuralTexture;
 
@@ -40,6 +41,13 @@ pub trait AssetSource {
     fn poll_neural_textures(&mut self) -> Vec<(String, Result<NeuralTexture, String>)> {
         Vec::new()
     }
+    /// Starts loading a color-grading table (`.cube`, docs/spec/color-grading.md).
+    fn request_color_lut(&mut self, path: &str) {
+        log::warn!("this asset source cannot load color tables: {path}");
+    }
+    fn poll_color_luts(&mut self) -> Vec<(String, Result<ColorLut, String>)> {
+        Vec::new()
+    }
 }
 
 /// No assets: only primitives draw.
@@ -64,6 +72,7 @@ pub struct FileAssets {
     gi_done: Vec<(String, Result<BakedGi, String>)>,
     neural_done: Vec<(String, Result<NeuralGi, String>)>,
     textures_done: Vec<(String, Result<NeuralTexture, String>)>,
+    luts_done: Vec<(String, Result<ColorLut, String>)>,
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
@@ -72,6 +81,7 @@ enum Job {
     Gi(String),
     Neural(String),
     Texture(String),
+    Lut(String),
 }
 #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
 enum Loaded {
@@ -79,6 +89,7 @@ enum Loaded {
     Gi(String, Result<BakedGi, String>),
     Neural(String, Result<NeuralGi, String>),
     Texture(String, Result<NeuralTexture, String>),
+    Lut(String, Result<ColorLut, String>),
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
@@ -91,6 +102,13 @@ impl FileAssets {
             .spawn(move || {
                 for job in jobs {
                     let path = match job {
+                        Job::Lut(path) => {
+                            let result = ColorLut::load(&root.join(&path));
+                            if done.send(Loaded::Lut(path, result)).is_err() {
+                                break;
+                            }
+                            continue;
+                        }
                         Job::Texture(path) => {
                             let result = NeuralTexture::load(&root.join(&path));
                             if done.send(Loaded::Texture(path, result)).is_err() {
@@ -139,6 +157,7 @@ impl FileAssets {
             gi_done: Vec::new(),
             neural_done: Vec::new(),
             textures_done: Vec::new(),
+            luts_done: Vec::new(),
         }
     }
 
@@ -149,6 +168,7 @@ impl FileAssets {
                 Loaded::Gi(path, result) => self.gi_done.push((path, result)),
                 Loaded::Neural(path, result) => self.neural_done.push((path, result)),
                 Loaded::Texture(path, result) => self.textures_done.push((path, result)),
+                Loaded::Lut(path, result) => self.luts_done.push((path, result)),
             }
         }
     }
@@ -183,6 +203,13 @@ impl AssetSource for FileAssets {
     fn poll_neural_textures(&mut self) -> Vec<(String, Result<NeuralTexture, String>)> {
         self.collect();
         std::mem::take(&mut self.textures_done)
+    }
+    fn request_color_lut(&mut self, path: &str) {
+        let _ = self.tx.send(Job::Lut(path.to_owned()));
+    }
+    fn poll_color_luts(&mut self) -> Vec<(String, Result<ColorLut, String>)> {
+        self.collect();
+        std::mem::take(&mut self.luts_done)
     }
 }
 

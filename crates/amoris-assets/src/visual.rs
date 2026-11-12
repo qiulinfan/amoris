@@ -181,6 +181,11 @@ pub struct Environment {
     pub exposure_ev: f64,
     /// Bloom strength, 0 to 1.
     pub bloom: f64,
+    /// Project-relative color-grading table (a `.cube` file, docs/spec/color-grading.md) applied
+    /// after tone mapping; empty for none.
+    pub color_lut: String,
+    /// How much of the graded color replaces the ungraded one, 0 (none) to 1.
+    pub color_lut_intensity: f64,
 }
 
 impl Default for Environment {
@@ -196,6 +201,8 @@ impl Default for Environment {
             fog_color: [0.6, 0.7, 0.8],
             exposure_ev: 0.0,
             bloom: 0.15,
+            color_lut: String::new(),
+            color_lut_intensity: 1.0,
         }
     }
 }

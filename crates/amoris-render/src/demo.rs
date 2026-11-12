@@ -163,6 +163,8 @@ fn sunlit(instances: Vec<InstanceUpdate>, dir: Vec3, shadows: bool) -> RenderFra
             fog_color: [0.6, 0.7, 0.8],
             exposure_ev: 0.0,
             bloom: 0.1,
+            color_lut: String::new(),
+            color_lut_intensity: 1.0,
         }),
         sea: None,
         weather: None,

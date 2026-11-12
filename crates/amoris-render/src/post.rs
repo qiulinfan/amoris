@@ -1,7 +1,7 @@
 //! The frame's targets (the opaque pass's color, depth and extra targets, the resolved HDR image,
 //! the bloom chain), the anti-aliasing and ambient-occlusion options that shape them, and the post
-//! passes: bloom down and up, then the display transform (and the optional sharpening) into the
-//! output.
+//! passes: bloom down and up, then the display transform (and the optional sharpening and
+//! color-grading table, docs/spec/color-grading.md) into the output.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -576,9 +576,14 @@ fn attachment(t: &SceneTarget, u: Use) -> Option<wgpu::RenderPassColorAttachment
 }
 
 pub struct Post {
+    module: wgpu::ShaderModule,
+    output: wgpu::TextureFormat,
     down: wgpu::RenderPipeline,
     up: wgpu::RenderPipeline,
     tonemap: wgpu::RenderPipeline,
+    /// The color-grading table and the display transform that reads it, built when the first
+    /// table arrives (a frame without one draws exactly as before: `fs_tonemap`).
+    grade: Option<Grade>,
     sampler: wgpu::Sampler,
     params: wgpu::Buffer,
     output_srgb: bool,
@@ -590,35 +595,55 @@ pub struct Post {
     groups: Option<(wgpu::TextureView, wgpu::Texture, Vec<wgpu::BindGroup>)>,
 }
 
+/// A color-grading table on the GPU (an rgba32float 3D texture) and the display transform that
+/// reads it, with its bind group for the current source and bloom chain.
+struct Grade {
+    pipeline: wgpu::RenderPipeline,
+    table: Option<wgpu::TextureView>,
+    group: Option<wgpu::BindGroup>,
+}
+
+/// A full-screen pipeline of the post shader `m` (auto layout): `vs_full`, then `entry` into
+/// `format` with `blend`.
+fn pipeline(
+    device: &wgpu::Device,
+    m: &wgpu::ShaderModule,
+    entry: &str,
+    format: wgpu::TextureFormat,
+    blend: Option<wgpu::BlendState>,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(entry),
+        layout: None,
+        vertex: wgpu::VertexState {
+            module: m,
+            entry_point: Some("vs_full"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: m,
+            entry_point: Some(entry),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: Default::default(),
+        depth_stencil: None,
+        multisample: Default::default(),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
 impl Post {
     pub fn new(device: &wgpu::Device, output: wgpu::TextureFormat) -> Post {
         let m = shaders::module(device, "post");
         let pipe = |entry: &str, format: wgpu::TextureFormat, blend: Option<wgpu::BlendState>| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(entry),
-                layout: None,
-                vertex: wgpu::VertexState {
-                    module: &m,
-                    entry_point: Some("vs_full"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &m,
-                    entry_point: Some(entry),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: Default::default(),
-                depth_stencil: None,
-                multisample: Default::default(),
-                multiview_mask: None,
-                cache: None,
-            })
+            pipeline(device, &m, entry, format, blend)
         };
         let add = wgpu::BlendState {
             color: wgpu::BlendComponent {
@@ -632,6 +657,9 @@ impl Post {
             down: pipe("fs_down", HDR, None),
             up: pipe("fs_up", HDR, Some(add)),
             tonemap: pipe("fs_tonemap", output, None),
+            grade: None,
+            module: m,
+            output,
             sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("post"),
                 mag_filter: wgpu::FilterMode::Linear,
@@ -652,7 +680,72 @@ impl Post {
         }
     }
 
-    /// The bind group of the pass in parameter slot `slot`: `pipeline` reading `src` (and `bloom`).
+    /// Sets the color-grading table the display transform applies (docs/spec/color-grading.md),
+    /// or none. The first table builds the graded display transform's pipeline.
+    pub fn set_color_lut(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        lut: Option<&amoris_assets::lut::ColorLut>,
+    ) {
+        let Some(lut) = lut else {
+            if let Some(g) = &mut self.grade {
+                g.table = None;
+                g.group = None;
+            }
+            return;
+        };
+        let size = wgpu::Extent3d {
+            width: lut.size,
+            height: lut.size,
+            depth_or_array_layers: lut.size,
+        };
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("color grading table"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D3,
+            format: wgpu::TextureFormat::Rgba32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let texels: Vec<[f32; 4]> = lut.table.iter().map(|&[r, g, b]| [r, g, b, 1.0]).collect();
+        queue.write_texture(
+            texture.as_image_copy(),
+            bytemuck::cast_slice(&texels),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(lut.size * 16),
+                rows_per_image: Some(lut.size),
+            },
+            size,
+        );
+        let table = Some(texture.create_view(&Default::default()));
+        match &mut self.grade {
+            Some(g) => {
+                g.table = table;
+                g.group = None;
+            }
+            None => {
+                self.grade = Some(Grade {
+                    pipeline: pipeline(
+                        device,
+                        &self.module,
+                        "fs_tonemap_graded",
+                        self.output,
+                        None,
+                    ),
+                    table,
+                    group: None,
+                });
+            }
+        }
+    }
+
+    /// The bind group of the pass in parameter slot `slot`: `pipeline` reading `src` (and `bloom`,
+    /// and the grading table `lut`).
+    #[allow(clippy::too_many_arguments)]
     fn group(
         &self,
         device: &wgpu::Device,
@@ -660,6 +753,7 @@ impl Post {
         slot: u64,
         src: &wgpu::TextureView,
         bloom: Option<&wgpu::TextureView>,
+        lut: Option<&wgpu::TextureView>,
     ) -> wgpu::BindGroup {
         let mut entries = vec![
             wgpu::BindGroupEntry {
@@ -683,6 +777,12 @@ impl Post {
             entries.push(wgpu::BindGroupEntry {
                 binding: 3,
                 resource: wgpu::BindingResource::TextureView(b),
+            });
+        }
+        if let Some(l) = lut {
+            entries.push(wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::TextureView(l),
             });
         }
         device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -726,9 +826,10 @@ impl Post {
 
     /// Bloom, then the display transform from `src` (the frame's HDR image, the size of `t`) into
     /// `output`; `sharpen` (0: off) sharpens the image before the display transform
-    /// (docs/spec/taa-gtao.md). While a frame trace records (trace.rs) the bloom chain and the
-    /// display transform are timed as one pass, "post"; otherwise they are not, so the frame's GPU
-    /// time stays the scene passes' that the benchmarks recorded.
+    /// (docs/spec/taa-gtao.md), and with a grading table set, `grade` (0 to 1; 0: off) is its
+    /// share of the output (docs/spec/color-grading.md). While a frame trace records (trace.rs)
+    /// the bloom chain and the display transform are timed as one pass, "post"; otherwise they are
+    /// not, so the frame's GPU time stays the scene passes' that the benchmarks recorded.
     #[allow(clippy::too_many_arguments)]
     pub fn run(
         &mut self,
@@ -742,8 +843,15 @@ impl Post {
         exposure: f32,
         bloom: f32,
         sharpen: f32,
+        grade: f32,
     ) {
         let mips = t.bloom_mips.len();
+        let grade = if grade.is_finite() {
+            grade.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let graded = grade > 0.0 && self.grade.as_ref().is_some_and(|g| g.table.is_some());
         let mut slots: Vec<PostParams> = Vec::new();
         // Down: hdr -> mip 0 (first, Karis), mip i-1 -> mip i.
         for i in 0..mips {
@@ -781,7 +889,7 @@ impl Post {
                 exposure,
                 if self.output_srgb { 1.0 } else { 0.0 },
                 sharpen,
-                0.0,
+                if graded { grade } else { 0.0 },
             ],
         });
         let mut bytes = vec![0u8; slots.len() * 256];
@@ -801,15 +909,33 @@ impl Post {
             let mut groups = Vec::with_capacity(2 * mips);
             for i in 0..mips {
                 let from = if i == 0 { src } else { &t.bloom_mips[i - 1] };
-                groups.push(self.group(device, &self.down, groups.len() as u64, from, None));
+                let slot = groups.len() as u64;
+                groups.push(self.group(device, &self.down, slot, from, None, None));
             }
             for i in (0..mips.saturating_sub(1)).rev() {
                 let from = &t.bloom_mips[i + 1];
-                groups.push(self.group(device, &self.up, groups.len() as u64, from, None));
+                let slot = groups.len() as u64;
+                groups.push(self.group(device, &self.up, slot, from, None, None));
             }
             let last = groups.len() as u64;
-            groups.push(self.group(device, &self.tonemap, last, src, Some(&t.bloom_mips[0])));
+            let bloom = Some(&t.bloom_mips[0]);
+            groups.push(self.group(device, &self.tonemap, last, src, bloom, None));
             self.groups = Some((src.clone(), t.bloom.clone(), groups));
+            if let Some(g) = &mut self.grade {
+                g.group = None;
+            }
+        }
+        if graded
+            && let Some(g) = &self.grade
+            && g.group.is_none()
+        {
+            // The display transform's slot, the last.
+            let last = (2 * mips - 1) as u64;
+            let bloom = Some(&t.bloom_mips[0]);
+            let group = self.group(device, &g.pipeline, last, src, bloom, g.table.as_ref());
+            if let Some(g) = &mut self.grade {
+                g.group = Some(group);
+            }
         }
         let Some((_, _, groups)) = &self.groups else {
             return;
@@ -847,10 +973,19 @@ impl Post {
             );
             slot += 1;
         }
+        // The display transform, with the grading table when one is set and its share is above 0.
+        let (tonemap, group) = match &self.grade {
+            Some(Grade {
+                pipeline,
+                group: Some(group),
+                ..
+            }) if graded => (pipeline, group),
+            _ => (&self.tonemap, &groups[slot]),
+        };
         Self::pass(
             enc,
-            &self.tonemap,
-            &groups[slot],
+            tonemap,
+            group,
             output,
             true,
             "display transform",

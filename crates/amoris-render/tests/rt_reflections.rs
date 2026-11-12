@@ -65,6 +65,8 @@ fn scene(block: Option<Block>, sun: f32, sky: [f32; 3]) -> RenderFrame {
             fog_color: [0.0; 3],
             exposure_ev: 0.0,
             bloom: 0.0,
+            color_lut: String::new(),
+            color_lut_intensity: 1.0,
         }),
         instances: block
             .map(|b| InstanceUpdate {
