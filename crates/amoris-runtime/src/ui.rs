@@ -3,12 +3,12 @@
 //! `ui.list`, the screen's elements as an agent reads them. Also which elements an invisible stack
 //! hides, for these and for the render feed's extraction.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::BTreeSet;
 
 use amoris_assets::{UiBar, UiButton, UiDirection, UiImage, UiStack, UiText};
 use amoris_contract::{Pointer, Problem, detail};
 use amoris_sim::event::{EventKind, NewEvent};
-use amoris_sim::{EntityId, Name, Parent, PlainData};
+use amoris_sim::{EntityId, EntityIndex, Name, Parent, PlainData};
 use bevy_ecs::prelude::World;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -37,32 +37,30 @@ const DEPTH: usize = 64;
 
 /// Every entity that is an invisible stack or is under one: its elements are neither drawn nor
 /// pressed (ui.md 3, Visibility).
-pub fn hidden(world: &mut World) -> HashSet<EntityId> {
-    let mut parents: HashMap<EntityId, EntityId> = HashMap::new();
-    let mut q = world.query::<(&EntityId, &Parent)>();
-    for (id, p) in q.iter(world) {
-        parents.insert(*id, p.parent);
-    }
-    let mut q = world.query::<(&EntityId, &UiStack)>();
-    let off: HashSet<EntityId> = q
-        .iter(world)
-        .filter(|(_, s)| !s.visible)
-        .map(|(id, _)| *id)
+pub fn hidden(world: &World) -> BTreeSet<EntityId> {
+    let index = world.resource::<EntityIndex>();
+    let off: BTreeSet<EntityId> = index
+        .iter()
+        .filter(|(_, e)| world.get::<UiStack>(*e).is_some_and(|s| !s.visible))
+        .map(|(id, _)| id)
         .collect();
-    let mut out = HashSet::new();
+    let mut out = BTreeSet::new();
     if off.is_empty() {
         return out;
     }
-    let mut q = world.query::<&EntityId>();
-    for id in q.iter(world) {
-        let mut at = *id;
+    for (id, _) in index.iter() {
+        let mut at = id;
         for _ in 0..DEPTH {
             if off.contains(&at) {
-                out.insert(*id);
+                out.insert(id);
                 break;
             }
-            match parents.get(&at) {
-                Some(p) => at = *p,
+            match index
+                .get(at)
+                .and_then(|e| world.get::<Parent>(e))
+                .map(|p| p.parent)
+            {
+                Some(p) => at = p,
                 None => break,
             }
         }
@@ -95,7 +93,7 @@ pub fn press(b: &mut amoris_sim::Boundary<'_>, params: &Value) -> Result<(Value,
             id,
         ));
     }
-    if !button.visible || hidden(b.world_mut()).contains(&id) {
+    if !button.visible || hidden(b.world()).contains(&id) {
         return Err(refused(
             "ui.hidden",
             format!("The button {} is not on the screen.", id.get()),
@@ -124,23 +122,20 @@ pub fn press(b: &mut amoris_sim::Boundary<'_>, params: &Value) -> Result<(Value,
 }
 
 /// `ui.list`: the visible elements in id order (ui.md 7).
-pub fn list(world: &mut World, params: &Value) -> Result<Value, Problem> {
+pub fn list(world: &World, params: &Value) -> Result<Value, Problem> {
     crate::decode::<UiListParams>(params, "ui.list")?;
     let hidden = hidden(world);
     let mut rows: Vec<(EntityId, Value)> = Vec::new();
-    let mut q = world.query::<(
-        &EntityId,
-        Option<&Name>,
-        Option<&Parent>,
-        (
-            Option<&UiText>,
-            Option<&UiBar>,
-            Option<&UiImage>,
-            Option<&UiButton>,
-            Option<&UiStack>,
-        ),
-    )>();
-    for (id, name, parent, (text, bar, image, button, stack)) in q.iter(world) {
+    for (eid, e) in world.resource::<EntityIndex>().iter() {
+        let id = &eid;
+        let (name, parent) = (world.get::<Name>(e), world.get::<Parent>(e));
+        let (text, bar, image, button, stack) = (
+            world.get::<UiText>(e),
+            world.get::<UiBar>(e),
+            world.get::<UiImage>(e),
+            world.get::<UiButton>(e),
+            world.get::<UiStack>(e),
+        );
         if hidden.contains(id) {
             continue;
         }
@@ -195,7 +190,6 @@ pub fn list(world: &mut World, params: &Value) -> Result<Value, Problem> {
             rows.push((*id, Value::Object(m)));
         }
     }
-    rows.sort_by_key(|(id, _)| *id);
     let omitted = rows.len().saturating_sub(LIST_MAX);
     let elements: Vec<Value> = rows.into_iter().take(LIST_MAX).map(|(_, v)| v).collect();
     let mut out = json!({"elements": elements});

@@ -727,7 +727,7 @@ impl Game {
                 let p: WorldGetParams = decode(p, name)?;
                 edit::world_get(self.sim.world(), &p)
             }
-            "ui.list" => crate::ui::list(self.sim.world_mut(), p),
+            "ui.list" => crate::ui::list(self.sim.world(), p),
             "world.tree" => inspect::tree(self.sim.world(), &decode::<WorldTreeParams>(p, name)?),
             "world.query" => {
                 inspect::query(self.sim.world(), &decode::<WorldQueryParams>(p, name)?)
