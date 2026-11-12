@@ -1346,8 +1346,15 @@ ns，WebAssembly 23 到 30 ns，比 M5 慢 1.3 到 1.9 倍；blockcraft 的 256�
   debugger.md 7），否则 checker 能在暂停帧里求值。
 - 这仍是 loopback 上本地客户端之间的角色限制，不是远程身份鉴权。锁保护的是端口而不是磁盘：同一用户
   的进程仍可直接读项目文件与 grants 文件，隔离 agent 是其沙箱的事。
-- 未做：grant 的 `policy`、`profile`、`clock`、`decision`、`max_wall_ms`（文件里出现即拒绝，而不是
-  接受后忽略），运行期签发、吊销 token，浏览器编辑器连接锁定的宿主，loopback 以外的监听。
+- 未做：grant 的 `profile`、`clock`、`decision`、`max_wall_ms` 与 `policy` 中除 `fork` 以外的字段
+  （文件里出现即拒绝，而不是接受后忽略），运行期签发、吊销 token，浏览器编辑器连接锁定的宿主，
+  loopback 以外的监听。
+- 同日补上进程外 agent 的前瞻（规格见 [player.md](spec/player.md) 7.1）：`player.fork`、
+  `player.discard`、`player.branches`，其余 player 命令带 `world` 作用于调用方自己的分支。分支由游戏
+  线程持有，步进式、在主世界的边界之间内联运行，不录制、不发布、不推送，主世界看不到它；界限由
+  runtime 固定（每个 source 4 个、全部 16 个分支，主世界停在同一 tick 时每个 source 至多 600 个分支
+  tick，超出则事先拒绝），主世界实时运行时分支不步进。锁定宿主上 player grant 只有写了
+  `"policy": {"fork": true}` 才能分叉，默认不能（mcp.md 3.1 的默认值）。
 
 2026-10-30（所有者决定："如果引擎没有足够的骨骼动画支持能力, 那正好补上. 参考ue和godot"，为第三人称
 战斗游戏 Thornkeep）：角色动画进入模拟。之前模拟只推进 `Animator` 的时间、从不加载片段，姿态只在渲染
