@@ -424,8 +424,12 @@ export interface SystemContext {
 	>(spec: QuerySpec<W, F>): Query<W, F>;
 	/** Appends an event when the system's commands apply: `ctx.emit("crate.taken", {left}, {subject: boat})`. */
 	emit<const K extends string>(kind: EventKind<K>, data?: Data, options?: EmitOptions): void;
-	/** Queues an act for an entity, carried out by an executor. */
-	intent(actor: Entity, kind: string, params?: Data): void;
+	/**
+	* Starts an intent for an entity whose `Observer` names a seat (a non-player character acting
+	* as an agent would): checked now, applied when the system's commands apply, started in the
+	* next tick. A refusal throws the act's code (`action.unknown_intent`, ...) at this line.
+	*/
+	intent(actor: Entity, kind: string, params?: Data, options?: IntentOptions): void;
 	/** Block volumes. */
 	readonly voxels: VoxelAccess;
 	/** Water regions. */
@@ -438,6 +442,134 @@ export interface SystemContext {
 	readonly nav: NavAccess;
 	/** Scene files to load after the tick. */
 	readonly scene: SceneAccess;
+}
+/** Where `ctx.intent`'s intent aims, and the caller's own label for it. */
+export interface IntentOptions {
+	/** An entity the actor's seat knows, or a point (`y` may be left out). */
+	readonly target?: Entity | {
+		readonly x: number;
+		readonly y?: number;
+		readonly z: number;
+	};
+	/** At most 64 bytes, echoed in the instance and its events. */
+	readonly tag?: string;
+}
+/** A progress reading's value as an instance keeps it. */
+export interface Reading {
+	readonly name: string;
+	readonly value: Data;
+}
+/** An intent instance an executor carries out: the contract's `IntentView` with its `state`. */
+export interface Intent {
+	readonly id: number;
+	/** The intent's name. */
+	readonly intent: string;
+	readonly status: "active" | "holding";
+	readonly tag?: string;
+	/** Canonical: defaults filled, `timeout_s` (and `keep`, when it can hold) included. */
+	readonly params: {
+		readonly [name: string]: Data;
+	};
+	/** The target as the actor's seat knows it: an entity, or a point. */
+	readonly target?: {
+		readonly id: Entity;
+		readonly name?: string;
+	} | Vec3;
+	readonly started_tick: number;
+	readonly progress: readonly Reading[];
+	/** The executor's own state, kept in the instance: `null` until `setState`. */
+	readonly state: Data;
+}
+/** An entity as an actor knows it (the contract's percept). */
+export interface Percept {
+	readonly id: Entity;
+	readonly name?: string;
+	readonly kind: string;
+	readonly visibility: "seen" | "remembered" | "charted";
+	/** Where it is (seen), was (remembered) or is charted, metres. */
+	readonly pos_m: Vec3;
+	/** Horizontal, from the actor's body. */
+	readonly range_m: number;
+	readonly bearing_deg: number;
+	/** The facts the actor may know of it, by name. */
+	readonly facts: {
+		readonly [name: string]: Data;
+	};
+}
+/** An event an actor perceived. */
+export interface PerceivedEvent {
+	/** The observer's own sequence number. */
+	readonly seq: number;
+	readonly world_seq?: number;
+	readonly tick: number;
+	readonly kind: string;
+	readonly subject?: Entity;
+	readonly data: {
+		readonly [name: string]: Data;
+	};
+}
+/** What `view.nearby` filters by. */
+export interface NearbyQuery {
+	readonly kinds?: readonly string[];
+	readonly within_m?: number;
+	readonly visibility?: readonly ("seen" | "remembered" | "charted")[];
+	/** 1 to 100 (the default). */
+	readonly limit?: number;
+}
+/** What an intent's actor perceives: the only world an executor sees. */
+export interface PerceptionView {
+	/** One of the seat's instruments, or `undefined`. */
+	instrument(name: string): Data | undefined;
+	/** An entity the seat knows, or `undefined` for one it does not, existing or not. */
+	percept(e: Entity): Percept | undefined;
+	/** The entities the seat knows that match, nearest first, then by id. */
+	nearby(query?: NearbyQuery): readonly Percept[];
+	/** The events the seat perceived after `seq`, oldest first. */
+	eventsSince(seq: number): readonly PerceivedEvent[];
+}
+/** The actor's controls on the intent's channels; any other control throws `script.restricted`. */
+export interface ControlWriter {
+	/** Latches a value: a number on an axis, a boolean on a toggle, a name on a choice. */
+	set(control: string, value: number | boolean | string): void;
+	/** One pulse, acting in the next tick, at a target the seat knows if the control takes one. */
+	pulse(control: string, target?: Entity): void;
+}
+/**
+* The context of one executor call, frozen: its instances, its seats' perception and controls.
+* The members a system's context has besides these throw `script.restricted`.
+*/
+export interface ExecutorContext {
+	readonly tick: number;
+	readonly dt: number;
+	readonly time: number;
+	/** The executor's name. */
+	readonly system: string;
+	/** The executor's random stream. */
+	readonly rng: Rng;
+	/** The active and holding instances of its intents that have started, in id order. */
+	readonly intents: readonly Intent[];
+	/** What the intent's actor perceives. */
+	view(intent: Intent): PerceptionView;
+	/** The actor's controls on the intent's channels. */
+	controls(intent: Intent): ControlWriter;
+	/** Replaces the intent's progress readings (declared names only). */
+	progress(intent: Intent, readings: {
+		readonly [name: string]: Data;
+	}): void;
+	/** Replaces the executor's state kept in the instance. */
+	setState(intent: Intent, state: Data): void;
+	/** The goal is met: holding with `keep`, succeeded otherwise. */
+	reached(intent: Intent, readings?: {
+		readonly [name: string]: Data;
+	}): void;
+	/** The goal is met: succeeded, whatever `keep` says. */
+	succeed(intent: Intent, readings?: {
+		readonly [name: string]: Data;
+	}): void;
+	/** Fails it with one of its failures' codes; the message comes from the code's template. */
+	reject(intent: Intent, code: string, detail?: {
+		readonly [field: string]: Data;
+	}): void;
 }
 /** A field's type as scripts see it (script-host.md 6). */
 export type FieldType = "f64" | "i32" | "u32" | "tick" | "bool" | "str" | "entity" | "vec2" | "vec3" | "vec4" | "quat" | "enum";
@@ -520,19 +652,102 @@ export interface System {
 		readonly name: string;
 	};
 }
-/** A system that carries out intents (script-host.md 5.5); not available before slice 2. */
-export interface ExecutorDef {
+/** A parameter of an intent, made by a `param` builder. */
+export interface ParamDef<
+	T extends string = string,
+	V = unknown
+> {
+	readonly __amoris: "param";
+	readonly type: T;
+	readonly doc: string;
+	readonly values?: readonly string[];
+	readonly options?: {
+		readonly default?: V;
+		readonly min?: number;
+		readonly max?: number;
+	};
+}
+/** A perception unit (the perception file's form): `{unit: "metres"}`, `{unit: "enum", values}`. */
+export type Unit = {
+	readonly unit: "metres" | "metres_per_second" | "seconds" | "kilograms" | "bearing" | "angle";
+} | {
+	readonly unit: "count" | "bool" | "text" | "position";
+} | {
+	readonly unit: "fraction";
+	readonly min: number;
+	readonly max: number;
+} | {
+	readonly unit: "enum";
+	readonly values: readonly string[];
+};
+/** A progress reading an intent reports (the contract's `ProgressDef`). */
+export interface ProgressDecl {
+	/** `^[a-z][a-z0-9_]*$`, with its unit's suffix: `distance_m`. */
 	readonly name: string;
+	readonly doc: string;
+	readonly unit: Unit;
+	/** Decimal places kept; 0 makes it whole. */
+	readonly precision: number;
+}
+/** A game code an intent can fail with (the contract's `CodeDef`, with the fail use). */
+export interface CodeDecl {
+	/** `family.name`, in a family the engine does not own: `"errand.blocked"`. */
+	readonly code: string;
+	/** When it is given. */
+	readonly when: string;
+	/** Its detail fields, which `reject` may give and the template names. */
+	readonly detail?: readonly string[];
+	/** The message, over the detail fields: `"{waypoint} is out of reach."`. */
+	readonly template: string;
+}
+/** An intent a script executor carries out (script-host.md 5.5): the contract's `IntentDef`. */
+export interface IntentDecl {
+	/** What it does, when it succeeds and how it can fail, for players and agents. */
+	readonly doc: string;
+	/** Its parameters, by name, from the `param` builders; `timeout_s` (and `keep`) are added. */
+	readonly params?: {
+		readonly [name: string]: ParamDef;
+	};
+	/** What it aims at (default `"none"`). */
+	readonly target?: "none" | "point" | {
+		readonly entity: readonly string[];
+	} | {
+		readonly entityOrPoint: readonly string[];
+	};
+	/** The channels it occupies: starting it supersedes what holds them. */
+	readonly channels: readonly string[];
+	/** Accepts `keep: true`, holding the goal once reached. */
+	readonly canHold?: boolean;
+	/** The default of `timeout_s`, seconds. */
+	readonly timeoutS: number;
+	/** The codes it can fail with: declared here, or the names of codes declared elsewhere. */
+	readonly failures?: readonly (string | CodeDecl)[];
+	/** The progress readings it reports. */
+	readonly progress?: readonly ProgressDecl[];
+}
+/** An intent, as `executor({intents})` takes it. */
+export interface IntentKind<N extends string = string> {
+	readonly __amoris: "intent";
+	readonly name: N;
+	readonly def: IntentDecl;
+}
+/** A system that carries out intents (script-host.md 5.5). */
+export interface ExecutorDef<N extends string = string> {
+	/** `^[a-z][a-z0-9_]*$`, unique among the game's systems. */
+	readonly name: SystemName<N>;
 	readonly phase: "update";
 	readonly doc: string;
-	/** The intent kinds it carries out. */
-	readonly intents: readonly string[];
-	run(ctx: unknown): void;
+	/** The intents it carries out; each is carried out by one executor. */
+	readonly intents: readonly IntentKind[];
+	/** Called every tick it has instances: carries each out through `ctx`, synchronously. */
+	run(ctx: ExecutorContext): void;
 }
-/** An executor. */
+/** An executor, as `game({systems})` takes it beside the systems. */
 export interface Executor {
 	readonly __amoris: "executor";
-	readonly def: ExecutorDef;
+	readonly def: {
+		readonly name: string;
+	};
 }
 /** A project component removed or renamed since an earlier version of the game. */
 export type Retired = {
@@ -549,8 +764,8 @@ export type Retired = {
 export interface GameDef {
 	/** The game's own components, in registration order. */
 	readonly components?: readonly Component[];
-	/** The systems, in run order: this array is the whole order. */
-	readonly systems: readonly System[];
+	/** The systems and executors, in run order: this array is the whole order. */
+	readonly systems: readonly (System | Executor)[];
 	/** Project components removed or renamed. */
 	readonly retired?: readonly Retired[];
 }
@@ -577,8 +792,46 @@ export declare function system<
 	const Q extends CheckedQueries<Q> = {},
 	const N extends string = string
 >(def: SystemDef<Q, N>): System;
-/** @pure A system that carries out intents (script-host.md 5.5); `game()` refuses it before slice 2. */
-export declare function executor(def: ExecutorDef): Executor;
+/**
+* @pure A system that carries out the intents it lists (script-host.md 5.5): every tick it has
+* active or holding instances, `run` sees them in `ctx.intents` and drives each actor's controls.
+*/
+export declare function executor<const N extends string = string>(def: ExecutorDef<N>): Executor;
+/**
+* @pure An intent of the game (script-host.md 5.5), which players and agents start with
+* `player.act` and affordances, and `ctx.intent` starts for a seat's body:
+* `intent("walk_to", {doc: "...", target: {entity: ["waypoint"]}, channels: ["body"], timeoutS: 30})`.
+*/
+export declare function intent<const N extends string>(name: N, def: IntentDecl): IntentKind<N>;
+/** The parameter builders of intents: the doc, then the options. */
+export interface ParamBuilders {
+	/** A number, within `min` and `max` when given. */
+	readonly number: (doc: string, options?: {
+		readonly default?: number;
+		readonly min?: number;
+		readonly max?: number;
+	}) => ParamDef<"number", number>;
+	/** A whole number, within `min` and `max` when given. */
+	readonly integer: (doc: string, options?: {
+		readonly default?: number;
+		readonly min?: number;
+		readonly max?: number;
+	}) => ParamDef<"integer", number>;
+	/** True or false. */
+	readonly bool: (doc: string, options?: {
+		readonly default?: boolean;
+	}) => ParamDef<"bool", boolean>;
+	/** One of the names. */
+	readonly choice: <const V extends string>(values: readonly V[], doc: string, options?: {
+		readonly default?: NoInfer<V>;
+	}) => ParamDef<"choice", V>;
+	/** A string of at most 256 characters. */
+	readonly text: (doc: string, options?: {
+		readonly default?: string;
+	}) => ParamDef<"text", string>;
+}
+/** @pure The parameter builders of intents: a parameter without a default is required. */
+export declare const param: ParamBuilders;
 /** @pure The game: the entry module's default export (script-host.md 4.2). */
 export declare function game(def: GameDef): Game;
 /** @pure Deep-freezes a value. */

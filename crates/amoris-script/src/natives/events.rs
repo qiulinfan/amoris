@@ -1,5 +1,6 @@
-//! Events and intents (docs/spec/script-host.md 5.5): `ctx.emit` stages an event appended at the
-//! commit, `ctx.events` reads the inbox's events of the kinds a system declares.
+//! Events (docs/spec/script-host.md 5.5): `ctx.emit` stages an event appended at the commit,
+//! `ctx.events` reads the inbox's events of the kinds a system declares. Intents are
+//! `natives::intents`'.
 
 use amoris_sim::event::{EventInbox, EventKind, EventSeq, NewEvent};
 use amoris_sim::{EntityId, Event, PlainData};
@@ -248,16 +249,6 @@ pub fn events<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
         a.set(i, event_to_js(ctx, e)?)?;
     }
     Ok(freeze_new(ctx, a.into_object())?)
-}
-
-/// `ctx.intent`: script intents arrive with the player interface (slice 2).
-pub fn intent<'js>(_ctx: &Ctx<'js>, _args: &[Value<'js>]) -> NResult<'js> {
-    Err(ScriptError::new(
-        "script.restricted",
-        "ctx.intent is not available yet: intents arrive with the player interface (slice 2).",
-        ErrorPhase::Run,
-    )
-    .into())
 }
 
 #[cfg(test)]

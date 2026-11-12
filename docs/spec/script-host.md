@@ -366,8 +366,11 @@ own) or names of codes declared elsewhere in the game or of [contract]'s fail co
 an engine intent's. A swap (hot-update.md 5) installs the program's intents and codes into the
 world's action catalog, replacing the previous program's, and checks the catalog whole again (an
 affordance in the perception file may name a script intent, so the engine's catalog leaves such a
-name to this check): a program with executors in a world without a player layer, or one whose
-declarations fail, is refused (`script.bad_definition`) and the world keeps its program. The
+name to this check): a program whose declarations fail is refused (`script.bad_definition`) and
+the world keeps its program. A world with no catalog yet (a replay's, before its start snapshot
+restores the player layer) takes the program, whose intents join the catalog when the layer's
+declarations are derived; the runtime refuses a game without `[player]` whose scripts declare
+intents, when it is built and at a hot update. The
 catalog is code, not world state (persistence.md 2): `player.declarations`' rebuild after a restore
 installs the live program's intents again. Players and agents start script intents as any other,
 through `player.act`'s `start` and affordances whose effect names them, with no new protocol; a

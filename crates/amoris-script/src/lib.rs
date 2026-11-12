@@ -30,6 +30,7 @@ pub mod error;
 pub mod ffi;
 mod freeze;
 pub mod host;
+mod intent_def;
 pub(crate) mod js;
 mod loader;
 pub(crate) mod natives;

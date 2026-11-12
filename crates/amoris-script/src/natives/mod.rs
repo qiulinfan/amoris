@@ -8,6 +8,7 @@ pub mod anim;
 pub mod console;
 pub mod events;
 pub mod harden;
+pub mod intents;
 pub mod physics;
 pub mod query;
 pub mod rng;
@@ -71,7 +72,20 @@ const NATIVES: &[(&str, Native, bool)] = &[
     ("emit", events::emit, true),
     ("sceneLoad", events::scene_load, true),
     ("events", events::events, false),
-    ("intent", events::intent, true),
+    ("intent", intents::act, true),
+    ("restricted", intents::restricted, false),
+    ("executorIntents", intents::intents, false),
+    ("viewInstrument", intents::view_instrument, false),
+    ("viewPercept", intents::view_percept, false),
+    ("viewNearby", intents::view_nearby, false),
+    ("viewEvents", intents::view_events, false),
+    ("controlSet", intents::control_set, true),
+    ("controlPulse", intents::control_pulse, true),
+    ("intentProgress", intents::progress, true),
+    ("intentState", intents::set_state, true),
+    ("intentReached", intents::reached, true),
+    ("intentSucceed", intents::succeed, true),
+    ("intentReject", intents::reject, true),
     ("rngSystem", rng::system, false),
     ("rngEntity", rng::entity, false),
     ("rngNamed", rng::named, false),
@@ -238,6 +252,14 @@ pub fn with_call<R>(
     let sh = shared(ctx);
     let mut guard = sh.call.borrow_mut();
     let call = guard.as_mut().ok_or_else(|| no_system(what))?;
+    // An executor sees only its seat's perception and acts only through its intents' controls
+    // (script-host.md 5.5): every other native is refused during its call.
+    if call.executor.is_some() && !intents::allowed_in_executor(what) {
+        return Err(intents::restricted_error(
+            what,
+            "it sees only its seat's perception and acts only through the intent's controls",
+        ));
+    }
     call.counts.host_calls = call.counts.host_calls.saturating_add(1);
     // SAFETY: the pointer is the `&mut World` `run_system` holds for the call; it is not used
     // there while JavaScript runs, and `f` runs no JavaScript, so this is the only reference.

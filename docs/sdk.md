@@ -342,7 +342,8 @@ ordinary systems. Example: `samples/sailing-course` ([spec/player.md](spec/playe
 ```toml
 [player]
 perception = "perception.json"   # what each seat perceives: profiles, instruments, kinds, events
-actions = "sailing"              # the engine's controls, intents (Rust executors) and affordances
+actions = "sailing"              # the engine's controls, intents (Rust executors) and affordances,
+                                 # beside the intents the scripts declare
 done_event = "course.finished"   # emitting it ends the episode; its data are the result
 ```
 
@@ -359,10 +360,57 @@ done_event = "course.finished"   # emitting it ends the episode; its data are th
   `Crew.take` for one tick; the rule takes the crate and clears the field, or emits
   `interact.ignored` with a `code` saying why not. Keep that answer in an event, never in module
   state.
-- **Executors in TypeScript are not available yet**: `game()` refuses `executor({...})` and
-  `ctx.intent` throws `script.restricted`; a game's own intents are engine catalogs for now
-  (spec/player.md 10). A decision model can still run in the tick as an ordinary system that writes
-  controls, as the player bench's `pilot` does (docs/bench/player.md 2).
+- **A game's own intents** are written in TypeScript ([spec/script-host.md](spec/script-host.md)
+  5.5): `intent(name, def)` declares one (its doc, `param` builders for its parameters, its target,
+  the channels it occupies, `timeoutS`, the codes it can fail with, its progress readings), and the
+  `executor({...})` that lists it carries it out, as an entry of `systems`. Players and agents start
+  it like an engine intent (`player.act`'s `start`, or a perception file affordance whose effect
+  names it); `describe` shows it. Example: `tests/fixtures/intents/errand`.
+
+  ```ts
+  export const walkTo = intent("walk_to", {
+      doc: "Walk to a waypoint and press it on arrival.",
+      params: { arrive_m: param.number("How close counts, metres.", { default: 1.2, min: 0.5 }) },
+      target: { entity: ["waypoint"] },
+      channels: ["body"],
+      timeoutS: 30,
+      failures: [{ code: "errand.stuck", when: "No progress for 3 s.", detail: ["waypoint"],
+                   template: "Stuck short of {waypoint}." }],
+      progress: [{ name: "distance_m", doc: "Metres left.", unit: { unit: "metres" },
+                   precision: 1 }],
+  });
+  export const walker = executor({
+      name: "walker", phase: "update", doc: "Walks to waypoints.", intents: [walkTo],
+      run(ctx) {
+          for (const it of ctx.intents) {          // active and holding instances, oldest first
+              const view = ctx.view(it);            // the seat's perception: all an executor sees
+              const at = view.percept((it.target as { id: Entity }).id);
+              if (!at) { ctx.reject(it, "errand.stuck", { waypoint: "?" }); continue; }
+              const me = view.instrument("pos_m") as { x: number; z: number };
+              const d = Math.hypot(at.pos_m.x - me.x, at.pos_m.z - me.z);
+              if (d <= (it.params.arrive_m as number)) {
+                  ctx.succeed(it, { distance_m: d });
+                  continue;
+              }
+              ctx.controls(it).set("yaw", Math.atan2(me.x - at.pos_m.x, me.z - at.pos_m.z));
+              ctx.controls(it).set("forward", 1);   // only the intent's channels' controls
+              ctx.progress(it, { distance_m: d });
+          }
+      },
+  });
+  ```
+
+  An executor runs each tick it has instances, inside the tick's step budget, and sees no world:
+  `ctx.world`, `ctx.query`, `ctx.emit` and the rest throw `script.restricted`, as does a control
+  on another channel, so an intent can do only what its seat could do with controls. What it keeps
+  between ticks goes in `ctx.setState(it, data)`, read back as `it.state`: the instance is world
+  state, so snapshots, forks, replays and hot updates carry it (never keep it in module state).
+  `ctx.reached` holds a `keep` intent and succeeds the others; `ctx.reject(it, code, detail)` takes
+  a code among the intent's failures, and its message comes from the code's template.
+- **A rule can act for a seat's body** with `ctx.intent(actor, "walk_to", params, {target, tag})`:
+  the act an agent would send, checked at the call (a refusal throws its code, such as
+  `action.unknown_intent`, at that line) and started in the next tick. Its actor's `Observer` must
+  name a seat. Replays rerun the rule, so it is never recorded.
 - Playing it: `amoris player observe --seat skipper`,
   `amoris player act '[{"do": "start", "intent": "sail_to", "target": "Mark1"}]' --seat skipper`,
   `amoris player wait --seat skipper` (runs to the seat's next decision point),

@@ -292,6 +292,7 @@ version = "0.1.0"
 dependencies = [
  "amoris-assets",
  "amoris-contract",
+ "amoris-interface",
  "amoris-physics",
  "amoris-sim",
  "bevy_ecs",
