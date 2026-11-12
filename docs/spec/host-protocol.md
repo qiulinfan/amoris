@@ -113,7 +113,7 @@ Each method is a command of the catalog (`GET /api/catalog` is authoritative). K
 | `scripts.apply` | `{files?, force?, dry_run?}` | `{outcome, bundle, diagnostics, typecheck, ...}` (type check if `tsc` is installed, compile, hot swap at a boundary) |
 | `scripts.check` | `{}` | `{outcome, diagnostics, typecheck}` (no swap) |
 | `assets.list` | `{dir?}` | `[{path, kind, bytes}]` |
-| `assets.import` | `{path}` | `{asset, meshes, materials}` (not built yet) |
+| `assets.upload` | `{path, data, offset? = 0, done? = true, overwrite? = false}` | `{path, kind, bytes}` at the last part, `{path, received}` before it: a file into the project in base64 parts of at most 1 MiB (server.md 3) |
 | `events.since` | `{seq?, limit?, name?}` | `{events, last, missed}` |
 | `events.why` | `{seq}` | `{event, causes, complete}`: the cause chain |
 | `log.since` | `{seq?, limit?}` | `{lines, last}` |
@@ -263,3 +263,7 @@ The editor reads both forms now (`halted`, or `poisoned` set). The host changed 
 error of the tick that poisoned the world is a `log` line (in real time no `time.step` waits for
 it, so nothing had said why the world halted), and `time.control` checks `speed` and `pacing`
 before it applies either (a good `speed` beside a refused `pacing` had stayed applied).
+
+2026-11-12, files into the project (editor.md 6.3, 8 item 15): `assets.upload` replaces
+`assets.import {path}`, which the host never built and which needed the file on the host's disk.
+The editor uploads what is picked in the browser or dropped on the Assets panel.

@@ -43,7 +43,7 @@ amoris mcp samples/sailing     # MCP over stdio (uses the running host if there 
  editor (/ws)   CLI, tests (/api/call)   MCP clients (/mcp, stdio)
         \              |                    /
          amoris-server: Host::call(via, method, params)
-           |  answered here: catalog, events.*, log.since, profile.frame, assets.list,
+           |  answered here: catalog, events.*, log.since, profile.frame, assets.*,
            |  docs.search, scripts.guide, the type check stage, debug.* and capture (plug-ins)
            v
    amoris-link: GameClient per source (Editor; one Developer for the API; one per MCP session)
@@ -108,6 +108,7 @@ files).
 | `log.since` | read (server) | `{seq?, limit? = 100}` | `{lines: [log line], last}` |
 | `profile.frame` | read (server) | `{ticks? = 60}` (at most 600) | the `profile` summary (4) of the last `ticks` ticks profiled |
 | `assets.list` | read (server) | `{dir?}` | `[{path, kind, bytes}]`, served at `/assets/<path>` |
+| `assets.upload` | request (server) | `{path, data, offset? = 0, done? = true, overwrite? = false}` | `{path, received}` for a part before the last, `{path, kind, bytes}` for the last: a file into the project, its bytes in base64 parts (RFC 4648's standard alphabet, padded) of at most 1 MiB (`UPLOAD_PART`), so a part's call fits the HTTP API's 2 MB body. Offset 0 begins (again) a staging file under `.amoris/uploads/`, each later part must start where the received ones end (else `assets.upload_offset {path, expected, got}`), and the last part moves it to `path`, creating its directories. Refused, changing nothing: a `path` not inside the project (`..`, a root, a dot file or directory, a trailing `/`, a directory that a link leads out of the project) or `data` that is not base64 or holds over 1 MiB (`request.invalid_value`), and a file already at `path` without `overwrite` (`assets.exists`) |
 | `docs.search` | read (server) | `{query, limit? = 10}` | `[{command, doc}`, `{component, doc, fields}` or `{guide, read}]` (a matching section of `scripts.guide`) |
 | `debug.*` | (server) | per amoris-debug (debugger.md 7), one catalog entry each with its schema | `debug.not_available` until a `DebugHub` is installed; `debug.rewind {tick, bundle?}` and `debug.writes {entity, component, field?, ticks?}` (debugger.md 13) are the server's own |
 | `capture` | read (server) | `{position?, look_at? \| rotation?, fov_deg? = 60, width? = 1280, height? = 720, frames? = 0}` (no `position`: the scene's camera; `look_at` defaults to the origin; `rotation` a quaternion `[x, y, z, w]`; `frames` at most 1,200) | `{path, width, height, tick, instances, gpu_ms, pending_assets, spray}`: a PNG under `.amoris/captures/` (amoris-app's `present.rs`); `capture.not_available` until a `CaptureHub` is installed |
@@ -296,7 +297,7 @@ read`, and the CLI had no read timeout, so 28 calls in 11 runs hung until the ag
   section, which equals what the game's own reads answer (`paused_host.rs` compares them call by
   call). `catalog.list` (fetched before serving), `docs.search` (component schemas from the
   publication's registry), `events.*`, `log.since`, `profile.frame`, `assets.list`,
-  `scripts.guide` and `debug.*` never need the game.
+  `assets.upload`, `scripts.guide` and `debug.*` never need the game.
 - **`play.stop` in Play ends Play wherever the debugger holds it.** Stop drops the fork, held tick
   and all, so the server has the debugger pass over every pause (amoris-debug `DebugHub::pass`,
   the server's `DebugHub::pass`) from the moment it sees one until the Stop lands: the held tick

@@ -1,13 +1,14 @@
 // The asset browser: the project's assets as a grid of thumbnails (or a list), filtered by kind and
-// name; drag one into the viewport or the hierarchy to place it, import a file by path.
+// name; drag one into the viewport or the hierarchy to place it; import files by picking them or
+// dropping them on the panel (uploaded into the project, actions/assets.ts).
 
 import { ClipboardCopy, Import, LayoutGrid, List, PackagePlus, RefreshCw } from "lucide-react";
 import { useMemo, useState } from "react";
 import { api } from "../../host/api";
+import { chooseFiles, importFiles } from "../../actions/assets";
 import { attempt } from "../../actions/report";
 import { placeableKind, spawnAsset } from "../../actions/world";
 import { ASSET_MIME, useAssets } from "../../state/assets";
-import { useUi, promptText } from "../../state/ui";
 import { Button, IconButton } from "../../ui/Button";
 import { cx } from "../../ui/cx";
 import { bytes } from "../../ui/format";
@@ -28,14 +29,9 @@ const KINDS = [
   { id: "audio", label: "Audio" },
 ];
 
-export async function importAsset() {
-  const path = await promptText({ title: "Import asset", label: "File to import (a path the host can read)", value: "", placeholder: "~/Downloads/lighthouse.glb", confirm: "Import" });
-  if (!path) return;
-  const r = await attempt(api.assets.import(path), "Import");
-  if (r) {
-    useUi.getState().toast({ kind: "success", title: "Imported", body: `${r.asset} (${r.meshes} meshes, ${r.materials} materials)` });
-    await refreshAssets();
-  }
+/** Import: the browser's file chooser, whose files are uploaded into the project. */
+export function importAsset() {
+  chooseFiles();
 }
 
 async function refreshAssets() {
@@ -61,6 +57,7 @@ export function AssetsPanel() {
   const [kind, setKind] = useState("all");
   const [view, setView] = useState<"grid" | "list">(() => (localStorage.getItem("amoris.editor.assets.view") as "grid" | "list") ?? "grid");
   const [selected, setSelected] = useState<string | null>(null);
+  const [dropping, setDropping] = useState(false);
   const shown = useMemo(
     () => assets.filter((a) => (kind === "all" || a.kind === kind) && (!q || a.path.toLowerCase().includes(q.toLowerCase()))),
     [assets, kind, q],
@@ -72,7 +69,6 @@ export function AssetsPanel() {
     contextMenu(e, [
       { label: "Place in Scene", icon: <PackagePlus size={14} />, disabled: !placeable(a), run: () => void spawnAsset(a.path) },
       { label: "Copy Path", icon: <ClipboardCopy size={14} />, run: () => void navigator.clipboard?.writeText(a.path) },
-      { label: "Reimport", icon: <RefreshCw size={14} />, run: () => void attempt(api.assets.import(a.path), "Reimport") },
     ]);
   };
 
@@ -106,7 +102,7 @@ export function AssetsPanel() {
       <IconButton icon={List} label="List" active={view === "list"} onClick={() => (setView("list"), localStorage.setItem("amoris.editor.assets.view", "list"))} />
       <ToolbarSeparator />
       <IconButton icon={RefreshCw} label="Refresh" onClick={() => void refreshAssets()} />
-      <Button size="sm" icon={Import} onClick={() => void importAsset()} data-tip="Import a file into the project's assets">
+      <Button size="sm" icon={Import} onClick={importAsset} data-tip="Upload files into the project's assets (or drop them on this panel)">
         Import
       </Button>
     </Toolbar>
@@ -121,10 +117,27 @@ export function AssetsPanel() {
     </>
   );
 
+  // Files dropped from the system (not an asset card dragged out of this panel) are imported.
+  const fromSystem = (e: React.DragEvent) => e.dataTransfer.types.includes("Files");
   return (
     <PanelShell
       toolbar={toolbar}
-      className="assets-panel"
+      className={cx("assets-panel", dropping && "is-dropping")}
+      onDragOver={(e: React.DragEvent) => {
+        if (!fromSystem(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+        setDropping(true);
+      }}
+      onDragLeave={(e: React.DragEvent) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropping(false);
+      }}
+      onDrop={(e: React.DragEvent) => {
+        setDropping(false);
+        if (!fromSystem(e)) return;
+        e.preventDefault();
+        void importFiles([...e.dataTransfer.files]);
+      }}
       footer={
         <div className="panel-footer">
           {shown.length} of {assets.length} assets · {bytes(total)}
@@ -133,7 +146,7 @@ export function AssetsPanel() {
     >
       {shown.length === 0 ? (
         <EmptyState icon={PackagePlus} title={assets.length ? "No asset matches" : "No assets"}>
-          {assets.length ? "Clear the search or pick another kind." : "Import a glTF model, a texture or a splat."}
+          {assets.length ? "Clear the search or pick another kind." : "Import a glTF model, a texture or a splat, or drop files here."}
         </EmptyState>
       ) : view === "grid" ? (
         <div className="asset-grid">

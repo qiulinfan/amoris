@@ -1,6 +1,8 @@
 // The mock's project assets (`assets.list`): kinds the charter names (glTF models, textures, splats,
 // neural textures, audio) with small generated SVG thumbnails for some, so both thumbnail and
-// kind-icon cards show in the editor.
+// kind-icon cards show in the editor. And `assets.upload`, which adds to them as the host does.
+
+import { MockError } from "./util";
 
 export interface AssetInfo {
   path: string;
@@ -52,3 +54,67 @@ export const ASSETS: AssetInfo[] = [
   { path: "audio/creak.ogg", kind: "audio", bytes: 98_304 },
   { path: "scenes/scene.json", kind: "scene", bytes: 1_342 },
 ];
+
+/** A file's kind by its extension, as the host's `assets.list` names it (amoris-server local.rs
+ * `kind_of`). */
+export function assetKind(path: string): string {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  if (["gltf", "glb", "obj", "fbx"].includes(ext)) return "model";
+  if (["png", "jpg", "jpeg", "ktx2", "hdr", "exr", "webp"].includes(ext)) return "texture";
+  if (["ply", "splat", "spz"].includes(ext)) return "splat";
+  if (["ts", "js"].includes(ext)) return "script";
+  if (["wav", "ogg", "mp3", "flac"].includes(ext)) return "audio";
+  if (["json", "toml", "jsonl"].includes(ext)) return "data";
+  if (ext === "wgsl") return "shader";
+  return "file";
+}
+
+/** The most bytes one `assets.upload` part holds (amoris-server's `UPLOAD_PART`). */
+export const UPLOAD_PART = 1 << 20;
+
+const invalid = (field: string, message: string) => new MockError("request.invalid_value", message, { path: `/${field}` });
+
+/** A relative path inside the project: no `..`, no root, no dot files (local.rs `inside`). */
+function inside(path: string): boolean {
+  if (!path || path.startsWith("/")) return false;
+  return path.split("/").filter((s) => s !== "").every((s) => s !== ".." && !s.startsWith("."));
+}
+
+function decode(data: string): Uint8Array {
+  if (data.length % 4 !== 0) throw invalid("data", `The data is not base64: its length ${data.length} is not a multiple of 4.`);
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(data)) throw invalid("data", "The data is not base64: it holds a character outside the alphabet.");
+  return Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+}
+
+/** `assets.upload` as the host answers it: parts appended from offset 0, the file listed at the
+ * last part, the same refusals with the same codes, messages and details. */
+export function uploadPart(s: { assets: AssetInfo[]; uploads: Map<string, number> }, p: Record<string, unknown>) {
+  const path = String(p.path);
+  const offset = typeof p.offset === "number" ? p.offset : 0;
+  const done = p.done !== false;
+  const overwrite = p.overwrite === true;
+  if (!inside(path) || path.endsWith("/")) throw invalid("path", `'${path}' is not a file path inside the project.`);
+  const bytes = decode(String(p.data));
+  if (bytes.length > UPLOAD_PART) throw invalid("data", `A part holds at most ${UPLOAD_PART} bytes; this one holds ${bytes.length}.`);
+  const exists = () => new MockError("assets.exists", `The project already has '${path}'; upload with overwrite to replace it.`, { path });
+  if (!overwrite && s.assets.some((a) => a.path === path)) throw exists();
+  const had = offset === 0 ? 0 : (s.uploads.get(path) ?? 0);
+  if (had !== offset) {
+    throw new MockError("assets.upload_offset", `This part of '${path}' starts at ${offset}, but the parts received end at ${had}: upload from offset ${had}, or from 0 again.`, {
+      path,
+      expected: had,
+      got: offset,
+    });
+  }
+  const received = offset + bytes.length;
+  if (!done) {
+    s.uploads.set(path, received);
+    return { path, received };
+  }
+  s.uploads.delete(path);
+  const asset = { path, kind: assetKind(path), bytes: received };
+  const i = s.assets.findIndex((a) => a.path === path);
+  if (i >= 0) s.assets[i] = asset;
+  else s.assets.push(asset);
+  return asset;
+}

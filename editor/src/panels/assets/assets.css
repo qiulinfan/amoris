@@ -166,3 +166,9 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Files from the system over the panel: dropping imports them. */
+.assets-panel.is-dropping {
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+}

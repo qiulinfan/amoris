@@ -86,7 +86,7 @@ export const api = {
   },
   assets: {
     list: (dir?: string) => call("assets.list", dir ? { dir } : {}),
-    import: (path: string) => call("assets.import", { path }, 120000),
+    upload: (p: { path: string; data: string; offset?: number; done?: boolean; overwrite?: boolean }) => call("assets.upload", p, 120000),
   },
   events: {
     /** The events after stream number `seq`, oldest first, at most `limit` of them; with `seq`

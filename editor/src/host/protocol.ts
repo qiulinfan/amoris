@@ -532,7 +532,10 @@ export interface Methods {
   "scripts.apply": [{ paths?: string[] }, { bundle: string | null; diagnostics: Diagnostic[] }];
   "scripts.types": [{ text?: boolean; tsconfig?: boolean }, ScriptTypes];
   "assets.list": [{ dir?: string }, AssetInfo[]];
-  "assets.import": [{ path: string }, { asset: string; meshes: number; materials: number }];
+  "assets.upload": [
+    { path: string; data: string; offset?: number; done?: boolean; overwrite?: boolean },
+    { path: string; kind: string; bytes: number } | { path: string; received: number },
+  ];
   /** Without `seq`, the newest `limit` events (100 by default). */
   "events.since": [{ seq?: number; limit?: number; name?: string }, { events: GameEvent[]; last: number; missed: number }];
   "events.why": [{ seq: number }, HostWhy];

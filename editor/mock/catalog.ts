@@ -4,7 +4,7 @@
 
 export interface CatalogCommand {
   name: string;
-  kind: "read" | "write" | "control";
+  kind: "read" | "write" | "control" | "request";
   doc: string;
   params: Record<string, unknown>;
   result?: Record<string, unknown>;
@@ -109,7 +109,21 @@ export const CATALOG: CatalogCommand[] = [
   { name: "scripts.write", kind: "write", doc: "Writes a script and returns its diagnostics.", params: obj({ path: str("Relative to the project root."), text: str("The whole file.") }, ["path", "text"]) },
   { name: "scripts.apply", kind: "write", doc: "Type check, compile and hot swap the scripts at a tick boundary.", params: obj({ paths: { type: "array", items: { type: "string" } } }) },
   { name: "assets.list", kind: "read", doc: "The project's asset files with kinds and thumbnails.", params: obj({ dir: str("A directory under assets/.") }) },
-  { name: "assets.import", kind: "write", doc: "Imports a file into the project's assets.", params: obj({ path: str("The file to import.") }, ["path"]) },
+  {
+    name: "assets.upload",
+    kind: "request",
+    doc: "Writes a file into the project (an asset from the editor's browser or an agent): its bytes in base64 parts {path, data, offset, done}, offset 0 first, each part at most 1 MiB; the last part (done, the default) moves the file into place and answers {path, kind, bytes}. A file already at path is replaced only with overwrite.",
+    params: obj(
+      {
+        path: str("Where the file goes: a path inside the project, such as `models/lighthouse.glb`."),
+        data: str("This part's bytes, base64 (the standard alphabet, padded)."),
+        offset: { type: "integer", minimum: 0, default: 0, description: "Where this part starts in the file: 0 begins the upload (again)." },
+        done: { type: "boolean", default: true, description: "Whether this is the last part (default true): the file is then moved into place." },
+        overwrite: { type: "boolean", default: false, description: "Whether a file already at `path` is replaced (default false: refused with `assets.exists`)." },
+      },
+      ["path", "data"],
+    ),
+  },
   {
     name: "events.since",
     kind: "read",

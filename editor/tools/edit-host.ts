@@ -2,8 +2,8 @@
 // the editor that `amoris serve` serves (the build made with VITE_AMORIS_EXPOSE=1) and, with real
 // input only (clicks, keys, typed text), creates each primitive, each light and a camera from the
 // hierarchy's Create menu, edits two selected at once (mixed values), renames, edits a field,
-// adds a component, duplicates, deletes, undoes and redoes, places a model and a splat from the
-// Assets panel, changes the speed, plays, pauses, reads an event's cause chain and resumes, and
+// adds a component, duplicates, deletes, undoes and redoes, imports a model and a splat by upload
+// (the Import button's file chooser) and places them from the Assets panel, changes the speed, plays, pauses, reads an event's cause chain and resumes, and
 // last plays a world that halts (a tick that fails halfway) and stops it. After each step it asks the host itself what happened (`/api/call`:
 // `world.tree`, `world.get`, `history.list`, `capture`'s instance count, `time.control`,
 // `events.why`, `log.since`) and then reads what the page shows.
@@ -13,9 +13,8 @@
 //   bun tools/edit-host.ts --url http://127.0.0.1:7971/ [--out ../out/editor/edit-host]
 //       [--chrome-port 9341] [--viewport wasm|fallback] [--scribble]
 //
-// On a real host the tool first writes into the served project, over `/api/call` and the file
-// system: scripts/main.ts (two systems that emit an event and an event it causes, since no sample
-// emits one with a cause) and splats/edit-host.splat (four splats, since samples/anim has none).
+// On a real host the tool first writes into the served project over `/api/call`: scripts/main.ts
+// (two systems that emit an event and an event it causes, since no sample emits one with a cause).
 // That is setup, not the flow under test, and it is refused for a project that is not a scratch
 // copy (no `out` segment in its root) unless --scribble says so. The project is a copy of
 // samples/anim: the probe script replaces the project's scripts, which a project whose scripts
@@ -99,7 +98,7 @@ function sorted(v: unknown): unknown {
 type Node = { id: number; name: string | null; components: string[]; children: Node[] };
 type Entity = { id: number; name: string | null; components: Record<string, Record<string, unknown>> };
 type History = { undo: string[]; redo: string[]; entries: { undo: { label: string; source: unknown }[] } };
-type Asset = { path: string; kind: string };
+type Asset = { path: string; kind: string; bytes: number };
 type HostEvent = { seq: number; id?: number; name: string; cause: number | null };
 type Pacing = "stepped" | { real_time: { speed: number } };
 
@@ -203,9 +202,6 @@ if (!mock) {
   const refusedBy = applied.diagnostics.filter((d) => d.severity === "error");
   if (!applied.bundle || refusedBy.length) wrongSetup(`scripts.apply refused the probe script: ${JSON.stringify(refusedBy.length ? refusedBy : applied)}; ${anim}`);
   console.log(`  scripts/main.ts: two systems, knock and echo, applied as bundle ${applied.bundle.slice(0, 8)}…`);
-  mkdirSync(join(info.root, "splats"), { recursive: true });
-  writeFileSync(join(info.root, "splats/edit-host.splat"), splatFile());
-  console.log(`  splats/edit-host.splat: 4 splats written into ${info.root}`);
   if (canCapture) {
     baseline = await capture();
     console.log(`  capture (warm-up): ${baseline.instances} instances, ${baseline.pending_assets} pending assets`);
@@ -213,7 +209,6 @@ if (!mock) {
 }
 const assets = await call<Asset[]>("assets.list");
 const modelAsset = assets.find((a) => a.kind === "model");
-const splatAsset = assets.find((a) => a.kind === "splat");
 const started = await tree();
 
 // ---- The page -----------------------------------------------------------------------------------
@@ -799,12 +794,58 @@ try {
     created.push({ label: path, id: fresh.id, name: fresh.name ?? "" });
     return entity(fresh.id);
   }
+  // Import by upload (editor.md 6.3): the Import button opens the browser's file chooser, which
+  // the driver answers with two files from outside the project: a copy of the project's model
+  // under another name, and a splat file (samples/anim has none). The host has them byte for byte
+  // in their kinds' folders, the panel lists them, and they are what is placed below. Imported
+  // again, the splat's path is offered and kept with Enter: replaced, one file.
+  const upModel = { path: "models/uploaded-hero.glb" };
+  const upSplat = { path: "splats/edit-host.splat" };
+  {
+    const modelBytes = !mock && modelAsset ? new Uint8Array(await Bun.file(join(info.root, modelAsset.path)).arrayBuffer()) : new Uint8Array(64).map((_, i) => i);
+    const files = { model: join(OUT, "uploaded-hero.glb"), splat: join(OUT, "edit-host.splat") };
+    writeFileSync(files.model, modelBytes);
+    writeFileSync(files.splat, splatFile());
+    const importButton = `[...document.querySelectorAll(".assets-panel button")].find((b) => b.textContent.trim() === "Import")`;
+    await cdp.send("Page.setInterceptFileChooserDialog", { enabled: true });
+    let chooser: ((p: { backendNodeId: number }) => void) | null = null;
+    cdp.on("Page.fileChooserOpened", (p) => chooser?.(p as { backendNodeId: number }));
+    const pick = async (paths: string[]) => {
+      const opened = new Promise<{ backendNodeId: number } | null>((resolve) => {
+        chooser = resolve;
+        setTimeout(() => resolve(null), 5000);
+      });
+      await click(await locate("the Assets panel's Import", importButton));
+      const p = await opened;
+      chooser = null;
+      check(p !== null, "Import opens the browser's file chooser");
+      if (p) await cdp.send("DOM.setFileInputFiles", { files: paths, backendNodeId: p.backendNodeId });
+    };
+    const listed = async (path: string) => (await call<Asset[]>("assets.list")).find((a) => a.path === path);
+    const h = await history();
+    await pick([files.model, files.splat]);
+    for (const [path, bytes] of [[upModel.path, modelBytes.length], [upSplat.path, splatFile().length]] as const) {
+      check(await until(`the host lists ${path}`, async () => (await listed(path))?.bytes === bytes), `Import: the host lists ${path} with ${(await listed(path))?.bytes} bytes (${bytes} sent)`);
+      if (!mock) check(existsSync(join(info.root, path)) && Buffer.from(await Bun.file(join(info.root, path)).arrayBuffer()).equals(Buffer.from(path === upModel.path ? modelBytes : splatFile())), `Import: ${path} in the project is the file sent, byte for byte`);
+      check(await until(`the panel lists ${path}`, () => js<boolean>(`return !!(${assetCard(path)});`)), `Import: the Assets panel shows ${path}`);
+    }
+    check((await newEntries(h)).length === 0, "Import: no undo entry (files are not the world)");
+    const promptOpen = () => js<string | null>(`return document.querySelector(".prompt-dialog .dialog-input")?.value ?? null;`);
+    const assetsBefore = (await call<Asset[]>("assets.list")).length;
+    await pick([files.splat]);
+    check(await until("the prompt", async () => (await promptOpen()) === upSplat.path), `Import again: the dialog offers ${await promptOpen()}`);
+    await enter();
+    check(await until("the prompt closes", async () => (await promptOpen()) === null), "Enter keeps the path");
+    await Bun.sleep(300);
+    const after = await call<Asset[]>("assets.list");
+    check(after.length === assetsBefore && after.filter((a) => a.path === upSplat.path).length === 1, `Import again: replaced, ${after.length} files listed as before (${assetsBefore}), ${upSplat.path} once`);
+  }
   if (!modelAsset) check(false, "the project lists a model asset to place");
   else {
     const before = await drawn();
-    const e = await place(modelAsset.path);
+    const e = await place(upModel.path);
     if (e) {
-      check(e.components.Model?.mesh === modelAsset.path && e.components.Splat === undefined, `Place a model: the host's #${e.id} ${e.name} holds Model.mesh '${String(e.components.Model?.mesh)}'`);
+      check(e.components.Model?.mesh === upModel.path && e.components.Splat === undefined, `Place a model: the host's #${e.id} ${e.name} holds Model.mesh '${String(e.components.Model?.mesh)}'`);
       if (before.host === null) note("not checked: the placed model is drawn by the host (this host has no capture)");
       else {
         let c: Capture = { instances: -1, pending_assets: -1, path: "" };
@@ -815,15 +856,10 @@ try {
       else check(await until("the page draws the model", async () => ((await pageInstances()) ?? 0) > before.page!), `Place a model: the page's viewport holds ${await pageInstances()} instances (${before.page} before)`);
     }
   }
-  if (!mock) {
-    // The splat was written after the host started: the panel lists it after a refresh.
-    await click(await locate("the Assets panel's Refresh", `document.querySelector('.assets-panel button[aria-label="Refresh"]')`));
-  }
-  if (!splatAsset) check(false, "the project lists a splat asset to place");
-  else {
-    const e = await place(splatAsset.path);
+  {
+    const e = await place(upSplat.path);
     if (e) {
-      check(e.components.Splat?.asset === splatAsset.path && e.components.Model === undefined, `Place a splat: the host's #${e.id} ${e.name} holds Splat.asset '${String(e.components.Splat?.asset)}' and no Model`);
+      check(e.components.Splat?.asset === upSplat.path && e.components.Model === undefined, `Place a splat: the host's #${e.id} ${e.name} holds Splat.asset '${String(e.components.Splat?.asset)}' and no Model`);
       note("not checked: that the placed splat is drawn (a splat is no instance; its component on the host is)");
     }
   }

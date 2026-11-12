@@ -109,7 +109,7 @@ one value a panel cannot draw no longer leaves a blank page.
 | Events | The event stream as a table (seq, tick, name, subject, data) with a filter; selecting one asks the host why: the cause chain, oldest first (built from `events.why`'s `{event, causes, complete}`; a line says when earlier causes have left the host's ring), then the data; subjects select their entity | `events` events, `events.since`, `events.why` |
 | Timeline | Kept snapshots and event lanes (the most frequent kinds, and the selection's) on a tick ruler with the playhead; drag to scrub and release to rewind there; click a snapshot to restore it; back to the previous snapshot, pause, step | `snapshots.list/restore`, `debug.rewind`, `time.*` |
 | Profiler | Per sample (4 a second), the host's CPU time per tick stacked by system and the viewport's frame time against the 60 Hz budget (hover for one sample), then over the last 3 s: the game thread's systems (each system's own time, `tick.other`, `loop.present`, `loop.publish`, `loop.after`) and the tick's phases with their largest tick, and the viewport's GPU passes; the tick and game-thread time, the frame interval, fps and GPU time; held ticks left out; freeze and clear | `profile` events, the viewport's `stats()` |
-| Assets | Grid or list with thumbnails or kind icons, kind filters with counts, search; drag into the viewport or the hierarchy (or double-click) to place a model or a splat (the host lists the project's other files too, which are not placed); import by path; context menu (place, copy path, reimport) | `assets.list/import`, `world.edit` spawn with `Model.mesh`, or `Splat.asset` for a splat |
+| Assets | Grid or list with thumbnails or kind icons, kind filters with counts, search; drag into the viewport or the hierarchy (or double-click) to place a model or a splat (the host lists the project's other files too, which are not placed); Import uploads files picked in the browser's file chooser or dropped on the panel (section 6.3); context menu (place, copy path) | `assets.list/upload`, `world.edit` spawn with `Model.mesh`, or `Splat.asset` for a splat |
 | Agent | The live feed of agent activity grouped by session (call, result with success, message), sessions with their call counts and liveness, and a New session form (model, goal, tools) that waits for host support; copies the MCP endpoint command | `agent` events |
 | History | The undo history as a timeline from "Opened scene", each edit another client made marked with its session (`mcp-1`, `api`); click an entry to undo or redo up to it; undo and redo buttons | `history` events, `history.undo/redo/list` |
 
@@ -378,6 +378,21 @@ own (an `Update`, old value to new); all of them go in one `world.edit`, one und
 Transform.position on 2 entities`), and a drag streams them as one group (section 6). A mixed
 field takes any value typed, the primary's own too.
 
+### 6.3 Import by upload
+
+Import (the panel's button, File > Import Asset…) opens the browser's file chooser, and files
+dropped on the Assets panel from the system are imported the same way (`src/actions/assets.ts`).
+Each file is uploaded into the project with `assets.upload` (server.md 3): its bytes in base64
+parts of at most 1 MiB, in order from offset 0, the last part `done`; the host writes the parts to
+a staging file under `.amoris/uploads/` and moves it into place at the last one, so a file is
+listed only once whole. A file goes into the folder of its kind by its extension: `models/` (with
+`.bin`, a glTF's buffers), `textures/`, `splats/`, `audio/`, `scripts/`, else `files/`. When the
+project already has that path (`assets.exists`), a dialog offers it: kept, the file is uploaded
+again with `overwrite`; another path, there. After the uploads the panel asks `assets.list` again,
+and a toast names each file, its kind and size. Files are not the world: an import adds no undo
+entry. Import took a path the host reads (`assets.import`), which the host never built; it and the
+context menu's Reimport are gone (2026-11-12, section 8 item 15).
+
 ## 7. Schema-driven fields and script types
 
 `world.schema` answers `[{name, origin, version, doc, schema}]` (amoris-sim's `ComponentInfo`).
@@ -476,6 +491,13 @@ ran against `amoris serve` (section 10), and where the two differed the mock was
     ball of radius 0) fails the first tick with `water.vessel_invalid`. The editor changed (section
     6); the host now logs the error of the tick that poisoned the world on `log` (threads.md 8),
     which the Console shows. The mock's worlds never halt; its status says `halted: false`.
+15. Files into the project (2026-11-12): `assets.upload {path, data, offset?, done?, overwrite?}`
+    (server.md 3) in place of `assets.import {path}`, which only the mock answered and which needed
+    the file on the host's disk. The host writes uploads itself, natively (amoris-server, no game
+    thread), and refuses a path out of the project or into a dot directory, a part that does not
+    start where the received ones end (`assets.upload_offset`), more than 1 MiB a part and an
+    existing file without `overwrite` (`assets.exists`); the mock answers the same forms and codes
+    (`mock/assets.ts`).
 
 ### 8.1 The debugger
 
@@ -560,7 +582,7 @@ the wire shapes (`HostDebugState`, `HostFrame`, `HostVariable`, `HostBreakpoint`
 | `src/viewport/` | The renderer interface, camera, math, gizmo, the frame meter, the fallback renderer |
 | `src/panels/<panel>/` | One module per panel (and its CSS) |
 | `mock/` | The mock host (section 1.1) |
-| `test/` | bun unit tests (`bun test`): history, live edits, subscriptions, the profile, water authoring, the desktop guards, arithmetic, the host's forms (`host-forms`: the cause chain, the pacing, enum spellings, the component search, and the mock answering them as the host does), what Create, Place and Duplicate send (`create`), and a poisoned world's status with the shell drawn from it, the newest events on connect, a component without fields and a select's keys (`halted`, the editor's client answered by the mock over the wire), mixed values and what an edit of several entities makes of each (`multi`) |
+| `test/` | bun unit tests (`bun test`): history, live edits, subscriptions, the profile, water authoring, the desktop guards, arithmetic, the host's forms (`host-forms`: the cause chain, the pacing, enum spellings, the component search, and the mock answering them as the host does), what Create, Place and Duplicate send (`create`), and a poisoned world's status with the shell drawn from it, the newest events on connect, a component without fields and a select's keys (`halted`, the editor's client answered by the mock over the wire), mixed values and what an edit of several entities makes of each (`multi`), what Import sends and the mock's answers to it (`upload`) |
 | `tools/` | `capture.ts` (evidence of every panel against the mock), `debug-host.ts` (the debugger against the real host), `rename-host.ts` (the rename against the real host, section 8 item 2), `edit-host.ts` (the edit loop against the real host, or the mock: section 10), `sdk_check.ts` (the script editor's types against the real host), `profiler-capture.ts` (the profiler against the real host, docs/bench/profiler.md), `water-authoring.ts` (the water tools against the real host, 6.1), `viewport-loads.ts` (the viewport's loads, remounts and hot updates, 5), `gizmo-drag.ts` (live gizmo drags, docs/bench/gizmo.md), `serve-clients.ts` (clients held on a real host while its game thread is profiled, docs/bench/profiler.md); the pages are driven in headless Chrome over CDP (`cdp.ts`, `chrome.ts`): `launchChrome` starts the browser `chrome.ts` finds with a temporary profile of its own, on a CDP port Chrome picks (read from the profile's `DevToolsActivePort`) or on `--chrome-port`, which it refuses when something already listens there; it hands out a page only once the browser answering on the port is the process it started, and its `close` ends that process alone |
 
 ## 10. Evidence
@@ -647,9 +669,15 @@ driver asks the host over `/api/call` (`world.tree`, `world.get`, `history.list`
   Shift+Tab and Tab: no undo entry, the same colour. A light's kind is set in the inspector's
   select (the option by script: a native select's popup is not driven) and Mod+Z, pressed with
   the focus still in the select, puts the host's `Light.kind` back.
-- Assets: a double-click on `models/hero.glb` places `Hero` with `Model.mesh` the path (the
-  host's capture goes from 27 to 31 instances, none pending, the page's viewport too); after
-  Refresh, a double-click on the splat places an entity with `Splat.asset` the path and no Model.
+- Assets (Import by upload, section 6.3; 2026-11-12): Import clicked, the file chooser answered
+  (over CDP) with a copy of `models/hero.glb` named `uploaded-hero.glb` and a four-splat file from
+  outside the project: the host lists `models/uploaded-hero.glb` (26,232 bytes) and
+  `splats/edit-host.splat`, each the file sent byte for byte, the panel shows both, and no undo
+  entry; imported again, the splat's path is offered and Enter replaces it (seven files listed
+  before and after). A double-click on the uploaded model places `Uploaded-hero` with
+  `Model.mesh` the path (the host's capture goes from 27 to 31 instances, none pending, the
+  page's viewport too, which fetched it from `/assets/`); a double-click on the splat places an
+  entity with `Splat.asset` the path and no Model.
 - The transport: 2× sets the edit world's pacing to `{real_time: {speed: 2}}` on the host and the
   button still reads 2× after the host's next status pushes; Play runs the fork at 2 (the editor
   sent `play.start {speed: 2}`); Pause pauses it and the badge reads PAUSED, also after the next
@@ -745,7 +773,8 @@ completes the Boat's fields.
   one name (`for (let r ...)` twice) cannot be told apart at run time.
 - Agent sessions cannot be started from the editor yet (no `agent.session.*`); the form is a
   preview, and agents connect over MCP.
-- Import takes a path the host can read; there is no upload.
+- An upload sends its parts one after another, and only a toast at the end says how it went:
+  a large file shows no progress meanwhile. The CLI has no upload command (`amoris assets` lists).
 - The worker's declarations are fetched on connect and after the editor's own apply: a component
   added in an unsaved file is unknown to it until the save, and one an agent adds (no push says the
   scripts changed) until the next apply or reconnect.
@@ -768,8 +797,7 @@ completes the Boat's fields.
 - The real host registers no `Parent` component, so Create Child and reparenting are disabled
   against it (section 8, item 3).
 - The Create menu offers four of the engine's seven primitives (no capsule, cone or torus). A
-  skinned model is placed without an `Animator`. `assets.import` is not built on the host, so
-  Import is refused there.
+  skinned model is placed without an `Animator`.
 - Step and Pause from Edit send `play.start` and then `time.control {pause: true}`, so a few ticks
   run before the pause lands; `play.start {paused: true}` would start paused.
 - The mock's schemas of the visual components are hand copies of the host's; only a run of

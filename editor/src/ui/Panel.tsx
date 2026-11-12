@@ -10,6 +10,7 @@ export function PanelShell({
   className,
   bodyClassName,
   scroll = true,
+  ...events
 }: {
   toolbar?: ReactNode;
   footer?: ReactNode;
@@ -17,9 +18,9 @@ export function PanelShell({
   className?: string;
   bodyClassName?: string;
   scroll?: boolean;
-}) {
+} & Pick<React.HTMLAttributes<HTMLDivElement>, "onDragOver" | "onDragLeave" | "onDrop">) {
   return (
-    <div className={cx("panel", className)}>
+    <div className={cx("panel", className)} {...events}>
       {toolbar}
       <div className={cx("panel-body", scroll && "scroll", bodyClassName)}>{children}</div>
       {footer}

@@ -9,7 +9,7 @@ import { allComponents, componentInfo } from "./schemas";
 import { Scripts, diagnose } from "./scripts";
 import { MockError, isObject, rng, suggest, unknownField } from "./util";
 import { EDITOR, emptyChanges, merge, unknownComponent, type Caller, type Changes, type World } from "./world";
-import { ASSETS } from "./assets";
+import { ASSETS, uploadPart } from "./assets";
 
 export type Broadcast = (topic: string, data: unknown) => void;
 
@@ -74,6 +74,8 @@ export class Session {
   snapshots: Snapshot[] = [];
   changes: Changes = emptyChanges();
   assets = [...ASSETS];
+  /** The bytes each unfinished `assets.upload` has received. */
+  uploads = new Map<string, number>();
   debugger: Debugger;
   private inTick = false;
   private sysIndex = 0;
@@ -541,16 +543,9 @@ export class Session {
       return { bundle: this.bundle, diagnostics };
     },
     "assets.list": (p) => this.assets.filter((a) => !p.dir || a.path.startsWith(String(p.dir))),
-    "assets.import": (p) => {
-      const path = String(p.path);
-      const name = path.split("/").pop() ?? path;
-      const ext = name.split(".").pop()?.toLowerCase() ?? "";
-      const kind = ["glb", "gltf"].includes(ext) ? "model" : ["png", "jpg", "jpeg", "ktx2"].includes(ext) ? "texture" : ext === "splat" || ext === "ply" ? "splat" : ["ogg", "wav"].includes(ext) ? "audio" : "file";
-      const dest = `${kind === "model" ? "models" : kind === "texture" ? "textures" : kind === "splat" ? "splats" : "files"}/${name}`;
-      if (!this.assets.some((a) => a.path === dest)) this.assets.push({ path: dest, kind, bytes: 48_000 + Math.floor(this.noise() * 900_000) });
-      this.log({ level: "info", source: "assets", message: `Imported ${path} → assets/${dest}` });
-      return { asset: dest, meshes: kind === "model" ? 1 : 0, materials: kind === "model" ? 1 : 0 };
-    },
+    // As the host (amoris-server local.rs `upload`): parts in base64 appended from offset 0, the
+    // file in place (here: listed) at the last part; the same refusals.
+    "assets.upload": (p) => uploadPart(this, p),
     // As the host: after `seq` the first `limit` events, without it the newest `limit` (100 by
     // default); `last` is the newest event's stream number. The mock keeps every event, so none is
     // missed.
