@@ -1,0 +1,11 @@
+{
+  "format": "amoris-scene",
+  "version": 1,
+  "entities": [
+    {"name": "Ground", "components": {"Transform": {"position": [0.0, -0.5, 0.0]}, "Collider": {"shape": {"Cuboid": {"half_extents": [30.0, 0.5, 30.0]}}}}},
+    {"name": "Runner", "components": {"Transform": {"position": [0.0, 1.62, 0.0]}, "Walker": {"speed_mps": 4.0, "gravity_mps2": 9.81}, "Observer": {"profile": "walker", "seat": "player"}}},
+    {"name": "WaypointA", "components": {"Transform": {"position": [0.0, 0.0, -8.0]}, "Waypoint": {"label": "A", "next": 4}, "Perceivable": {"kind": "waypoint", "detect_m": 60, "height_m": 1, "priority": 50, "chart_m": {"x": 0, "y": 0, "z": -8}}}},
+    {"name": "WaypointB", "components": {"Transform": {"position": [8.0, 0.0, -8.0]}, "Waypoint": {"label": "B", "next": 5}, "Perceivable": {"kind": "waypoint", "detect_m": 60, "height_m": 1, "priority": 50, "chart_m": {"x": 8, "y": 0, "z": -8}}}},
+    {"name": "WaypointC", "components": {"Transform": {"position": [8.0, 0.0, 4.0]}, "Waypoint": {"label": "C"}, "Perceivable": {"kind": "waypoint", "detect_m": 60, "height_m": 1, "priority": 50, "chart_m": {"x": 8, "y": 0, "z": 4}}}}
+  ]
+}

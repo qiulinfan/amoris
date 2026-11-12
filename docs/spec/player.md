@@ -24,6 +24,7 @@
 | Perception: observers and profiles, perceivables, occluders, the `interface.perception` update (range, field of view, occlusion by physics ray casts, fog, attention, memory and forgetting, sightings, event scopes), **team vision**, `PerceptionView`, pull queries with token budgets, push deltas, the marked omniscient view | `amoris-interface/src/perception/` |
 | Projections: rounding, JSON, text (the LLM's), tensors (an RL observer's) | `amoris-interface/src/projection/` |
 | Actions: controls, intents with lifecycle, channels and supersession, the Rust executors `come_to_heading`, `trim_sail`, `sail_to`, affordances (`take_aboard`), the `act` request validated in three phases | `amoris-interface/src/action/` |
+| A game's own intents: `intent(name, def)` declarations, TypeScript executors and `ctx.intent` (script-host.md 5.5), merged into the action catalog at each swap and after a restore | `amoris-script/src/natives/intents.rs`, `scripts.rs`; `amoris-runtime/src/player.rs` |
 | Time: turns and episodes, decision points and filters, `until`, the session controller (stepped, lockstep, real time with pause-on-decision and thinking clocks), `step`, `commit`, `continue`, the real-time `wait` | `amoris-interface/src/time/` |
 | The declaration as world state, the three interface systems in every game, the `player.*` commands, the session beside the world | `amoris-runtime/src/player.rs`, `game.rs` |
 | Players' waits on a loop, decision points after every tick, pace from the players' session: one core the game thread and the browser worker share | `amoris-runtime/src/boundary.rs` (`PlayerWaits`), `thread.rs`, `amoris-web/src/worker.rs` |
@@ -126,12 +127,16 @@ the boundary and recorded as the Write `player.act` in its canonical form (the s
 filled, references as ids); a replay applies it through the same path as a developer naming the
 recorded seat (actions.md, What a replay records: session-level checks are skipped).
 
-Executors are Rust: `come_to_heading` (an autopilot with an integral term), `trim_sail` (the sheet
-to a value or to the best for the apparent wind), `sail_to` (straight or beating, trimming the sail;
-it does not steer round land). Each sees only its seat's `PerceptionView` and writes only its
-channels' controls (actions.md, Executors, rules 1 and 2), so an intent is a convenience the seat
-could have done with controls (`contract.intents.transparency`, the interface's tests). Script
-executors are not built here (section 10).
+The engine's executors are Rust: `come_to_heading` (an autopilot with an integral term),
+`trim_sail` (the sheet to a value or to the best for the apparent wind), `sail_to` (straight or
+beating, trimming the sail; it does not steer round land). Each sees only its seat's
+`PerceptionView` and writes only its channels' controls (actions.md, Executors, rules 1 and 2), so
+an intent is a convenience the seat could have done with controls (`contract.intents.transparency`,
+the interface's tests). A game declares its own intents in TypeScript and carries them out with
+script executors under the same two rules (script-host.md 5.5): the script host installs their
+declarations into the catalog the engine's `[player] actions` names, and a player or an agent starts
+them with `player.act` or an affordance, as any intent; `tests/fixtures/intents/errand` walks a
+first-person seat to a waypoint and interacts there.
 
 ## 6. Time
 
@@ -433,11 +438,9 @@ every tick, and its player scenario passes the four checks.
 
 ## 10. Not built, and what was learnt
 
-- **Script executors and `ctx.intent`**: `executor()` is still refused by the script host
-  (`define.rs`) and `ctx.intent` throws `script.restricted`. The rebuild line had them (`57ed4ea1`:
-  `amoris-script` natives, an interface bridge and executors, about 3,000 lines of source and 2,500
-  of tests) against a script host this line has since changed (the debugger, types, the prelude);
-  porting them is the next step. A game's own intents are therefore engine catalogs in Rust for now.
+- **The transparency check for a script executor**: `contract.intents.transparency` runs for the
+  Rust executors only; a script executor keeps the same rules by construction (its context has no
+  world, and its control writes are checked against its channels), not yet by the check.
 - **Lockstep for players, branches, snapshots and `replay` for players, a grant's policy**:
   amoris-interface has lockstep's `commit`; nothing carries it. An agent outside the process
   forks, steps and discards branches since 2026-11-12 (7.1), inline on the game thread with the

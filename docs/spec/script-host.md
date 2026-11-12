@@ -117,8 +117,10 @@ export default game({ components: [Crate, Tally], systems: [takeCrates] });
 `game(def)` takes `components` (in registration order), `systems` and `retired` (removed and renamed
 project components, `{removed: name, lastVersion}` or `{renamed: {from, to, atVersion}}`,
 [persist]'s `Retired`). `system(def)` takes a `SystemDef` and `executor(def)` an `ExecutorDef`
-(5.1), a system that carries out intents (5.5); `component(name, def)` is in 7.3. Any other key in
-any builder is refused at instantiate with `script.unknown_key` and the nearest key (charter 3.4).
+(5.1), a system that carries out intents (5.5), which it lists as values of `intent(name, def)`,
+each an `IntentDecl` with its parameters made by the `param` builders; `component(name, def)` is in
+7.3. Any other key in any builder is refused at instantiate with `script.unknown_key` and the
+nearest key (charter 3.4).
 
 **System order.** Script systems and executors run in [sim]'s `Update` phase (slice 1's only script
 phase, `"update"`), each as `script:<name>`, one at a time in the order of the `systems` array: one
@@ -151,9 +153,20 @@ export interface SystemDef<Q extends Record<string, QuerySpec<ComponentName>>> {
 }
 export interface ExecutorDef {     // executor(def): a system that carries out intents (5.5)
     name: string; phase: ScriptPhase; doc: string;
-    intents: readonly string[];    // the intent kinds it carries out
+    intents: readonly IntentKind[];  // the intents it carries out, each made by intent(name, def)
     run(ctx: ExecutorContext): void;
 }
+export interface IntentDecl {      // intent(name, def): [contract]'s IntentDef, written in a script
+    doc: string;                   // what it does, when it succeeds, how it can fail
+    params?: { [name: string]: ParamDef };  // param.number, integer, bool, choice, text
+    target?: "none" | "point" | { entity: readonly string[] } | { entityOrPoint: readonly string[] };
+    channels: readonly string[];   // channels of the game's controls, at least one
+    canHold?: boolean;             // accepts keep: true (the parameter keep is added)
+    timeoutS: number;              // the default of timeout_s, which every intent takes
+    failures?: readonly (string | CodeDecl)[];  // its Fail codes: declared here, or by name
+    progress?: readonly ProgressDecl[];         // [contract]'s ProgressDef
+}
+export interface CodeDecl { code: string; when: string; detail?: readonly string[]; template: string }
 export interface SystemContext {
     readonly tick: number; readonly dt: number; readonly time: number; // [sim], time in seconds
     readonly system: string; readonly world: World;
@@ -166,8 +179,9 @@ export interface SystemContext {
     single(component: ComponentName): Entity;
     query<W extends ComponentName>(spec: QuerySpec<W>): QueryResult<W>;
     emit(kind: string, data?: Data, options?: { subject?: Entity; cause?: number }): void;
-    intent(actor: Entity, kind: string, params?: Data): void;
+    intent(actor: Entity, kind: string, params?: Data, options?: IntentOptions): void;
 }
+export interface IntentOptions { target?: Entity | { x: number; y?: number; z: number }; tag?: string }
 export interface ExecutorContext {          // no world, query, single, emit, intent or rngFor (5.5)
     readonly tick: number; readonly dt: number; readonly time: number;
     readonly system: string; readonly rng: Rng;
@@ -282,10 +296,11 @@ own commands applied in call order:
 | `remove` of a component the entity lacks in the overlay | A no-op |
 
 When `run` returns normally the host validates every column write-back against the overlay with all
-of the call's commands (so an `entity` cell may name an id the call spawned), then applies the
-column write-backs of each query in creation order (rows in ascending id), then the commands in call
-order, a later write to a field winning; events get their sequence numbers as they are appended
-[sim]. All of it lands before the next system starts.
+of the call's commands (so an `entity` cell may name an id the call spawned), then applies the acts
+of `ctx.intent` in call order (5.5), then the column write-backs of each query in creation order
+(rows in ascending id), then the commands in call order, a later write to a field winning; events
+get their sequence numbers as they are appended [sim]. All of it lands before the next system
+starts.
 
 The hierarchy (2026-11-12; simulation.md 7.3). A despawn takes the entities under the despawned one
 at the call, in the overlay, and at the commit, in the world, and the two must take the same
@@ -318,31 +333,92 @@ kinds in [sim]'s inbox, in sequence order: those appended during the previous ti
 boundary writes since, so each event reaches each interested system once whatever the order, with no
 per-system cursor (hidden state).
 
-`ctx.intent(actor, kind, params)` queues an act for an entity (an NPC acting through the same layer
-as an agent), validated and applied when the transaction commits; it is an output of the tick and is
-never recorded [contract] (actions.md, What a replay records).
+`ctx.intent(actor, kind, params, {target, tag})` starts an intent for an entity, a non-player
+character acting through the same layer as an agent: an `act` [contract] of one `start` action for
+the seat whose body `actor` is (`script.no_seat` when it is no seat's body), with the developer's
+role, so the seat's perception resolves the target and the seat's restrictions apply. It is
+validated at the call against the world as the system started, and a refusal throws the act's own
+code (`action.unknown_intent`, `action.target_required`, `perception.unknown_entity`, ...) at the
+calling line with its detail. It is applied at the commit, before the call's column write-backs and
+other commands (5.4), in call order; were it refused there after all (only another act of the same
+call could cause that), the system fails and nothing of the call applies, since the intent table is
+put back with the events. The intent starts in the next tick, as one an agent starts at a boundary
+does. It is an output of the tick and is never recorded [contract] (actions.md, What a replay
+records): a replay, a fork or a reload runs the same system on the same world and starts the same
+intent, whose instance, counter and `intent.started` event are world state, hashed every tick. That
+is why it is safe in a system; it stays refused (`script.restricted`) where it would not be: in an
+executor, which acts only through its own seat's controls (actions.md, Executors, rule 2), and in a
+debugger's evaluation, which may not write (13).
 
-**Executors.** A script intent is carried out by an executor, declared with `executor(def)`.
-[contract]'s `interface.intents` checks the deadline of every intent, script intents included, in
-`IntentId` order in the `Control` phase, and runs only the Rust executors; script executors run in
-`script.update` in `systems` order, each receiving in `ctx.intents` every active or holding instance
-of its declared kinds, in `IntentId` order (actions.md, Executors). Its context is restricted as
-[contract]'s executor rules require (an executor sees only what its seat perceives and acts only
-through its seat's controls on its own channels): `world`, `query`, `single`, `emit`, `intent`,
-`rngFor`, `rngNamed` and `rngTimeless` are present only to throw `script.restricted`, so a system
-ported into an executor gets a clear error. `ctx.view(intent)` is the actor's `PerceptionView` in
-batch form; `ctx.controls(intent)` writes the actor's controls on the intent's channels, and another
-control throws `script.restricted`.
+**Declarations.** A script intent is declared with `intent(name, def)`: [contract]'s `IntentDef`
+(actions.md, Intents) written in the script. Its name is `^[a-z][a-z0-9_]*$`; its parameters are
+`param.number(doc, {default, min, max})`, `param.integer`, `param.bool(doc, {default})`,
+`param.choice(values, doc, {default})` and `param.text(doc, {default})`, turned into a closed JSON
+Schema (a parameter without a default is required; `timeout_s`, defaulting to `timeoutS`, and with
+`canHold` also `keep`, defaulting to false, are added, and a script may not declare them); its
+target is `"none"` (the default), `"point"`, `{entity: kinds}` or `{entityOrPoint: kinds}`; its
+channels must be channels of the game's controls; its `failures` are codes it declares
+(`{code, when, detail, template}`, a game code with the `Fail` use, in a family the engine does not
+own) or names of codes declared elsewhere in the game or of [contract]'s fail codes
+(`perception.target_lost`); `intent.timeout` is always among them; its progress readings are
+[contract]'s `ProgressDef`s as the perception file writes them (`{name, doc, unit: {unit:
+"metres"}, precision}`). An intent is declared by one executor of the game, and its name may not be
+an engine intent's. A swap (hot-update.md 5) installs the program's intents and codes into the
+world's action catalog, replacing the previous program's, and checks the catalog whole again (an
+affordance in the perception file may name a script intent, so the engine's catalog leaves such a
+name to this check): a program whose declarations fail is refused (`script.bad_definition`) and
+the world keeps its program. A world with no catalog yet (a replay's, before its start snapshot
+restores the player layer) takes the program, whose intents join the catalog when the layer's
+declarations are derived; the runtime refuses a game without `[player]` whose scripts declare
+intents, when it is built and at a hot update. The
+catalog is code, not world state (persistence.md 2): `player.declarations`' rebuild after a restore
+installs the live program's intents again. Players and agents start script intents as any other,
+through `player.act`'s `start` and affordances whose effect names them, with no new protocol; a
+script intent's `accept` is its schema, its target and its affordance's requirements (actions.md,
+Executors), and its state starts as `null`.
 
-The instance changes through commands applied when the transaction commits: `progress` replaces its
-progress readings (declared names only), `setState` its executor state, `reached` makes it holding
-when it has `keep` and succeeded otherwise, `succeed` ends it succeeded, and
-`reject(intent, code, detail)` fails it with `code`, which must be declared with the `Fail` use (a
-game's `CodeDef`, or a contract code whose use is fail such as `perception.target_lost`), else
-`script.undeclared_code`. Its message is rendered from the code's template [contract] (errors.md,
-Game codes), never written by the script. The lifecycle events (`intent.reached`,
-`intent.succeeded`, `intent.failed`) are appended at commit, in call order. A failed invocation
-changes no instance, and deadlines still apply.
+**Executors.** A script intent is carried out by the executor that declares it, an entry of the
+`systems` array. [contract]'s `interface.intents` checks the deadline of every intent, script
+intents included, in `IntentId` order in the `Control` phase, and runs only the Rust executors;
+script executors run in `script.update` in `systems` order, each receiving in `ctx.intents` every
+active or holding instance of its declared kinds that has started (`started_tick` at or before the
+tick), in `IntentId` order (actions.md, Executors). An executor with no such instance is not called
+and spends no steps; an instance whose seat lost its body fails with `internal.error` before the
+call, as `interface.intents` fails a Rust one. Each instance is [contract]'s `IntentView` (`id`,
+`intent`, `status`, `tag`, `params`, `target` as its seat knows it, `started_tick`, `progress`)
+with the executor's `state`, frozen. Its context is restricted as [contract]'s executor rules
+require (an executor sees only what its seat perceives and acts only through its seat's controls on
+its own channels): `world`, `query`, `single`, `emit`, `intent`, `events`, `rngFor`, `rngNamed`,
+`rngTimeless`, `voxels`, `water`, `physics`, `anim`, `nav` and `scene` are present only to throw
+`script.restricted`, so a system ported into an executor gets a clear error; the host refuses the
+same natives during an executor's call whatever reaches them. `ctx.rng` is the executor's system
+stream. `ctx.view(intent)` is the actor's `PerceptionView`, through the seat's perception as the
+Rust executors see it: `instrument(name)`, `percept(e)` (`{id, name, kind, visibility, pos_m,
+range_m, bearing_deg, facts}`, or `undefined` for an entity the seat does not know),
+`nearby({kinds, within_m, visibility, limit})` (nearest first, then by id) and `eventsSince(seq)`.
+`ctx.controls(intent)` writes the actor's controls on the intent's channels: `set(control, value)`
+latches a value, `pulse(control, target)` queues a pulse that acts in the next tick; another
+control throws `script.restricted`, a value the control does not take `script.bad_data`.
+
+The instance changes through commands applied when the transaction commits, in call order:
+control writes (latched through their binding; a write the actor's body can no longer take fails
+the intent with `internal.error`, as for a Rust executor, never the system; a write for an instance
+the commit has already ended is dropped), `progress` replaces its progress readings (declared names
+only, else `script.unknown_key`), `setState` its executor state (`Data`, 5.8), `reached` makes it
+holding when it has `keep` and succeeded otherwise, `succeed` ends it succeeded, and
+`reject(intent, code, detail)` fails it with `code`, which must be among the intent's failures with
+the `Fail` use (a game's `CodeDef`, or a contract code whose use is fail such as
+`perception.target_lost`), else `script.undeclared_code`, its detail an object of the code's
+detail fields. Its message is rendered from the code's template [contract] (errors.md, Game codes),
+never written by the script. The lifecycle events (`intent.reached`, `intent.succeeded`,
+`intent.failed`) are appended at commit, in call order. A failed invocation changes no instance,
+and deadlines still apply. An executor's state lives in its instance (`IntentInstance.state`), so a
+snapshot, a fork and a replay carry it, and a hot update hands it to the new executor: the swap
+replaces the executors and the declarations at the boundary, live instances keep their parameters,
+state and progress and are carried out by the new program's executor from the next tick, as a
+system's components outlive its code. An instance of a kind the new program no longer declares is
+run by no executor: it fails at its deadline, or, holding, stays until it is cancelled or
+superseded.
 
 ### 5.6 Time, randomness and mathematics
 
@@ -568,8 +644,8 @@ reached as `Components["Boat"]` (or `ComponentValue<"Boat">`), not as a named in
 component; an enum field is the union of its variant names, not a named enum; the phase is the
 literal `"update"` (no `ScriptPhase`, as scripts have one phase); and `contract.d.ts` (event, intent
 and error records from [sim]'s and [contract]'s Rust types through `ts-rs`, 14.2) is not built:
-`GameEvent` and `EmitOptions` are written in the prelude, intents wait for slice 2, and a script
-reads an error's `code` untyped (14.17).
+`GameEvent`, `EmitOptions` and the intent records an executor sees (`Intent`, `Percept`,
+`PerceivedEvent`) are written in the prelude, and a script reads an error's `code` untyped (14.17).
 
 `scripts.check` and `scripts.apply` (the server, server.md) send the game `scripts.apply` with
 `types` (and, for the check, `dry_run`): one compile, then the swap or, for a dry run, an
@@ -745,7 +821,7 @@ All run in the local check command [arch]; those marked web also run in the wasm
 | 7. Types | the generated declarations type-check fixtures using every field type and API of 5.1; a project component's builder-inferred type and its emitted interface are mutually assignable |
 | 8. Reload and fork | reload equivalence and fork consistency with script systems ([hot-update.md](hot-update.md), 9; checks.md 8.3 and 8.5, with the `module-state` controls of 8.6); the budgets of 11 are measured and reported in [arch]'s framework, never a pass condition |
 | 9. Depth (web) | in native debug, native release and web, on the game thread and on each kind of runtime worker that runs scripts (threads.md 6), a script recursing through a JS function, a host native and a JS callback, repeated, fails with `script.call_depth` at exactly `max_call_depth`, never `script.stack_overflow`; `JSON.stringify` of a value nested past the limit and a deeply nested regular expression do the same; the stack measured at the limit is recorded, and `stack_bytes` and the threads' stacks are set from it (script-sandbox.md 4.3); a fault forced by a tiny `memory_bytes` poisons the world and the recording holds a `Fault` record |
-| 10. Executors | a script executor receives every active and holding instance of its kinds in `IntentId` order, after `interface.intents` checked their deadlines; `progress`, `setState`, `reached`, `succeed` and `reject` apply at commit with their lifecycle events, and not at all when the call throws; `ctx.world` and `ctx.emit` throw `script.restricted`, as does a control on another channel; `reject` with an undeclared code throws `script.undeclared_code`; `contract.intents.transparency` (shared/contract/actions.md, Checks) holds for a script executor |
+| 10. Executors | a script executor receives every active and holding instance of its kinds in `IntentId` order, after `interface.intents` checked their deadlines; `progress`, `setState`, `reached`, `succeed` and `reject` apply at commit with their lifecycle events, and not at all when the call throws; `ctx.world` and `ctx.emit` throw `script.restricted`, as does a control on another channel; `reject` with an undeclared code throws `script.undeclared_code`; `ctx.intent` starts an intent at the commit and throws an act's refusal at its line (`tests/intents.rs`); a snapshot restored mid-intent and a replay go on to the same hashes, and an agent's seat starts and completes a script intent through `player.act` (amoris-runtime `tests/script_intents.rs`); the `tests/fixtures/intents/errand` project passes the four checks. `contract.intents.transparency` (shared/contract/actions.md, Checks) is not yet run for a script executor |
 | 11. Natives and panics | a native that panics fails its call with `sim.internal`, poisons the world and leaves the process, and an editor stub beside it, running |
 
 ## 13. Debugging hooks
@@ -847,10 +923,9 @@ a `ctx` over a snapshot exported as JSON [persist] (not in slice 1).
    first rules are `RigidBody`'s and `Collider`'s, beside their schemas and slot functions in
    `crates/amoris-runtime/src/engine/bodies.rs`; the derive, when it exists, has to accept such
    hand-written rules or generate them.
-9. **Slice 1: not built.** An `executor(...)` among the systems is refused at instantiate
-   (`script.bad_definition`) and `ctx.intent` throws `script.restricted`, until slice 2's intents;
-   derived facts, instruments and predicates (`Program::call`); the compile cache of 8.2; bytecode
-   precompilation; the debugger hooks of 13. Systems run in `"update"`, slice 1's only script phase.
+9. **Slice 1: not built.** Derived facts, instruments and predicates (`Program::call`); the compile
+   cache of 8.2; bytecode precompilation; the debugger hooks of 13. Systems run in `"update"`, slice
+   1's only script phase.
 10. **Slice 1: the error record.** `ScriptError.code` is a `String`, since a code thrown by a native
     comes back from JavaScript as text, and `detail` is boxed (errors travel in every `Result`). The
     detail has an `extra` map for fields particular to a code (`binding`, `import`, `path`, `count`,
@@ -867,9 +942,9 @@ a `ctx` over a snapshot exported as JSON [persist] (not in slice 1).
     `time.`, `decision.`, `perception.` and, since 2026-11-12, `scene.` (simulation.md 7.6: the
     engine's `scene.loaded`, and `scene.load_requested`, which `ctx.scene.load` stages).
 13. **Slice 1: crate edges.** `amoris-script` links `amoris-sim`, `amoris-contract`, `bevy_ecs`
-    (architecture.md 6), `rquickjs`, `serde` and `serde_json`, and oxc under `transpile`; its edges
-    to `amoris-physics` and `amoris-interface` stay unused until physics queries and perception for
-    non-player characters reach scripts.
+    (architecture.md 6), `rquickjs`, `serde` and `serde_json`, and oxc under `transpile`; physics
+    queries use its edge to `amoris-physics`, and executors and `ctx.intent` its edge to
+    `amoris-interface` (14.18).
 14. **Slice 1: the cross-target check.** `amoris_script::web::report` instantiates a compiled
     workload (the regatta under `tests/web/workload/`), runs the lockdown's verification walk (test
     1: no problem, and the counts of setters, objects and roots), checks the replaced `Math`
@@ -895,6 +970,19 @@ a `ctx` over a snapshot exported as JSON [persist] (not in slice 1).
     object the script built within its budget.
 17. **Slice 1: no `contract.d.ts`.** The plain Rust records scripts see (events, intents, error
     records) are not emitted through `ts-rs` (choice 2) yet: `GameEvent` and `EmitOptions` are
-    written by hand in the prelude, an error a native throws is read by its untyped `code`, and
-    intents arrive with slice 2. Emitting them needs `ts-rs` derives on [sim]'s and [contract]'s
-    types; the charter's row for script types keeps `ts-rs` for them.
+    written by hand in the prelude, as are the intent records executors see (14.18), and an error a
+    native throws is read by its untyped `code`. Emitting them needs `ts-rs` derives on [sim]'s and
+    [contract]'s types; the charter's row for script types keeps `ts-rs` for them.
+18. **Executors and `ctx.intent` (2026-11-12).** Built after slice 2's player layer had refused
+    them since its port (player.md 10): the rebuild line's natives were written against a host this
+    line has since changed, so they were written again here. Departures from the first design of
+    5.1 and 5.5: an executor lists `intent(name, def)` declarations, not kind names, because a
+    game's own intents had nowhere else to be declared (the project's perception file holds
+    perception, and the contract's game definition (README) leaves a project's syntax to this
+    specification); `ctx.intent` takes `{target, tag}` beside the parameters, since an intent's
+    target is not one of them; its acts apply before the call's other commands rather than among
+    them, so a refusal at the commit can still leave the world as it was (the sim's invocation
+    rollback undoes events and ids, not component writes). The executor's natives live in
+    `natives/intents.rs`; the merge into the action catalog is `scripts::declare_intents`; the
+    commit's intent commands go through `amoris_interface::action::lifecycle` and `act`, the one
+    way an instance changes, so a script executor emits the events a Rust one does.

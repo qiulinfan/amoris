@@ -106,6 +106,9 @@ pub enum SystemOutcome {
 }
 
 struct SystemEntry {
+    kind: SystemKind,
+    /// An executor's intent kinds.
+    executes: Vec<String>,
     queries: Vec<(String, Spec)>,
     events: Vec<String>,
     def: Persistent<Value<'static>>,
@@ -118,9 +121,13 @@ pub struct Program {
     infos: Vec<SystemInfo>,
     entries: Vec<SystemEntry>,
     components: Vec<Arc<ComponentSchema>>,
+    /// Its executors' intents and the codes they declare (script-host.md 5.5).
+    intents: Vec<amoris_interface::action::defs::IntentDef>,
+    codes: Vec<amoris_interface::action::defs::CodeDef>,
     set: Arc<CompiledSet>,
     maps: Rc<Maps>,
     make_context: Persistent<Function<'static>>,
+    make_executor_context: Persistent<Function<'static>>,
     wrap_query: Persistent<Function<'static>>,
     /// The lockdown's freeze roots, `[name, value]` pairs: what `verify_lockdown` walks from.
     roots: Persistent<rquickjs::Array<'static>>,
@@ -292,6 +299,7 @@ impl ScriptHost {
                 Ok(Persistent::save(&ctx, f))
             };
             let make_context = helper("__context")?;
+            let make_executor_context = helper("__executorContext")?;
             let wrap_query = helper("__query")?;
             let mut infos = Vec::new();
             let mut entries = Vec::new();
@@ -309,10 +317,12 @@ impl ScriptHost {
                     key: s.key,
                     when: s.when,
                     doc: s.doc,
-                    kind: SystemKind::System,
+                    kind: s.kind,
                     defined_at,
                 });
                 entries.push(SystemEntry {
+                    kind: s.kind,
+                    executes: s.executes,
                     queries: s.queries,
                     events: s.events,
                     def: Persistent::save(&ctx, s.def),
@@ -322,8 +332,8 @@ impl ScriptHost {
             Ok((
                 infos,
                 entries,
-                game.components,
-                make_context,
+                (game.components, game.intents, game.codes),
+                (make_context, make_executor_context),
                 wrap_query,
                 roots,
                 ctx_key,
@@ -342,8 +352,15 @@ impl ScriptHost {
         *sh.loading.borrow_mut() = None;
         *sh.maps.borrow_mut() = None;
         sh.rejections.borrow_mut().clear();
-        let (infos, entries, components, make_context, wrap_query, roots, ctx_key) =
-            result.map_err(|e| vec![e])?;
+        let (
+            infos,
+            entries,
+            (components, intents, codes),
+            (make_context, make_executor_context),
+            wrap_query,
+            roots,
+            ctx_key,
+        ) = result.map_err(|e| vec![e])?;
         if let Some(h) = hook {
             h.loaded(&set, instrumented);
         }
@@ -351,9 +368,12 @@ impl ScriptHost {
             infos,
             entries,
             components,
+            intents,
+            codes,
             set,
             maps,
             make_context,
+            make_executor_context,
             wrap_query,
             roots,
             ctx_key,
@@ -374,6 +394,26 @@ impl Program {
     /// The project components it declares, in registration order.
     pub fn project_components(&self) -> &[Arc<ComponentSchema>] {
         &self.components
+    }
+
+    /// The intents its executors carry out, in declaration order (script-host.md 5.5).
+    pub fn intents(&self) -> &[amoris_interface::action::defs::IntentDef] {
+        &self.intents
+    }
+
+    /// The game codes its intents declare.
+    pub fn codes(&self) -> &[amoris_interface::action::defs::CodeDef] {
+        &self.codes
+    }
+
+    /// Whether system `index` runs in `tick`: a system by its run condition, an executor when it
+    /// has an instance to carry out (script-host.md 5.5).
+    pub fn due(&self, world: &World, index: usize, tick: Tick) -> bool {
+        let (info, entry) = (&self.infos[index], &self.entries[index]);
+        match entry.kind {
+            SystemKind::System => info.when.runs_on(tick),
+            SystemKind::Executor => crate::natives::intents::due(world, &entry.executes, tick),
+        }
     }
 
     /// The bundle it was instantiated from (versions.md 3.2).
@@ -424,10 +464,16 @@ impl Program {
         let (mut prepared, mut returned) = (RunStart::default(), None);
         // The natives' sums when `run` returns (natives::timing; zero when untimed).
         let mut natives_after = [(0.0, 0); crate::host::NATIVE_KINDS];
+        // An executor's instances, handed before the invocation: one whose seat lost its body
+        // fails here, as `interface.intents` fails a Rust one.
+        let scope = (entry.kind == SystemKind::Executor)
+            .then(|| crate::natives::intents::hand(world, &entry.executes, tick.tick));
         let inv = begin_invocation(world, &info.key);
         let serial = sh.serial.get() + 1;
         sh.serial.set(serial);
-        *sh.call.borrow_mut() = Some(CallState::new(world, tick.tick, &info.name, serial));
+        let mut state = CallState::new(world, tick.tick, &info.name, serial);
+        state.executor = scope;
+        *sh.call.borrow_mut() = Some(state);
         *sh.maps.borrow_mut() = Some(self.maps.clone());
         *sh.panic.borrow_mut() = None;
         sh.rejections.borrow_mut().clear();
@@ -594,6 +640,20 @@ impl Program {
         call_info
             .set("events", entry.events.clone())
             .map_err(caught)?;
+        if entry.kind == SystemKind::Executor {
+            let make: Function = self
+                .make_executor_context
+                .clone()
+                .restore(ctx)
+                .map_err(caught)?;
+            let context: Value = make.call((call_info,)).map_err(caught)?;
+            let def: Value = entry.def.clone().restore(ctx).map_err(caught)?;
+            let run: Function = entry.run.clone().restore(ctx).map_err(caught)?;
+            prepared.natives = crate::natives::timing::totals();
+            prepared.at = clock.map(|c| c());
+            run.call::<_, ()>((This(def), context)).map_err(caught)?;
+            return drain_jobs(ctx);
+        }
         let make: Function = self.make_context.clone().restore(ctx).map_err(caught)?;
         let context: Value = make.call((call_info,)).map_err(caught)?;
         let results = Object::new(ctx.clone()).map_err(caught)?;

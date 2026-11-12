@@ -77,7 +77,7 @@ fn update(world: &mut World, sys: &mut SystemCtx<'_>) {
         };
         let phase = sys.phase();
         for (i, info) in program.systems().iter().enumerate() {
-            if !info.when.runs_on(tick.tick) {
+            if !program.due(world, i, tick.tick) {
                 continue;
             }
             sys.hooks().world(&info.key, phase, true, world);
@@ -303,6 +303,7 @@ fn swap_in(
     }
     let program = scripts.host.instantiate(set, world)?;
     let components = plan(world, &program).map_err(|e| vec![e])?;
+    let catalog = merged(world, &program).map_err(|e| vec![e])?;
     for c in program.project_components() {
         if components
             .iter()
@@ -337,6 +338,9 @@ fn swap_in(
         scripts.previous = Some(p.compiled().clone());
     }
     scripts.program = Some(program);
+    if let Some(c) = catalog {
+        world.insert_resource(c);
+    }
     Ok(SwapReport {
         outcome: SwapOutcome::Applied,
         bundle: set.bundle.hash,
@@ -344,6 +348,103 @@ fn swap_in(
         systems,
         components,
     })
+}
+
+fn bad_intents(message: String) -> ScriptError {
+    ScriptError::new("script.bad_definition", message, ErrorPhase::Load)
+}
+
+/// The world's action catalog with `program`'s intents and codes in place of the installed
+/// program's, checked whole (script-host.md 5.5): `None` for a world with no catalog yet.
+fn merged(
+    world: &World,
+    program: &Program,
+) -> Result<Option<amoris_interface::action::ActionCatalog>, ScriptError> {
+    use amoris_interface::action::ActionCatalog;
+    // A world without a player layer has no catalog yet: a replay's starts empty, and the
+    // player layer's rebuild installs the program's intents when its declarations come back
+    // (`declare_intents`). The runtime refuses a game without one whose scripts declare intents.
+    let Some(current) = world.get_resource::<ActionCatalog>() else {
+        return Ok(None);
+    };
+    let engine_code = |code: &str| {
+        current
+            .code(code)
+            .filter(|c| !current.script_codes.contains(&c.code))
+    };
+    for c in program.codes() {
+        if engine_code(&c.code).is_some() {
+            return Err(bad_intents(format!(
+                "The code {} is the engine catalog's; name the game's own codes apart.",
+                c.code
+            )));
+        }
+    }
+    let channels = current.channels();
+    for i in program.intents() {
+        if current
+            .intent(&i.name)
+            .is_some_and(|e| e.executor.is_some())
+        {
+            return Err(bad_intents(format!(
+                "The intent {} is the engine catalog's ({}); name the game's own intents apart.",
+                i.name, current.game
+            )));
+        }
+        for ch in &i.channels {
+            if !channels.contains(&ch.as_str()) {
+                return Err(bad_intents(format!(
+                    "The intent {} occupies the channel {ch}, which none of the game's controls \
+                     drives (its channels: {}).",
+                    i.name,
+                    channels.join(", ")
+                ))
+                .suggest(amoris_contract::suggest::suggest_names(
+                    ch,
+                    channels.iter().copied(),
+                )));
+            }
+        }
+        for code in &i.failures {
+            let declared = program.codes().iter().any(|c| c.code == *code)
+                || engine_code(code).is_some_and(|c| c.uses.contains(&amoris_contract::Use::Fail))
+                || crate::intent_def::CONTRACT_FAIL_CODES.contains(&code.as_str());
+            if !declared {
+                return Err(bad_intents(format!(
+                    "The intent {} fails with {code}, which the game does not declare with the \
+                     fail use: declare it in a failure {{code, when, detail, template}}.",
+                    i.name
+                )));
+            }
+        }
+    }
+    let mut c = current.clone();
+    c.declare_script_parts(program.intents().to_vec(), program.codes().to_vec());
+    let defs = world.get_resource::<amoris_interface::perception::PerceptionDefs>();
+    c.validate(defs).map_err(|p| {
+        bad_intents(format!(
+            "The game's actions do not hold together: {}",
+            p.message
+        ))
+    })?;
+    Ok(Some(c))
+}
+
+/// Installs the intents of the world's program into its action catalog (script-host.md 5.5), as a
+/// swap does: what the player layer's rebuild calls after it derived the catalog again from a
+/// restored world's declarations. Nothing to do without a program or a catalog.
+pub fn declare_intents(world: &mut World) -> Result<(), Problem> {
+    let catalog = match world
+        .get_non_send::<Scripts>()
+        .and_then(|s| s.program.as_ref())
+    {
+        Some(p) => merged(world, p).map_err(|e| e.to_problem())?,
+        None => return Ok(()),
+    };
+    if let Some(c) = catalog {
+        world.insert_resource(c);
+    }
+    Ok(())
 }
 
 /// The project components `set` declares, as a swap would register them: the set instantiated in a
@@ -371,6 +472,15 @@ pub fn live_components(world: &World) -> Vec<std::sync::Arc<ComponentSchema>> {
         .get_non_send::<Scripts>()
         .and_then(|s| s.program.as_ref())
         .map(|p| p.project_components().to_vec())
+        .unwrap_or_default()
+}
+
+/// The names of the intents the program of the world declares (none before the first swap).
+pub fn live_intents(world: &World) -> Vec<String> {
+    world
+        .get_non_send::<Scripts>()
+        .and_then(|s| s.program.as_ref())
+        .map(|p| p.intents().iter().map(|i| i.name.clone()).collect())
         .unwrap_or_default()
 }
 

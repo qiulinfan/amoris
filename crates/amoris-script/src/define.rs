@@ -15,8 +15,13 @@ use crate::error::{ErrorPhase, ScriptError};
 use crate::js::{self, Own};
 use crate::natives::query::{Spec, parse_spec};
 
-/// A system as the program declares it.
+/// A system or an executor as the program declares it.
 pub struct SystemDef<'js> {
+    pub kind: crate::program::SystemKind,
+    /// An executor's intent kinds, in declared order; none for a system.
+    pub executes: Vec<String>,
+    /// An executor's declarations of them.
+    pub intents: Vec<crate::intent_def::Declared>,
     pub name: String,
     pub key: SystemKey,
     pub doc: String,
@@ -31,13 +36,17 @@ pub struct SystemDef<'js> {
 pub struct GameDef<'js> {
     pub components: Vec<Arc<ComponentSchema>>,
     pub systems: Vec<SystemDef<'js>>,
+    /// Its executors' intents, in declaration order (script-host.md 5.5).
+    pub intents: Vec<amoris_interface::action::defs::IntentDef>,
+    /// The game codes those intents declare.
+    pub codes: Vec<amoris_interface::action::defs::CodeDef>,
 }
 
-fn bad(message: String) -> ScriptError {
+pub(crate) fn bad(message: String) -> ScriptError {
     ScriptError::new("script.bad_definition", message, ErrorPhase::Load)
 }
 
-fn unknown_key(what: &str, key: &str, known: &[&str]) -> ScriptError {
+pub(crate) fn unknown_key(what: &str, key: &str, known: &[&str]) -> ScriptError {
     ScriptError::new(
         "script.unknown_key",
         format!("{what} has no key '{key}'."),
@@ -51,7 +60,7 @@ fn unknown_key(what: &str, key: &str, known: &[&str]) -> ScriptError {
 }
 
 /// An object's own enumerable data properties in own-key order; a getter is refused.
-fn entries<'js>(
+pub(crate) fn entries<'js>(
     ctx: &Ctx<'js>,
     v: &Value<'js>,
     what: &str,
@@ -76,7 +85,11 @@ fn entries<'js>(
 /// The most items a list of the game definition holds.
 const MAX_ITEMS: usize = 4096;
 
-fn items<'js>(ctx: &Ctx<'js>, v: &Value<'js>, what: &str) -> Result<Vec<Value<'js>>, ScriptError> {
+pub(crate) fn items<'js>(
+    ctx: &Ctx<'js>,
+    v: &Value<'js>,
+    what: &str,
+) -> Result<Vec<Value<'js>>, ScriptError> {
     let len = match js::dense_array_len(ctx, v, MAX_ITEMS) {
         Ok(n) => n,
         Err(js::NotDense::TooLong(n)) => {
@@ -95,7 +108,7 @@ fn items<'js>(ctx: &Ctx<'js>, v: &Value<'js>, what: &str) -> Result<Vec<Value<'j
         .collect()
 }
 
-fn text(v: &Value<'_>, what: &str) -> Result<String, ScriptError> {
+pub(crate) fn text(v: &Value<'_>, what: &str) -> Result<String, ScriptError> {
     match js::text(v) {
         Some(Ok(t)) => Ok(t),
         _ => Err(bad(format!("{what} must be a string."))),
@@ -103,7 +116,10 @@ fn text(v: &Value<'_>, what: &str) -> Result<String, ScriptError> {
 }
 
 /// The builder value's tag and payload: `{__amoris: tag, ...}`.
-fn tagged<'js>(ctx: &Ctx<'js>, v: &Value<'js>) -> Option<(String, Vec<(String, Value<'js>)>)> {
+pub(crate) fn tagged<'js>(
+    ctx: &Ctx<'js>,
+    v: &Value<'js>,
+) -> Option<(String, Vec<(String, Value<'js>)>)> {
     let e = entries(ctx, v, "a builder value").ok()?;
     let tag = e
         .iter()
@@ -317,6 +333,91 @@ fn component<'js>(
     })
 }
 
+/// The name a system or an executor gives: `^[a-z][a-z0-9_]*$`, at most 56 bytes.
+fn system_name(name: &str) -> Result<(), ScriptError> {
+    if crate::intent_def::word(name) {
+        Ok(())
+    } else {
+        Err(bad(format!(
+            "'{name}' is not a system name: ^[a-z][a-z0-9_]*$, at most 56 bytes."
+        )))
+    }
+}
+
+/// One `executor({...})` value (script-host.md 5.5): a system that carries out the intents it
+/// declares, run every tick it has instances to carry out.
+fn executor<'js>(
+    ctx: &Ctx<'js>,
+    e: &[(String, Value<'js>)],
+) -> Result<SystemDef<'js>, ScriptError> {
+    let def = e
+        .iter()
+        .find(|(k, _)| k == "def")
+        .map(|x| x.1.clone())
+        .unwrap_or_else(|| Value::new_undefined(ctx.clone()));
+    let fields = entries(ctx, &def, "executor({...})")?;
+    let keys = ["name", "phase", "doc", "intents", "run"];
+    for (k, _) in &fields {
+        if !keys.contains(&k.as_str()) {
+            return Err(unknown_key("executor({...})", k, &keys));
+        }
+    }
+    let get = |k: &str| fields.iter().find(|(n, _)| n == k).map(|(_, x)| x.clone());
+    let undef = || Value::new_undefined(ctx.clone());
+    let name = text(&get("name").unwrap_or_else(undef), "An executor's name")?;
+    system_name(&name)?;
+    let phase = get("phase")
+        .map(|p| text(&p, "phase"))
+        .transpose()?
+        .unwrap_or_else(|| "update".into());
+    if phase != "update" {
+        return Err(bad(format!(
+            "executor {name}'s phase is \"update\", the only script phase."
+        )));
+    }
+    let doc = get("doc")
+        .map(|d| text(&d, "doc"))
+        .transpose()?
+        .unwrap_or_default();
+    let mut intents: Vec<crate::intent_def::Declared> = Vec::new();
+    for v in items(
+        ctx,
+        &get("intents").unwrap_or_else(undef),
+        &format!("executor {name}'s intents"),
+    )? {
+        let d = crate::intent_def::intent(ctx, &v)?;
+        if intents.iter().any(|x| x.def.name == d.def.name) {
+            return Err(bad(format!(
+                "executor {name} lists the intent {} twice.",
+                d.def.name
+            )));
+        }
+        intents.push(d);
+    }
+    if intents.is_empty() {
+        return Err(bad(format!(
+            "executor {name} carries out no intent: list intent(name, {{...}}) values in intents."
+        )));
+    }
+    let run = get("run")
+        .and_then(|r| r.into_function())
+        .ok_or_else(|| bad(format!("executor {name} needs run(ctx).")))?;
+    let key = SystemKey::new(format!("script:{name}")).map_err(|p| bad(p.message))?;
+    Ok(SystemDef {
+        kind: crate::program::SystemKind::Executor,
+        executes: intents.iter().map(|d| d.def.name.clone()).collect(),
+        intents,
+        name,
+        key,
+        doc,
+        when: RunCondition::Always,
+        queries: Vec::new(),
+        events: Vec::new(),
+        def,
+        run,
+    })
+}
+
 fn condition<'js>(ctx: &Ctx<'js>, v: &Value<'js>, name: &str) -> Result<RunCondition, ScriptError> {
     if v.is_undefined() {
         return Ok(RunCondition::Always);
@@ -357,9 +458,7 @@ fn system<'js>(ctx: &Ctx<'js>, v: &Value<'js>) -> Result<SystemDef<'js>, ScriptE
         ));
     };
     if tag == "executor" {
-        return Err(bad(
-            "Executors carry out intents, which arrive with the player interface (slice 2).".into(),
-        ));
+        return executor(ctx, &e);
     }
     if tag != "system" {
         return Err(bad(
@@ -387,16 +486,7 @@ fn system<'js>(ctx: &Ctx<'js>, v: &Value<'js>) -> Result<SystemDef<'js>, ScriptE
     }
     let undef = || Value::new_undefined(ctx.clone());
     let name = text(&get("name").unwrap_or_else(undef), "A system's name")?;
-    let valid = name.len() <= 56
-        && name.bytes().next().is_some_and(|c| c.is_ascii_lowercase())
-        && name
-            .bytes()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_');
-    if !valid {
-        return Err(bad(format!(
-            "'{name}' is not a system name: ^[a-z][a-z0-9_]*$, at most 56 bytes."
-        )));
-    }
+    system_name(&name)?;
     let phase = get("phase")
         .map(|p| text(&p, "phase"))
         .transpose()?
@@ -434,6 +524,9 @@ fn system<'js>(ctx: &Ctx<'js>, v: &Value<'js>) -> Result<SystemDef<'js>, ScriptE
         .ok_or_else(|| bad(format!("system {name} needs run(ctx, queries).")))?;
     let key = SystemKey::new(format!("script:{name}")).map_err(|p| bad(p.message))?;
     Ok(SystemDef {
+        kind: crate::program::SystemKind::System,
+        executes: Vec::new(),
+        intents: Vec::new(),
         name,
         key,
         doc,
@@ -443,6 +536,37 @@ fn system<'js>(ctx: &Ctx<'js>, v: &Value<'js>) -> Result<SystemDef<'js>, ScriptE
         def,
         run,
     })
+}
+
+/// Adds an executor's intent and the codes it declares to the game: an intent is declared once,
+/// and a code declared twice must be declared alike.
+fn declare(
+    out: &mut GameDef<'_>,
+    executor: &str,
+    d: crate::intent_def::Declared,
+) -> Result<(), ScriptError> {
+    if out.intents.iter().any(|i| i.name == d.def.name) {
+        return Err(bad(format!(
+            "The intent {} is declared twice; one executor carries out each intent ({executor} \
+             declares it again).",
+            d.def.name
+        )));
+    }
+    for c in d.codes {
+        match out.codes.iter().find(|x| x.code == c.code) {
+            Some(x) if *x == c => {}
+            Some(_) => {
+                return Err(bad(format!(
+                    "The code {} is declared twice, differently; declare it once and name it \
+                     elsewhere.",
+                    c.code
+                )));
+            }
+            None => out.codes.push(c),
+        }
+    }
+    out.intents.push(d.def);
+    Ok(())
 }
 
 /// Reads and checks the entry's default export.
@@ -472,6 +596,8 @@ pub fn game<'js>(
     let mut out = GameDef {
         components: Vec::new(),
         systems: Vec::new(),
+        intents: Vec::new(),
+        codes: Vec::new(),
     };
     for (k, v) in entries(ctx, &def, "game({...})")? {
         match k.as_str() {
@@ -491,7 +617,7 @@ pub fn game<'js>(
             }
             "systems" => {
                 for s in items(ctx, &v, "systems")? {
-                    let s = system(ctx, &s)?;
+                    let mut s = system(ctx, &s)?;
                     if out.systems.iter().any(|x| x.name == s.name) {
                         return Err(ScriptError::new(
                             "script.system_duplicate",
@@ -499,6 +625,9 @@ pub fn game<'js>(
                             ErrorPhase::Load,
                         )
                         .with("system", json!(s.name)));
+                    }
+                    for d in std::mem::take(&mut s.intents) {
+                        declare(&mut out, &s.name, d)?;
                     }
                     out.systems.push(s);
                 }

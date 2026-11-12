@@ -126,9 +126,10 @@ fn borrowed(parts: &[Part]) -> Vec<KeyPart<'_>> {
 
 fn open<'js>(
     ctx: &Ctx<'js>,
+    what: &str,
     key: impl FnOnce(&str, &RngTable) -> Result<StreamKey, Problem>,
 ) -> NResult<'js> {
-    let h = with_call(ctx, "a random stream", |call, world| {
+    let h = with_call(ctx, what, |call, world| {
         let k = key(&call.key, world.resource::<RngTable>()).map_err(from_problem)?;
         call.rng.push(k);
         Ok(handle(call, call.rng.len() - 1))
@@ -137,7 +138,9 @@ fn open<'js>(
 }
 
 pub fn system<'js>(ctx: &Ctx<'js>, _args: &[Value<'js>]) -> NResult<'js> {
-    open(ctx, |sys, table| table.key(StreamKind::System(sys)))
+    open(ctx, "ctx.rng", |sys, table| {
+        table.key(StreamKind::System(sys))
+    })
 }
 
 pub fn entity<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
@@ -146,7 +149,7 @@ pub fn entity<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
         .as_number()
         .and_then(|x| EntityId::from_f64(x).ok())
         .ok_or_else(|| key_invalid(0, "not an entity id"))?;
-    open(ctx, move |sys, table| {
+    open(ctx, "ctx.rngFor", move |sys, table| {
         table.key(StreamKind::Entity(sys, id))
     })
 }
@@ -154,13 +157,17 @@ pub fn entity<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
 pub fn named<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
     let p = parts(ctx, &arg(ctx, args, 0))?;
     let b = borrowed(&p);
-    open(ctx, |sys, table| table.key(StreamKind::Named(sys, &b)))
+    open(ctx, "ctx.rngNamed", |sys, table| {
+        table.key(StreamKind::Named(sys, &b))
+    })
 }
 
 pub fn timeless<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
     let p = parts(ctx, &arg(ctx, args, 0))?;
     let b = borrowed(&p);
-    open(ctx, |_sys, table| table.key(StreamKind::Timeless(&b)))
+    open(ctx, "ctx.rngTimeless", |_sys, table| {
+        table.key(StreamKind::Timeless(&b))
+    })
 }
 
 fn draw<'js, R>(

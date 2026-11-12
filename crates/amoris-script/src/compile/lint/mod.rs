@@ -53,11 +53,20 @@ fn reserved_message(name: &str) -> String {
 }
 
 /// `amoris` exports tagged `@pure`: callable at load time.
-const PURE_AMORIS: &[&str] = &["game", "system", "executor", "component", "freeze"];
+const PURE_AMORIS: &[&str] = &[
+    "game",
+    "system",
+    "executor",
+    "intent",
+    "component",
+    "freeze",
+];
 /// The `field` builders, all pure.
 const PURE_FIELDS: &[&str] = &[
     "f64", "i32", "u32", "tick", "bool", "str", "entity", "vec2", "vec3", "vec4", "quat", "enum",
 ];
+/// The `param` builders of intents, all pure.
+const PURE_PARAMS: &[&str] = &["number", "integer", "bool", "choice", "text"];
 /// Keys through which a load-time conversion, iteration or `instanceof` would call project code.
 const HOOKS: &[&str] = &["valueOf", "toString", "toLocaleString", "toJSON"];
 
@@ -135,8 +144,10 @@ impl<'a> Linter<'_, 'a> {
             return false;
         };
         let p = m.property.name.as_str();
-        if self.amoris_name(&m.object).as_deref() == Some("field") {
-            return PURE_FIELDS.contains(&p);
+        match self.amoris_name(&m.object).as_deref() {
+            Some("field") => return PURE_FIELDS.contains(&p),
+            Some("param") => return PURE_PARAMS.contains(&p),
+            _ => {}
         }
         let global = |n| self.is_global(&m.object, n);
         (global("Math") && p != "random")

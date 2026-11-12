@@ -178,6 +178,18 @@ pub fn act(world: &mut World, caller: &Caller, raw: &Value) -> Result<ActDone, P
     })
 }
 
+/// Validates `raw` for `caller` as [`act`] would, applying nothing: the warnings it would answer,
+/// or the refusal. What the script host checks at `ctx.intent`'s call (script-host.md 5.5).
+pub fn check(world: &World, caller: &Caller, raw: &Value) -> Result<Vec<Problem>, Problem> {
+    let catalog = world
+        .get_resource::<ActionCatalog>()
+        .ok_or_else(|| state::internal("act", "the game declares no actions"))?;
+    crate::time::turns::check_episode(world)?;
+    let (req, v) = validate::validate(world, catalog, caller, raw)?;
+    crate::time::turns::check_act(world, &v.seat.id, &req)?;
+    Ok(v.warnings)
+}
+
 /// The seat's view of the world (the catalog's: its perception), or `None` when the seat has no
 /// body.
 fn seat_view<'w>(world: &'w World, seat: &str) -> Option<Box<dyn view::ActorView + 'w>> {

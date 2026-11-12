@@ -167,7 +167,7 @@ export function __context(info) {
 		single: (component) => host.single(component),
 		query: (spec) => new Query(host.query(spec)),
 		emit: (kind, data, options) => host.emit(kind, data, options),
-		intent: (actor, kind, params) => host.intent(actor, kind, params),
+		intent: (actor, kind, params, options) => host.intent(actor, kind, params, options),
 		voxels,
 		water,
 		physics,
@@ -175,6 +175,72 @@ export function __context(info) {
 		nav,
 		scene
 	});
+}
+/** What an executor's context lacks: reading any of it throws `script.restricted`. */
+const RESTRICTED = Object.freeze([
+	"world",
+	"query",
+	"single",
+	"emit",
+	"intent",
+	"events",
+	"part",
+	"rngFor",
+	"rngNamed",
+	"rngTimeless",
+	"voxels",
+	"water",
+	"physics",
+	"anim",
+	"nav",
+	"scene"
+]);
+/** @internal The context of one executor call, frozen; nothing in it outlives the call. */
+export function __executorContext(info) {
+	const ctx = {
+		tick: info.tick,
+		dt: info.dt,
+		time: info.time,
+		system: info.system,
+		rng: makeRng(host.rngSystem()),
+		intents: host.executorIntents(),
+		view: (intent) => Object.freeze({
+			instrument: (name) => host.viewInstrument(intent.id, name),
+			percept: (e) => host.viewPercept(intent.id, e),
+			nearby: (query) => host.viewNearby(intent.id, query),
+			eventsSince: (seq) => host.viewEvents(intent.id, seq)
+		}),
+		controls: (intent) => Object.freeze({
+			set: (control, value) => {
+				host.controlSet(intent.id, control, value);
+			},
+			pulse: (control, target) => {
+				host.controlPulse(intent.id, control, target);
+			}
+		}),
+		progress: (intent, readings) => {
+			host.intentProgress(intent.id, readings);
+		},
+		setState: (intent, state) => {
+			host.intentState(intent.id, state);
+		},
+		reached: (intent, readings) => {
+			host.intentReached(intent.id, readings);
+		},
+		succeed: (intent, readings) => {
+			host.intentSucceed(intent.id, readings);
+		},
+		reject: (intent, code, detail) => {
+			host.intentReject(intent.id, code, detail);
+		}
+	};
+	for (const name of RESTRICTED) {
+		Object.defineProperty(ctx, name, {
+			get: () => host.restricted(`ctx.${name}`),
+			enumerable: false
+		});
+	}
+	return Object.freeze(ctx);
 }
 /** @internal The host wraps a declared query's raw columns with this. */
 export function __query(raw) {
@@ -203,13 +269,43 @@ export function system(def) {
 		def
 	});
 }
-/** @pure A system that carries out intents (script-host.md 5.5); `game()` refuses it before slice 2. */
+/**
+* @pure A system that carries out the intents it lists (script-host.md 5.5): every tick it has
+* active or holding instances, `run` sees them in `ctx.intents` and drives each actor's controls.
+*/
 export function executor(def) {
 	return Object.freeze({
 		__amoris: "executor",
 		def
 	});
 }
+/**
+* @pure An intent of the game (script-host.md 5.5), which players and agents start with
+* `player.act` and affordances, and `ctx.intent` starts for a seat's body:
+* `intent("walk_to", {doc: "...", target: {entity: ["waypoint"]}, channels: ["body"], timeoutS: 30})`.
+*/
+export function intent(name, def) {
+	return Object.freeze({
+		__amoris: "intent",
+		name,
+		def
+	});
+}
+const paramOf = (type, doc, options, values) => Object.freeze({
+	__amoris: "param",
+	type,
+	doc,
+	options,
+	values
+});
+/** @pure The parameter builders of intents: a parameter without a default is required. */
+export const param = Object.freeze({
+	number: (doc, options) => paramOf("number", doc, options),
+	integer: (doc, options) => paramOf("integer", doc, options),
+	bool: (doc, options) => paramOf("bool", doc, options),
+	choice: (values, doc, options) => paramOf("choice", doc, options, values),
+	text: (doc, options) => paramOf("text", doc, options)
+});
 /** @pure The game: the entry module's default export (script-host.md 4.2). */
 export function game(def) {
 	return Object.freeze({
@@ -246,4 +342,4 @@ export const field = Object.freeze({
 
 import { harden as __amoris_harden } from "amoris:host";
 import * as __amoris_self from "amoris";
-__amoris_harden("amoris", __amoris_self, { ["Query"]: Query, ["annotate"]: annotate, ["world"]: world, ["voxels"]: voxels, ["physics"]: physics, ["scene"]: scene, ["nav"]: nav, ["anim"]: anim, ["water"]: water, ["part"]: part, ["makeRng"]: makeRng, ["__context"]: __context, ["__query"]: __query, ["component"]: component, ["system"]: system, ["executor"]: executor, ["game"]: game, ["freeze"]: freeze, ["fieldOf"]: fieldOf, ["field"]: field }, { ["Query"]: 294, ["annotate"]: 549, ["world"]: 558, ["voxels"]: 569, ["physics"]: 587, ["scene"]: 596, ["nav"]: 602, ["anim"]: 607, ["water"]: 628, ["part"]: 641, ["makeRng"]: 646, ["__context"]: 668, ["__query"]: 696, ["component"]: 827, ["system"]: 840, ["executor"]: 847, ["game"]: 852, ["freeze"]: 857, ["fieldOf"]: 899, ["field"]: 903 });
+__amoris_harden("amoris", __amoris_self, { ["Query"]: Query, ["annotate"]: annotate, ["world"]: world, ["voxels"]: voxels, ["physics"]: physics, ["scene"]: scene, ["nav"]: nav, ["anim"]: anim, ["water"]: water, ["part"]: part, ["makeRng"]: makeRng, ["__context"]: __context, ["RESTRICTED"]: RESTRICTED, ["__executorContext"]: __executorContext, ["__query"]: __query, ["component"]: component, ["system"]: system, ["executor"]: executor, ["intent"]: intent, ["paramOf"]: paramOf, ["param"]: param, ["game"]: game, ["freeze"]: freeze, ["fieldOf"]: fieldOf, ["field"]: field }, { ["Query"]: 294, ["annotate"]: 669, ["world"]: 678, ["voxels"]: 689, ["physics"]: 707, ["scene"]: 716, ["nav"]: 722, ["anim"]: 727, ["water"]: 748, ["part"]: 761, ["makeRng"]: 766, ["__context"]: 788, ["RESTRICTED"]: 817, ["__executorContext"]: 823, ["__query"]: 873, ["component"]: 1075, ["system"]: 1088, ["executor"]: 1098, ["intent"]: 1107, ["paramOf"]: 1135, ["param"]: 1139, ["game"]: 1148, ["freeze"]: 1153, ["fieldOf"]: 1195, ["field"]: 1199 });

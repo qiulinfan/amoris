@@ -1,0 +1,2 @@
+{"tick": 1, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "start", "intent": "walk_to", "target": "WaypointA", "params": {"arrive_m": 1}, "tag": "first"}]}}
+{"tick": 700, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "use", "entity": "WaypointA", "verb": "visit"}]}}

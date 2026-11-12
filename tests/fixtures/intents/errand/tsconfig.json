@@ -1,0 +1,16 @@
+{
+  "//": "Written by the engine (scripts.types) for tsc and editors; amoris maps to the generated .amoris/types.",
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "target": "es2023",
+    "lib": ["es2023"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "types": [],
+    "paths": { "amoris": ["./.amoris/types/amoris.d.ts"] }
+  },
+  "include": ["scripts"]
+}

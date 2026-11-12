@@ -198,6 +198,10 @@ pub(crate) enum Command {
         param: Option<(String, f64)>,
         command: Option<amoris_assets::anim::AnimCommand>,
     },
+    /// `ctx.intent`'s act (script-host.md 5.5): applied before the call's other commands.
+    Act(serde_json::Value),
+    /// An executor's command on one of its instances (script-host.md 5.5).
+    Intent(crate::natives::intents::IntentCommand),
 }
 
 /// A column handed to the script, kept to compare after the call.
@@ -252,6 +256,9 @@ pub(crate) struct CallState {
     /// The hierarchy as the call's commands so far leave it, once a command needed it (see
     /// [`CallState::hierarchy`]).
     hierarchy: Option<Hierarchy>,
+    /// An executor's call: the instances it was handed (script-host.md 5.5). Its natives refuse
+    /// the world.
+    pub executor: Option<crate::natives::intents::ExecutorScope>,
 }
 
 impl CallState {
@@ -269,6 +276,7 @@ impl CallState {
             counts: CallCounts::default(),
             voxels: BTreeMap::new(),
             hierarchy: None,
+            executor: None,
         }
     }
 
@@ -301,6 +309,15 @@ pub(crate) fn apply(
     cells: &[CellWrite],
     commands: Vec<Command>,
 ) -> Result<(), ScriptError> {
+    // `ctx.intent`'s acts first, in call order (script-host.md 5.4 and 5.5): validated at their
+    // calls, so a refusal here is one act of the call against another; the intent table goes back
+    // and the caller's rollback takes the events, before anything else of the call applied.
+    let (acts, commands): (Vec<Command>, Vec<Command>) = commands
+        .into_iter()
+        .partition(|c| matches!(c, Command::Act(_)));
+    if !acts.is_empty() {
+        crate::natives::intents::apply_acts(world, acts)?;
+    }
     for c in cells {
         let e = entity_of(world, c.id)?;
         let mut em = world.entity_mut(e);
@@ -310,6 +327,16 @@ pub(crate) fn apply(
         v.nums[usize::from(c.slot)] = c.value;
         c.comp.access.write(&mut em, &v);
     }
+    // An executor's commands need the action catalog, which they leave as it is.
+    let catalog = commands
+        .iter()
+        .any(|c| matches!(c, Command::Intent(_)))
+        .then(|| {
+            world
+                .get_resource::<amoris_interface::action::ActionCatalog>()
+                .cloned()
+        })
+        .flatten();
     // The world's hierarchy, read for a despawn and kept while only despawns follow; a command
     // that may change a `Parent` drops it, and the next despawn reads the world again.
     let mut hierarchy: Option<Hierarchy> = None;
@@ -380,6 +407,8 @@ pub(crate) fn apply(
             Command::Anim { id, param, command } => {
                 crate::natives::anim::apply(world, id, param, command);
             }
+            Command::Act(_) => {}
+            Command::Intent(cmd) => crate::natives::intents::apply(world, catalog.as_ref(), cmd),
             Command::Water { id, column, m3 } => {
                 if let Some(e) = entity::entity(world, id)
                     && let Some(mut r) = world.get_mut::<amoris_physics::WaterRegion>(e)

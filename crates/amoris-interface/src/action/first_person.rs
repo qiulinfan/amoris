@@ -1,6 +1,7 @@
 //! The `first_person` catalog (docs/spec/voxels.md 6): one seat, `player`, whose body carries a
-//! `Walker`; its controls write the walker's inputs, its pulses act for one tick. No intents,
-//! affordances or codes: the game's rules give `primary` and `secondary` their meaning.
+//! `Walker`; its controls write the walker's inputs, its pulses act for one tick. No intents or
+//! codes of its own: the game's rules give `primary` and `secondary` their meaning, and its scripts
+//! may declare intents (script-host.md 5.5), which the perception file's affordances may start.
 
 use amoris_contract::Problem;
 use amoris_physics::Walker;
@@ -289,12 +290,14 @@ pub fn catalog(bodies: Bodies, view: ViewFactory) -> ActionCatalog {
 }
 
 /// The catalog as a game runs it: the seat is the body whose observer names it, acting through its
-/// observer's perception. Validated against `defs`.
+/// observer's perception, and the kinds' affordances are those the perception declarations carry.
+/// Validated against `defs`.
 pub fn game_catalog(defs: &PerceptionDefs) -> Result<ActionCatalog, Problem> {
-    let c = catalog(
+    let mut c = catalog(
         crate::perception::bridge::bodies,
         crate::perception::bridge::view_factory(),
     );
-    c.validate(Some(defs))?;
+    c.affordances = super::catalog::affordances_from(defs)?;
+    c.validate_engine(Some(defs))?;
     Ok(c)
 }
