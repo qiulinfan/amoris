@@ -1,10 +1,12 @@
 //! The renderer: keeps the retained scene in step with the render feed and draws a frame.
 //!
 //! Per frame: write what changed (instances, materials, meshes, lights), then on the GPU
-//! 1. cull every instance against the camera and the four shadow cascades in one dispatch, which
-//!    writes the visible lists and the instance counts of every indirect draw;
+//! 1. cull every instance against the camera, the four shadow cascades and the local shadow views
+//!    (spot lights', shadows.rs, docs/spec/shadows.md) in one dispatch, which writes the visible
+//!    lists and the instance counts of every indirect draw;
 //! 2. assign punctual lights to the cluster grid;
-//! 3. draw each shadow cascade (one multi-draw per pipeline variant natively);
+//! 3. draw each shadow cascade and each local shadow view (one multi-draw per pipeline variant
+//!    natively);
 //! 4. draw the opaque scene and the sky into the HDR target, multisampled or not, with TAA's
 //!    jitter and the extra targets GTAO and TAA read (post.rs `SceneFormat`; likewise);
 //! 5. GTAO darkens the indirect light, TAA blends the frame with its history (gtao.rs, taa.rs);
@@ -38,7 +40,7 @@ use amoris_assets::primitives::{PRIMITIVES, primitive};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec3};
 
-use crate::batches::{Batches, LATE, VIEWS};
+use crate::batches::{self, Batches, LATE, VIEWS};
 use crate::blit::Blitter;
 use crate::camera::{CameraState, frustum_planes};
 use crate::gpu::Gpu;
@@ -58,7 +60,9 @@ use crate::profiler::GpuProfiler;
 use crate::rain::Rain;
 use crate::scene::{NEURAL_VARIANT, Part, Resolve, Scene, VARIANTS};
 use crate::shaders;
-use crate::shadows::{self, CASCADES, SHADOW_SIZE, SLICE_PLANES, ShadowCull};
+use crate::shadows::{
+    self, CASCADES, LOCAL_VIEWS, LocalShadows, SHADOW_SIZE, SLICE_PLANES, ShadowCull,
+};
 use crate::skinning::Skinning;
 use crate::sky::{Sky, SkyParams};
 use crate::trace::{self, FrameTracer, TraceSpec};
@@ -72,6 +76,11 @@ const CLUSTER_Z: u32 = 24;
 const CLUSTER_MAX: u32 = 64;
 const CLUSTER_FAR: f32 = 400.0;
 const SHADOW_DISTANCE: f32 = 150.0;
+/// The views the culling pass can hold: the camera's, the cascades' and the local shadow views'
+/// (`Planes[9]` in cull.wgsl).
+const CULL_VIEWS: usize = VIEWS as usize + LOCAL_VIEWS;
+/// The `visible` list a renderer starts with: 1,024 entries of the camera's and the cascades'.
+const VISIBLE_START: u64 = 1024 * 4 * VIEWS as u64;
 /// The frames [`Renderer::capture_still`] draws with TAA: one cycle of the jitter sequence (at a
 /// render scale of 1; below it the longer cycle, `taa::jitter_phases`).
 pub const STILL_FRAMES: u32 = crate::taa::JITTER_PHASES;
@@ -98,12 +107,15 @@ struct ViewUniform {
     /// Material textures' uv gradient factors, and the specular anti-aliasing's and the sea's
     /// (common.wgsl `texture_lod`).
     texture_lod: [f32; 4],
+    /// Spot lights' shadow view-projections by slot (common.wgsl `local_views`).
+    local_views: [[[f32; 4]; 4]; LOCAL_VIEWS],
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct CullUniform {
-    planes: [[[f32; 4]; 6]; 5],
+    /// The camera's, the cascades' and the local shadow views' planes.
+    planes: [[[f32; 4]; 6]; CULL_VIEWS],
     view_proj: [[f32; 4]; 4],
     instance_count: u32,
     view_count: u32,
@@ -114,7 +126,9 @@ struct CullUniform {
     occlusion: u32,
     hiz_levels: u32,
     viewport: [f32; 2],
-    _pad: [u32; 2],
+    /// Bit `v`: view `v` is culled this frame.
+    view_mask: u32,
+    _pad: u32,
     eye: [f32; 4],
     lod: [f32; 4],
     lod_cascades: [f32; 4],
@@ -132,8 +146,21 @@ struct LightGpu {
     dir: [f32; 3],
     cos_outer: f32,
     cos_inner: f32,
-    _p: [f32; 3],
+    /// 0: no shadow map this frame; else 1 + its local view's slot (set per frame in `render`).
+    shadow: u32,
+    /// A texel of its shadow map, metres wide per metre of depth from the light (0: it casts none).
+    shadow_texel: f32,
+    _p: f32,
 }
+
+// The shaders' layouts (common.wgsl `View` and `Light`, cull.wgsl `Cull`). A `View` past 1,024
+// bytes would overflow the view buffers that tests build by hand (water_mesh.rs, water_caustics.rs,
+// water_ledge.rs, tests/water_spray.rs).
+const _: () = assert!(
+    std::mem::size_of::<ViewUniform>() == 1008
+        && std::mem::size_of::<CullUniform>() == 1600
+        && std::mem::size_of::<LightGpu>() == 64
+);
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -181,6 +208,11 @@ pub struct FrameStats {
     /// The render scale: the opaque pass's size over the output's (1: the same; below, TAA
     /// upscales; `Renderer::set_render_scale`).
     pub render_scale: f32,
+    /// Local shadow views drawn: the spot lights shadowed this frame (docs/spec/shadows.md).
+    pub local_shadows: u32,
+    /// Spot lights with `shadows` set in view that got no shadow map this frame: those past the
+    /// limit (`LOCAL_VIEWS`), the smallest on screen.
+    pub local_shadows_dropped: u32,
 }
 
 /// A drawn node: (mesh index, local TRS, skin).
@@ -527,7 +559,8 @@ pub struct Renderer {
     frame_count: u32,
     /// Whether the last frame's HDR image was TAA's history (no splats) rather than `targets.hdr`.
     image_in_history: bool,
-    /// The shadow cascades' texture, kept with its views.
+    /// The shadow cascades' texture, kept with its views: a layer per cascade, then one per local
+    /// shadow view in use (`local_capacity`).
     _shadow_tex: wgpu::Texture,
     shadow_views: Vec<wgpu::TextureView>,
     shadow_array: wgpu::TextureView,
@@ -544,9 +577,22 @@ pub struct Renderer {
     lod: LodSettings,
     /// Whether the cascades also cull by their extruded slices (shadows.rs).
     shadow_cull: ShadowCull,
+    /// Whether spot lights cast through local shadow views (shadows.rs; `AMORIS_LOCAL_SHADOWS`).
+    local_shadows: LocalShadows,
+    /// The local views the lists, the argument sets and the shadow array are laid out for: the
+    /// spots with `shadows` set, at most `LOCAL_VIEWS`; 0 with local shadows off.
+    local_capacity: u32,
     regions_want: Option<bool>,
     regions_lod: Option<bool>,
     light_count: u32,
+    /// The lights buffer's rows; `render` sets the rows' `shadow` words for the frame's choice.
+    lights_cpu: Vec<LightGpu>,
+    /// Whether the buffer still holds other rows than `lights_cpu`.
+    lights_dirty: bool,
+    /// The rows that hold a slot (`shadow` set) in the buffer, by slot.
+    local_rows: Vec<u32>,
+    /// Whether the warning about spots past the limit was given since they last all had a map.
+    local_warned: bool,
 
     camera_override: Option<CameraState>,
     /// The scene camera's rotation from a first-person player's own latest look: its position
@@ -626,13 +672,51 @@ fn storage(
     })
 }
 
-/// The bytes of the views' lists for `stride` entries per view: the camera's `drawn` records (48
-/// bytes each) and the `visible` indices (4 bytes per entry and view).
-fn list_bytes(stride: u32) -> (u64, u64) {
+/// The bytes of the views' lists for `stride` entries per view and `views` views in use (the
+/// camera's, the cascades' and the local shadow views'): the camera's `drawn` records (48 bytes
+/// each) and the `visible` indices (4 bytes per entry and view).
+fn list_bytes(stride: u32, views: u32) -> (u64, u64) {
     (
         u64::from(stride) * 48,
-        u64::from(stride) * 4 * u64::from(VIEWS),
+        u64::from(stride) * 4 * u64::from(views),
     )
+}
+
+/// The shadow array of `layers` layers (the cascades', then the local shadow views'), a view of
+/// each layer to draw into, and the array view the lit passes sample.
+fn shadow_maps(
+    device: &wgpu::Device,
+    layers: u32,
+) -> (wgpu::Texture, Vec<wgpu::TextureView>, wgpu::TextureView) {
+    let tex = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("shadow cascades"),
+        size: wgpu::Extent3d {
+            width: SHADOW_SIZE,
+            height: SHADOW_SIZE,
+            depth_or_array_layers: layers,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: DEPTH,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let views = (0..layers)
+        .map(|l| {
+            tex.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                base_array_layer: l,
+                array_layer_count: Some(1),
+                ..Default::default()
+            })
+        })
+        .collect();
+    let array = tex.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    });
+    (tex, views, array)
 }
 
 /// The largest list the device can bind whole (a multiple of 256 bytes).
@@ -1326,34 +1410,7 @@ impl Renderer {
             }
         });
         let (sky_module, sky_pipeline) = built.sky_pipeline;
-        let shadow_tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("shadow cascades"),
-            size: wgpu::Extent3d {
-                width: SHADOW_SIZE,
-                height: SHADOW_SIZE,
-                depth_or_array_layers: CASCADES as u32,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: DEPTH,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let shadow_views = (0..CASCADES as u32)
-            .map(|l| {
-                shadow_tex.create_view(&wgpu::TextureViewDescriptor {
-                    dimension: Some(wgpu::TextureViewDimension::D2),
-                    base_array_layer: l,
-                    array_layer_count: Some(1),
-                    ..Default::default()
-                })
-            })
-            .collect();
-        let shadow_array = shadow_tex.create_view(&wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        });
+        let (shadow_tex, shadow_views, shadow_array) = shadow_maps(device, CASCADES as u32);
         let cells = u64::from(CLUSTER_X * CLUSTER_Y * CLUSTER_Z);
         Renderer {
             output,
@@ -1394,7 +1451,7 @@ impl Renderer {
             visible: storage(
                 device,
                 "visible",
-                1024 * 4 * u64::from(VIEWS),
+                VISIBLE_START,
                 wgpu::BufferUsages::empty(),
             ),
             drawn: storage(device, "drawn", 1024 * 48, wgpu::BufferUsages::empty()),
@@ -1490,9 +1547,15 @@ impl Renderer {
             draw_meshes: 0,
             lod: LodSettings::from_env(),
             shadow_cull: ShadowCull::from_env(),
+            local_shadows: LocalShadows::from_env(),
+            local_capacity: 0,
             regions_want: None,
             regions_lod: None,
             light_count: 0,
+            lights_cpu: Vec::new(),
+            lights_dirty: false,
+            local_rows: Vec::new(),
+            local_warned: false,
             camera_override: None,
             look_override: None,
             drawn_alpha: 1.0,
@@ -2030,6 +2093,17 @@ impl Renderer {
         self.shadow_cull
     }
 
+    /// Whether spot lights with `shadows` set cast shadow-mapped shadows (shadows.rs;
+    /// `AMORIS_LOCAL_SHADOWS` sets the starting mode). Off draws the frame of a scene whose spots
+    /// have `shadows` off, from the next frame, with that scene's lists and shadow array.
+    pub fn set_local_shadows(&mut self, mode: LocalShadows) {
+        self.local_shadows = mode;
+    }
+
+    pub fn local_shadows(&self) -> LocalShadows {
+        self.local_shadows
+    }
+
     /// Each shadow cascade's texel in metres when drawn from `cam` at this renderer's size: a
     /// cascade draws the coarsest level whose error is at most `shadow_texels` of them (lod.rs).
     pub fn cascade_texels(&self, cam: &CameraState) -> [f32; CASCADES] {
@@ -2038,10 +2112,11 @@ impl Renderer {
     }
 
     /// The bytes the views' lists need for the current regions: the camera's `drawn` records (48
-    /// bytes per entry) and the cascades' `visible` indices (4 bytes per entry and view). Levels of
-    /// detail multiply a mesh's entries by its levels (docs/spec/lod.md 5).
+    /// bytes per entry) and the `visible` indices of the camera's, the cascades' and the local
+    /// shadow views in use (4 bytes per entry and view). Levels of detail multiply a mesh's entries
+    /// by its levels (docs/spec/lod.md 5).
     pub fn list_bytes(&self) -> u64 {
-        let (drawn, visible) = list_bytes(self.view_stride);
+        let (drawn, visible) = list_bytes(self.view_stride, VIEWS + self.local_capacity);
         drawn + visible
     }
 
@@ -2055,10 +2130,12 @@ impl Renderer {
         for (i, a) in args.iter().enumerate() {
             let set = i / (rows * VARIANTS as usize);
             let level = (self.meshes.level_of((i % rows) as u32) as usize).min(7);
-            let counts = match set {
+            let counts = match set as u32 {
                 0 => &mut out.camera,
-                s if (s as u32) < VIEWS => &mut out.cascades[s - 1],
-                _ => &mut out.late,
+                s if s < VIEWS => &mut out.cascades[s as usize - 1],
+                LATE => &mut out.late,
+                // A local shadow view's set (`batches::local_set`).
+                s => &mut out.local[(s - LATE - 1) as usize],
             };
             counts.instances[level] += u64::from(a[1]);
             counts.triangles[level] += u64::from(a[1]) * u64::from(a[0] / 3);
@@ -2461,10 +2538,23 @@ impl Renderer {
         let replaced = self.meshes.take_replaced();
         // A double-sided transparent draw of a replaced row would read its old two-sided list.
         self.transparent.forget_rows(&replaced);
+        // The local shadow views to lay out for (docs/spec/shadows.md 2): the spots that ask for
+        // one, whatever else they are doing this frame.
+        let capacity = if self.local_shadows == LocalShadows::On {
+            self.scene
+                .lights
+                .iter()
+                .filter(|l| shadows::casts_locally(l))
+                .count()
+                .min(LOCAL_VIEWS) as u32
+        } else {
+            0
+        };
         if self.scene.counts_changed
             || mesh_count != self.draw_meshes
             || self.regions_want != Some(want_lod)
             || !replaced.is_empty()
+            || capacity != self.local_capacity
         {
             self.scene.counts_changed = false;
             // Whether the last layout already gave levels up at the limit (warn once, not at every
@@ -2490,8 +2580,9 @@ impl Renderer {
             // so levels multiply them, and past the device's limit nothing would draw. Then the
             // scene draws full meshes with the lists it had without levels (docs/spec/lod.md 5).
             let limit = list_limit(device);
+            let views = VIEWS + capacity;
             let largest = |stride: u32| {
-                let (drawn, visible) = list_bytes(stride);
+                let (drawn, visible) = list_bytes(stride, views);
                 drawn.max(visible)
             };
             let mut lod_on = want_lod;
@@ -2531,21 +2622,50 @@ impl Renderer {
                 grown = true;
             }
             queue.write_buffer(&self.batch_offsets, 0, bytemuck::cast_slice(&offsets));
-            let (drawn, vis) = list_bytes(stride);
+            let (drawn, vis) = list_bytes(stride, views);
             grown |= fit_list(device, &mut self.visible, "visible", vis, limit);
             grown |= fit_list(device, &mut self.drawn, "drawn", drawn, limit);
+            if capacity < self.local_capacity {
+                // Fewer views: `visible` goes back to what a renderer would hold for them.
+                let size = vis
+                    .next_power_of_two()
+                    .min(limit.max(vis))
+                    .max(VISIBLE_START);
+                if size < self.visible.size() {
+                    self.visible = storage(device, "visible", size, wgpu::BufferUsages::empty());
+                    grown = true;
+                }
+            }
             self.view_stride = stride;
             let sizes = self.scene.batch_sizes(&owners);
-            grown |=
-                self.batches
-                    .rebuild(device, queue, &self.meshes.infos, &offsets, &sizes, stride);
+            grown |= self.batches.rebuild(
+                device,
+                queue,
+                &self.meshes.infos,
+                &offsets,
+                &sizes,
+                stride,
+                capacity,
+            );
             self.draw_meshes = mesh_count;
+            if capacity != self.local_capacity {
+                // A layer per cascade and per local view in use: the lighting group holds the
+                // array, the water's passes take it per call.
+                let (tex, layers, array) = shadow_maps(device, CASCADES as u32 + capacity);
+                self._shadow_tex = tex;
+                self.shadow_views = layers;
+                self.shadow_array = array;
+                self.local_capacity = capacity;
+                grown = true;
+            }
         }
         grown |= self.meshes.flush(device, queue);
         grown |= self.materials.flush(device, queue);
         if self.scene.lights_changed {
             self.scene.lights_changed = false;
-            let lights: Vec<LightGpu> = self
+            // The rows' `shadow` words are this frame's choice: `render` sets them and writes the
+            // buffer.
+            self.lights_cpu = self
                 .scene
                 .lights
                 .iter()
@@ -2562,10 +2682,18 @@ impl Renderer {
                     dir: l.direction,
                     cos_outer: l.outer_deg.to_radians().cos(),
                     cos_inner: l.inner_deg.to_radians().cos(),
-                    _p: [0.0; 3],
+                    shadow: 0,
+                    shadow_texel: if shadows::casts_locally(l) {
+                        shadows::spot_view(l).map_or(0.0, |v| v.1)
+                    } else {
+                        0.0
+                    },
+                    _p: 0.0,
                 })
                 .collect();
-            let bytes = (lights.len() * 64) as u64;
+            self.local_rows.clear();
+            self.lights_dirty = true;
+            let bytes = (self.lights_cpu.len() * 64) as u64;
             if bytes > self.lights.size() {
                 self.lights = storage(
                     device,
@@ -2575,10 +2703,7 @@ impl Renderer {
                 );
                 grown = true;
             }
-            if !lights.is_empty() {
-                queue.write_buffer(&self.lights, 0, bytemuck::cast_slice(&lights));
-            }
-            self.light_count = lights.len() as u32;
+            self.light_count = self.lights_cpu.len() as u32;
         }
         if let Some(rt) = &mut self.rt_shadows {
             grown |= rt.prepare(
@@ -2837,6 +2962,62 @@ impl Renderer {
         let vp_j = proj_j * view;
         self.frame_count = self.frame_count.wrapping_add(1);
 
+        // The spot lights shadowed this frame (shadows.rs `local_views`, docs/spec/shadows.md 3):
+        // those whose lit sector meets the camera's frustum, the largest on screen first. The
+        // frustum is the unjittered one widened by two scene pixels a side, which holds every
+        // jittered one (TAA's jitter is at most half a pixel), so the choice does not follow the
+        // jitter's phase.
+        let local = if self.local_capacity > 0 {
+            let widen = Mat4::from_scale(Vec3::new(
+                1.0 / (1.0 + 4.0 / sw.max(1) as f32),
+                1.0 / (1.0 + 4.0 / sh.max(1) as f32),
+                1.0,
+            ));
+            shadows::local_views(
+                &self.scene.lights,
+                &cam,
+                &frustum_planes(widen * vp, true),
+                self.local_capacity as usize,
+            )
+        } else {
+            shadows::LocalViews::default()
+        };
+        let n_local = local.views.len() as u32;
+        // The chosen rows' `shadow` words name their slots; the lights buffer is written when the
+        // lights or the choice changed.
+        let rows: Vec<u32> = local.views.iter().map(|v| v.light).collect();
+        if self.lights_dirty || rows != self.local_rows {
+            for &row in &self.local_rows {
+                if let Some(l) = self.lights_cpu.get_mut(row as usize) {
+                    l.shadow = 0;
+                }
+            }
+            for (k, &row) in rows.iter().enumerate() {
+                if let Some(l) = self.lights_cpu.get_mut(row as usize) {
+                    l.shadow = k as u32 + 1;
+                }
+            }
+            if !self.lights_cpu.is_empty() {
+                queue.write_buffer(&self.lights, 0, bytemuck::cast_slice(&self.lights_cpu));
+            }
+            self.local_rows = rows;
+            self.lights_dirty = false;
+        }
+        if local.dropped == 0 {
+            self.local_warned = false;
+        } else if !self.local_warned {
+            self.local_warned = true;
+            log::warn!(
+                "{} spot lights with shadows in view have no shadow map: a frame shadows at most \
+                 {LOCAL_VIEWS}, the largest on screen (FrameStats::local_shadows_dropped)",
+                local.dropped
+            );
+        }
+        let mut local_matrices = [[[0.0f32; 4]; 4]; LOCAL_VIEWS];
+        for (m, v) in local_matrices.iter_mut().zip(&local.views) {
+            *m = mat(v.view_proj);
+        }
+
         // The sun: the lowest-id directional light.
         let sun = self
             .scene
@@ -2948,6 +3129,7 @@ impl Renderer {
             } else {
                 [1.0, 1.0, 0.0, 0.0]
             },
+            local_views: local_matrices,
         };
         self.view_buf.write(&queue, bytemuck::bytes_of(&vu));
         // The unjittered copy: the entity-id pass, the overlays and the grid, at the output's size.
@@ -2999,7 +3181,7 @@ impl Renderer {
             .last_frame_s
             .map_or(1.0 / 60.0, |t| (now_s - t).clamp(0.0, 0.1)) as f32;
         self.last_frame_s = Some(now_s);
-        let mut planes = [[[0.0f32; 4]; 6]; 5];
+        let mut planes = [[[0.0f32; 4]; 6]; CULL_VIEWS];
         // The jittered frustum and matrix: the depth pyramid holds the jittered depth.
         let camera_planes = frustum_planes(vp_j, true);
         for (i, p) in camera_planes.iter().enumerate() {
@@ -3008,6 +3190,12 @@ impl Renderer {
         for c in 0..CASCADES {
             for (i, p) in shadows::planes(casc.view_proj[c]).iter().enumerate() {
                 planes[c + 1][i] = p.to_array();
+            }
+        }
+        // A local view keeps the casters in its frustum.
+        for (k, v) in local.views.iter().enumerate() {
+            for (i, p) in shadows::planes(v.view_proj).iter().enumerate() {
+                planes[VIEWS as usize + k][i] = p.to_array();
             }
         }
         // Ray-traced shadows replace the cascades for the opaque and transparent passes: no cascade
@@ -3020,7 +3208,17 @@ impl Renderer {
                 .is_some_and(|rt| rt.effects.shadows)
                 || !self.water.is_empty()
                 || self.liquid_possible(&cam));
-        let views = if cascades { VIEWS } else { 1 };
+        // The views culled this frame: the camera's, the cascades' when they are drawn, the local
+        // shadow views' (after the cascades' in the lists whether those are drawn or not).
+        let views = if n_local > 0 {
+            VIEWS + n_local
+        } else if cascades {
+            VIEWS
+        } else {
+            1
+        };
+        let cascade_bits = if cascades { 0b11110 } else { 0 };
+        let view_mask = 1 | cascade_bits | (((1u32 << n_local) - 1) << VIEWS);
         // Each cascade's casters must also reach the slice it shades (docs/spec/occlusion.md 11).
         let slices = if cascades && self.shadow_cull == ShadowCull::On {
             shadows::slice_planes(&cam, (w, h), jitter.ndc, to_sun, &casc, reach)
@@ -3055,7 +3253,8 @@ impl Renderer {
             // The depth pyramid is the opaque pass's.
             hiz_levels: crate::occlusion::levels(sw, sh),
             viewport: [sw as f32, sh as f32],
-            _pad: [0; 2],
+            view_mask,
+            _pad: 0,
             eye,
             lod: [
                 if ortho { 1.0 } else { 0.0 },
@@ -3238,6 +3437,34 @@ impl Renderer {
             for variant in 0..VARIANTS {
                 pass.set_pipeline(&self.shadow[(variant & 1) as usize]);
                 draw_calls += self.batches.draw(&mut pass, c as u32 + 1, variant);
+            }
+        }
+        // The local shadow views, each into its layer after the cascades', whether the cascades
+        // are drawn or not (ray-traced sun shadows leave spot lights to their maps).
+        for k in 0..n_local {
+            let ts = self.profiler.render_scope("local shadows");
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("local shadow view"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.shadow_views[CASCADES + k as usize],
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: ts,
+                ..Default::default()
+            });
+            pass.set_bind_group(0, &binds.frame, &[]);
+            pass.set_bind_group(1, &self.empty_group, &[]);
+            pass.set_bind_group(2, &binds.textures, &[]);
+            pass.set_vertex_buffer(0, self.meshes.vertices.slice(..));
+            pass.set_index_buffer(self.meshes.indices.slice(..), wgpu::IndexFormat::Uint32);
+            for variant in 0..VARIANTS {
+                pass.set_pipeline(&self.shadow[(variant & 1) as usize]);
+                draw_calls += self.batches.draw(&mut pass, batches::local_set(k), variant);
             }
         }
         trace::span(&mut self.trace, "encode shadows", ts);
@@ -3690,6 +3917,8 @@ impl Renderer {
             antialiasing: self.aa.name(),
             gtao: self.gtao_mode.name(),
             render_scale: self.render_scale,
+            local_shadows: n_local,
+            local_shadows_dropped: local.dropped,
         };
         trace::span(&mut self.trace, "render", rendering);
         // A host that does not bracket its frames does not finish the trace either: the last

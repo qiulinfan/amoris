@@ -1,3 +1,5 @@
+//! Shadow maps (docs/spec/shadows.md): the sun's cascades and spot lights' local views.
+//!
 //! Cascaded shadow maps for the sun: the camera's frustum split into four depth ranges (the
 //! practical split scheme, blending logarithmic and uniform), each covered by a stable
 //! orthographic box (a bounding sphere, so the box does not change size as the camera turns, and
@@ -9,13 +11,27 @@
 //! docs/spec/occlusion.md 11). A receiver under a water surface reads the cascades up the sun's
 //! refracted path, at most [`underwater_reach`] from itself, so with water both the box and that
 //! volume hold the slice swept along the reach.
+//!
+//! A spot light whose `shadows` is set casts through a local view: one perspective shadow map
+//! along its cone ([`spot_view`]), culled and drawn as a cascade is, in a layer of the cascades'
+//! array after theirs. A frame draws at most [`LOCAL_VIEWS`] of them, chosen by [`local_views`]
+//! from the lights and the camera alone; the rest are counted, never dropped silently.
 
+use amoris_assets::frame::{LightKindView, LightView};
 use glam::{Mat4, Vec2, Vec3, Vec4};
 
 use crate::camera::CameraState;
 
 pub const CASCADES: usize = 4;
 pub const SHADOW_SIZE: u32 = 2048;
+/// The spot lights a frame can shadow: the local views after the camera's and the cascades' in the
+/// culling pass (cull.wgsl), the layers after the cascades' in the shadow array.
+pub const LOCAL_VIEWS: usize = 4;
+/// A local view's near plane, metres from the light (half the range for a shorter one).
+const LOCAL_NEAR_M: f32 = 0.05;
+/// The widest half angle a local view's map covers, degrees: a wider cone is shadowed inside it
+/// only.
+const LOCAL_MAX_HALF_DEG: f32 = 80.0;
 /// Planes per cascade in the culling pass's slice test: up to eight sides (the hull of eight
 /// corners) and the far plane.
 pub const SLICE_PLANES: usize = 9;
@@ -61,6 +77,177 @@ impl ShadowCull {
             ShadowCull::On => "on",
         }
     }
+}
+
+/// Whether spot lights with `shadows` set cast through local views. Off draws the frame, the
+/// lists and the shadow array of a scene whose spots all have `shadows` off.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LocalShadows {
+    /// No local view: spot lights are unshadowed.
+    Off,
+    /// A local view per shadowed spot in view, at most [`LOCAL_VIEWS`] (the default).
+    On,
+}
+
+impl LocalShadows {
+    /// `off` or `on` (any case; also `0`/`1`, `false`/`true`).
+    pub fn parse(s: &str) -> Option<LocalShadows> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "off" | "0" | "false" | "no" => Some(LocalShadows::Off),
+            "on" | "1" | "true" | "yes" => Some(LocalShadows::On),
+            _ => None,
+        }
+    }
+
+    /// From `AMORIS_LOCAL_SHADOWS` (natively); [`LocalShadows::On`] when it is unset, unknown, or
+    /// in the browser.
+    pub fn from_env() -> LocalShadows {
+        match std::env::var("AMORIS_LOCAL_SHADOWS") {
+            Ok(v) => LocalShadows::parse(&v).unwrap_or_else(|| {
+                log::warn!("AMORIS_LOCAL_SHADOWS: {v:?} is not off or on; using on");
+                LocalShadows::On
+            }),
+            Err(_) => LocalShadows::On,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            LocalShadows::Off => "off",
+            LocalShadows::On => "on",
+        }
+    }
+}
+
+/// Whether a light asks for a local view: a spot with `shadows` set. The lists and the shadow
+/// array are sized by the lights this counts, so nothing a light animates (its intensity, pose or
+/// cone) lays them out again.
+pub fn casts_locally(l: &LightView) -> bool {
+    l.kind == LightKindView::Spot && l.shadows
+}
+
+/// A sphere holding a spot light's lit sector: the points within `range` of `pos` and within
+/// `half_rad` of the unit axis `dir`.
+pub fn cone_sphere(pos: Vec3, dir: Vec3, range: f32, half_rad: f32) -> (Vec3, f32) {
+    let (sin, cos) = half_rad.sin_cos();
+    if half_rad <= std::f32::consts::FRAC_PI_4 {
+        // Through the apex and the rim of the sector's cap.
+        let r = range / (2.0 * cos);
+        (pos + dir * r, r)
+    } else if half_rad <= std::f32::consts::FRAC_PI_2 {
+        // The rim's own sphere, which holds the apex from 45 degrees on.
+        (pos + dir * (range * cos), range * sin)
+    } else {
+        (pos, range)
+    }
+}
+
+/// A spot light's shadow view-projection (perspective, standard depth 0..1) and its map's texel:
+/// metres wide per metre of depth from the light. Along the cone, a degree wider than the outer
+/// angle (the receivers' sample offsets and filter taps stay inside the map), at most
+/// [`LOCAL_MAX_HALF_DEG`] of half angle; from [`LOCAL_NEAR_M`] to the range. `None` for a light
+/// that lights nothing or cannot be placed: a field that is not finite, no direction, or a range,
+/// outer angle or intensity of 0 or less.
+pub fn spot_view(l: &LightView) -> Option<(Mat4, f32)> {
+    let (pos, dir) = (Vec3::from(l.position), Vec3::from(l.direction));
+    let finite = pos.is_finite()
+        && dir.is_finite()
+        && l.color.iter().all(|c| c.is_finite())
+        && l.intensity.is_finite()
+        && l.range.is_finite()
+        && l.inner_deg.is_finite()
+        && l.outer_deg.is_finite();
+    if !finite || l.range <= 0.0 || l.outer_deg <= 0.0 || l.intensity <= 0.0 {
+        return None;
+    }
+    let dir = dir.try_normalize()?;
+    // The range the shader lights to (renderer.rs `LightGpu`).
+    let range = l.range.max(0.01);
+    let half = (l.outer_deg + 1.0)
+        .clamp(1.0, LOCAL_MAX_HALF_DEG)
+        .to_radians();
+    let near = LOCAL_NEAR_M.min(0.5 * range);
+    let up = if dir.y.abs() > 0.99 { Vec3::Z } else { Vec3::Y };
+    let proj = glam::camera::rh::proj::directx::perspective(2.0 * half, 1.0, near, range);
+    let view = glam::camera::rh::view::look_to_mat4(pos, dir, up);
+    Some((proj * view, 2.0 * half.tan() / SHADOW_SIZE as f32))
+}
+
+/// A spot light's local view this frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LocalView {
+    /// The light's entity.
+    pub id: u64,
+    /// Its row among the lights that are not directional: the lights buffer's order.
+    pub light: u32,
+    pub view_proj: Mat4,
+}
+
+/// A frame's local views, in slot order, and the shadowed spots in view left without one.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LocalViews {
+    pub views: Vec<LocalView>,
+    pub dropped: u32,
+}
+
+/// The local views a frame draws, at most `limit`: of the spots that cast ([`casts_locally`], with
+/// a [`spot_view`]) and whose lit sector's sphere ([`cone_sphere`]) meets `planes` (the camera's
+/// frustum, inward normals), those largest on screen: by the sphere's radius over its centre's
+/// distance from the eye (the radius alone under an orthographic camera), then by entity id. The
+/// views come in id order, a view's position its slot. A function of the lights, the camera and
+/// the planes only: no frame before this one enters, and the order of `lights` does not either.
+pub fn local_views(
+    lights: &[LightView],
+    cam: &CameraState,
+    planes: &[Vec4; 6],
+    limit: usize,
+) -> LocalViews {
+    // (score, the view).
+    let mut found: Vec<(f32, LocalView)> = Vec::new();
+    let mut row = 0u32;
+    for l in lights {
+        if l.kind == LightKindView::Directional {
+            continue;
+        }
+        let light = row;
+        row += 1;
+        if !casts_locally(l) {
+            continue;
+        }
+        let Some((view_proj, _)) = spot_view(l) else {
+            continue;
+        };
+        let (pos, dir) = (Vec3::from(l.position), Vec3::from(l.direction).normalize());
+        let (centre, radius) = cone_sphere(pos, dir, l.range.max(0.01), l.outer_deg.to_radians());
+        if planes
+            .iter()
+            .any(|p| p.truncate().dot(centre) + p.w < -radius)
+        {
+            continue;
+        }
+        let score = match cam.ortho_height {
+            Some(_) => radius,
+            None => radius / cam.position.distance(centre).max(1e-3),
+        };
+        found.push((
+            score,
+            LocalView {
+                id: l.id,
+                light,
+                view_proj,
+            },
+        ));
+    }
+    found.sort_by(|a, b| {
+        b.0.total_cmp(&a.0)
+            .then(a.1.id.cmp(&b.1.id))
+            .then(a.1.light.cmp(&b.1.light))
+    });
+    let dropped = found.len().saturating_sub(limit) as u32;
+    found.truncate(limit);
+    let mut views: Vec<LocalView> = found.into_iter().map(|f| f.1).collect();
+    views.sort_by(|a, b| a.id.cmp(&b.id).then(a.light.cmp(&b.light)));
+    LocalViews { views, dropped }
 }
 
 /// How far up the refracted sun a point under water reads the cascades, metres of height
@@ -183,7 +370,8 @@ pub fn cascades(
     }
 }
 
-/// The cascade's planes for culling (standard depth 0..1).
+/// A shadow view's planes for culling (standard depth 0..1): a cascade's box, or a local view's
+/// frustum.
 pub fn planes(vp: Mat4) -> [Vec4; 6] {
     crate::camera::ortho_planes(vp)
 }
@@ -339,6 +527,7 @@ fn convex_hull(points: &[Vec2]) -> Vec<Vec2> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::camera::frustum_planes;
     use glam::Quat;
 
     /// A small deterministic generator (xorshift).
@@ -613,5 +802,328 @@ mod tests {
         assert_eq!(ShadowCull::parse("1"), Some(ShadowCull::On));
         assert_eq!(ShadowCull::parse("auto"), None);
         assert_eq!(ShadowCull::On.name(), "on");
+        assert_eq!(LocalShadows::parse(" OFF "), Some(LocalShadows::Off));
+        assert_eq!(LocalShadows::parse("yes"), Some(LocalShadows::On));
+        assert_eq!(LocalShadows::parse("auto"), None);
+        assert_eq!(LocalShadows::Off.name(), "off");
+    }
+
+    fn spot(id: u64, pos: Vec3, dir: Vec3, range: f32, outer_deg: f32) -> LightView {
+        LightView {
+            id,
+            kind: LightKindView::Spot,
+            position: pos.to_array(),
+            direction: dir.to_array(),
+            color: [1.0; 3],
+            intensity: 100.0,
+            range,
+            inner_deg: outer_deg * 0.5,
+            outer_deg,
+            shadows: true,
+        }
+    }
+
+    /// A unit direction within `half` radians of the unit `axis`, at exactly `half` when `rim`.
+    fn within(rng: &mut Rng, axis: Vec3, half: f32, rim: bool) -> Vec3 {
+        let (a, b) = axis.any_orthonormal_pair();
+        let angle = if rim { half } else { rng.range(0.0, half) };
+        let turn = rng.range(0.0, std::f32::consts::TAU);
+        axis * angle.cos() + (a * turn.cos() + b * turn.sin()) * angle.sin()
+    }
+
+    /// Every point a spot lights that its map can hold is inside the map: of the lit sector (the
+    /// outer angle, up to 79 degrees, the range) from the near plane on, each point projects into
+    /// the view's clip volume with at least two texels to spare on each side, and a sphere holding
+    /// it passes the view's culling planes. Vertical and nearly vertical axes included (the view's
+    /// up vector changes there). The near plane is flat: toward the rim of a wide cone it cuts the
+    /// sector farther from the light than along the axis, and a short range's whole rim.
+    #[test]
+    fn a_spot_view_holds_its_cone() {
+        let mut rng = Rng(0x1234_5678);
+        let mut checked = 0;
+        for case in 0..300u32 {
+            let offset = if case.is_multiple_of(7) { 3000.0 } else { 40.0 };
+            let pos = Vec3::new(
+                rng.range(-offset, offset),
+                rng.range(0.0, 30.0),
+                rng.range(-offset, offset),
+            );
+            let dir = match case % 6 {
+                0 => Vec3::NEG_Y,
+                1 => Vec3::Y,
+                2 => Vec3::new(0.1, -0.995, 0.0).normalize(),
+                3 => Vec3::new(0.0, 0.9899, 0.1418).normalize(),
+                _ => rng.direction(),
+            };
+            let range = match case % 5 {
+                0 => rng.range(0.02, 0.2),
+                _ => rng.range(0.5, 60.0),
+            };
+            let outer = match case % 4 {
+                0 => 79.0,
+                1 => rng.range(0.2, 5.0),
+                _ => rng.range(5.0, 79.0),
+            };
+            // The direction's length is the author's: the view normalizes it.
+            let l = spot(1, pos, dir * rng.range(0.2, 3.0), range, outer);
+            let (vp, texel) = spot_view(&l).expect("a valid spot has a view");
+            let half = (outer + 1.0).to_radians();
+            assert!((texel - 2.0 * half.tan() / SHADOW_SIZE as f32).abs() <= 1e-6 * texel);
+            let near = LOCAL_NEAR_M.min(0.5 * range);
+            let planes = planes(vp);
+            let scale = pos.abs().max_element() + range + 1.0;
+            for k in 0..100 {
+                let u = within(&mut rng, dir, outer.to_radians(), k % 2 == 0);
+                // From the near plane (along the axis) to the range.
+                let lo = near / u.dot(dir);
+                if lo * 1.001 > range {
+                    continue;
+                }
+                let d = match k % 5 {
+                    0 => range,
+                    1 => lo * 1.001,
+                    _ => rng.range(lo * 1.001, range),
+                };
+                let p = pos + u * d;
+                let c = vp * p.extend(1.0);
+                let slack = 1e-5 * scale;
+                assert!(c.w > 0.0, "case {case}: {p} is behind the view");
+                let edge = (1.0 - 2.0 * 2.0 / SHADOW_SIZE as f32) * c.w + slack;
+                assert!(
+                    c.x.abs() <= edge && c.y.abs() <= edge,
+                    "case {case} (outer {outer}): {p} is within two texels of the map's edge \
+                     ({c})"
+                );
+                assert!(
+                    c.z >= -slack && c.z <= c.w + slack,
+                    "case {case}: {p} is outside the map's depth ({c})"
+                );
+                let r = rng.range(0.0, 2.0);
+                let centre = p + rng.direction() * (r * rng.unit());
+                assert!(
+                    keeps(&planes, centre, r + slack),
+                    "case {case}: a caster at {centre} (r {r}) holding the lit point {p} is culled"
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 300 * 80, "{checked} points checked");
+    }
+
+    /// The sphere candidates are tested with holds the lit sector, for any outer angle.
+    #[test]
+    fn the_cone_sphere_holds_the_sector() {
+        let mut rng = Rng(0x0bad_cafe);
+        for case in 0..240u32 {
+            let half = (1.0 + case as f32 * 0.5).to_radians();
+            let pos = Vec3::new(rng.range(-50.0, 50.0), rng.range(0.0, 20.0), 3.0);
+            let dir = rng.direction();
+            let range = rng.range(0.1, 80.0);
+            let (centre, radius) = cone_sphere(pos, dir, range, half);
+            assert!(
+                radius <= range * 1.0001,
+                "half {half}: {radius} over {range}"
+            );
+            for k in 0..200 {
+                let u = within(&mut rng, dir, half.min(std::f32::consts::PI), k % 2 == 0);
+                let d = match k % 3 {
+                    0 => range,
+                    1 => 0.0,
+                    _ => rng.range(0.0, range),
+                };
+                let p = pos + u * d;
+                assert!(
+                    p.distance(centre) <= radius + 1e-4 * (range + pos.length()),
+                    "half {} degrees: {p} is {} from {centre}, over {radius}",
+                    half.to_degrees(),
+                    p.distance(centre)
+                );
+            }
+        }
+    }
+
+    /// The frame's choice: among the spots that cast and are in view, the largest on screen keep a
+    /// view, equal ones by the lower id, whatever the order of the lights; the slots follow the
+    /// ids; what is left over is counted, and nothing else is.
+    #[test]
+    fn local_views_pick_by_size_on_screen_then_id() {
+        let cam = CameraState::look_at(Vec3::ZERO, Vec3::NEG_Z);
+        let planes = frustum_planes(cam.proj(16.0 / 9.0) * cam.view(), true);
+        // Six spots ahead, shining down, each farther than the last: ids out of order.
+        let ids = [40u64, 12, 33, 7, 25, 18];
+        let ahead: Vec<LightView> = ids
+            .iter()
+            .enumerate()
+            .map(|(i, &id)| {
+                spot(
+                    id,
+                    Vec3::new(0.0, 3.0, -6.0 - 5.0 * i as f32),
+                    Vec3::NEG_Y,
+                    6.0,
+                    30.0,
+                )
+            })
+            .collect();
+        let chosen = local_views(&ahead, &cam, &planes, LOCAL_VIEWS);
+        // The four nearest (the largest on screen), slots in id order.
+        let got: Vec<u64> = chosen.views.iter().map(|v| v.id).collect();
+        assert_eq!(got, [7, 12, 33, 40]);
+        assert_eq!(chosen.dropped, 2);
+        for v in &chosen.views {
+            let row = ids.iter().position(|&id| id == v.id).unwrap();
+            assert_eq!(v.light as usize, row);
+            assert_eq!(v.view_proj, spot_view(&ahead[row]).unwrap().0);
+        }
+        // Any order of the lights gives the same views in the same slots.
+        for turn in 0..ahead.len() {
+            for reversed in [false, true] {
+                let mut lights = ahead.clone();
+                lights.rotate_left(turn);
+                if reversed {
+                    lights.reverse();
+                }
+                let again = local_views(&lights, &cam, &planes, LOCAL_VIEWS);
+                assert_eq!(again.dropped, 2);
+                let key = |v: &LocalViews| -> Vec<(u64, Mat4)> {
+                    v.views.iter().map(|v| (v.id, v.view_proj)).collect()
+                };
+                assert_eq!(
+                    key(&again),
+                    key(&chosen),
+                    "turned {turn}, reversed {reversed}"
+                );
+                for v in &again.views {
+                    assert_eq!(lights[v.light as usize].id, v.id);
+                }
+            }
+        }
+        // A smaller limit keeps the largest; none keeps none and counts them all.
+        let two = local_views(&ahead, &cam, &planes, 2);
+        assert_eq!(two.views.iter().map(|v| v.id).collect::<Vec<_>>(), [12, 40]);
+        assert_eq!(two.dropped, 4);
+        let none = local_views(&ahead, &cam, &planes, 0);
+        assert!(none.views.is_empty());
+        assert_eq!(none.dropped, 6);
+
+        // Equal on screen (mirrored about the view's axis): the lower id keeps its view.
+        let twins = [
+            spot(9, Vec3::new(4.0, 3.0, -12.0), Vec3::NEG_Y, 6.0, 30.0),
+            spot(4, Vec3::new(-4.0, 3.0, -12.0), Vec3::NEG_Y, 6.0, 30.0),
+        ];
+        for lights in [twins.to_vec(), twins.iter().rev().cloned().collect()] {
+            let one = local_views(&lights, &cam, &planes, 1);
+            assert_eq!(one.views.len(), 1);
+            assert_eq!((one.views[0].id, one.dropped), (4, 1));
+        }
+
+        // Not candidates: out of view (behind the camera), a point light, a spot with `shadows`
+        // off, and spots that light nothing or cannot be placed. They take no view and are not
+        // counted as dropped; the rows count every light that is not directional.
+        let good = spot(5, Vec3::new(0.0, 3.0, -8.0), Vec3::NEG_Y, 6.0, 30.0);
+        let invalid = [
+            LightView {
+                range: 0.0,
+                ..good.clone()
+            },
+            LightView {
+                direction: [0.0; 3],
+                ..good.clone()
+            },
+            LightView {
+                position: [f32::NAN, 0.0, 0.0],
+                ..good.clone()
+            },
+            LightView {
+                outer_deg: f32::INFINITY,
+                ..good.clone()
+            },
+            LightView {
+                intensity: 0.0,
+                ..good.clone()
+            },
+            LightView {
+                outer_deg: 0.0,
+                ..good.clone()
+            },
+        ];
+        let mut lights = vec![
+            LightView {
+                kind: LightKindView::Directional,
+                ..good.clone()
+            },
+            LightView {
+                kind: LightKindView::Point,
+                ..good.clone()
+            },
+            LightView {
+                shadows: false,
+                ..good.clone()
+            },
+            spot(6, Vec3::new(0.0, 3.0, 30.0), Vec3::NEG_Y, 6.0, 30.0),
+        ];
+        for l in &invalid {
+            assert!(
+                casts_locally(l),
+                "a spot with shadows asks for a view: {l:?}"
+            );
+            assert!(spot_view(l).is_none(), "{l:?}");
+        }
+        lights.extend(invalid.iter().cloned());
+        lights.push(good.clone());
+        assert!(!casts_locally(&lights[0]) && !casts_locally(&lights[1]));
+        assert!(!casts_locally(&lights[2]) && casts_locally(&lights[3]));
+        let only = local_views(&lights, &cam, &planes, LOCAL_VIEWS);
+        assert_eq!(only.dropped, 0);
+        assert_eq!(only.views.len(), 1);
+        // The directional light has no row in the lights buffer.
+        assert_eq!(
+            (only.views[0].id, only.views[0].light as usize),
+            (5, lights.len() - 2)
+        );
+
+        // Under an orthographic camera the size on screen is the sphere's radius: the longer
+        // range wins, however far.
+        let mut ortho = cam;
+        ortho.ortho_height = Some(40.0);
+        let planes = frustum_planes(ortho.proj(16.0 / 9.0) * ortho.view(), true);
+        let pair = [
+            spot(1, Vec3::new(0.0, 3.0, -6.0), Vec3::NEG_Y, 4.0, 30.0),
+            spot(2, Vec3::new(0.0, 3.0, -60.0), Vec3::NEG_Y, 8.0, 30.0),
+        ];
+        let far = local_views(&pair, &ortho, &planes, 1);
+        assert_eq!((far.views[0].id, far.dropped), (2, 1));
+    }
+
+    /// The shaders' sizes are literals: the culling pass's views and its workgroup counters, the
+    /// view uniform's matrices and the constants the forward shader indexes with follow the
+    /// constants here.
+    #[test]
+    fn the_shaders_hold_the_same_constants() {
+        let views = crate::batches::VIEWS as usize + LOCAL_VIEWS;
+        let counters = views * amoris_assets::lod::MAX_LEVELS;
+        let cull = crate::shaders::source("cull");
+        for text in [
+            format!("planes: array<Planes, {views}>"),
+            format!("var<workgroup> wg_count: array<atomic<u32>, {counters}>;"),
+            format!("var<workgroup> wg_base: array<u32, {counters}>;"),
+            format!("var inside: array<bool, {views}>;"),
+            format!("var level: array<u32, {views}>;"),
+            format!("var local_slot: array<u32, {views}>;"),
+            format!("const LATE: u32 = {}u;", crate::batches::LATE),
+        ] {
+            assert_eq!(cull.matches(&text).count(), 1, "cull.wgsl: {text}");
+        }
+        // Both of `main`'s guards over the counters (the first zeroes them: compute pipelines run
+        // without automatic workgroup zeroing).
+        assert_eq!(cull.matches(&format!("lid < {counters}u")).count(), 2);
+        let forward = crate::shaders::source("forward");
+        for text in [
+            format!("const CASCADES: u32 = {CASCADES}u;"),
+            format!("const LOCAL_VIEWS: u32 = {LOCAL_VIEWS}u;"),
+            format!("cascades: array<mat4x4f, {CASCADES}>,"),
+            format!("local_views: array<mat4x4f, {LOCAL_VIEWS}>,"),
+        ] {
+            assert_eq!(forward.matches(&text).count(), 1, "forward.wgsl: {text}");
+        }
     }
 }

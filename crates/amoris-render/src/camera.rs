@@ -96,7 +96,8 @@ pub fn frustum_planes(view_proj: Mat4, infinite: bool) -> [Vec4; 6] {
     planes
 }
 
-/// The planes of an orthographic shadow cascade (standard depth 0..1).
+/// The planes of a shadow view with standard depth 0..1: an orthographic cascade, or a spot light's
+/// perspective view.
 pub fn ortho_planes(view_proj: Mat4) -> [Vec4; 6] {
     let r0 = view_proj.row(0);
     let r1 = view_proj.row(1);

@@ -118,7 +118,10 @@ and `r` its bounding sphere's centre and radius in the world, and `e_k` level `k
 - shadow cascade `i`: `shadow_texels * texel_i`, with `texel_i = 2 radius_i / 2048` the cascade's
   texel in metres (`shadows::Cascades::texel`). A cascade cannot show detail finer than its texels,
   and its level does not depend on the camera's distance, so it changes only when an instance moves
-  between cascades: cascades need no hysteresis and usually draw coarser levels than the camera.
+  between cascades: cascades need no hysteresis and usually draw coarser levels than the camera;
+- a local shadow view (a spot light's shadow map, [shadows.md](shadows.md) 5): no bound of its own;
+  it draws the camera's level, picked in the same dispatch. A spot's texel is usually finer than a
+  pixel, and a caster finer than the receiver the camera draws would shadow it (7).
 
 `coarsest(bound)` is the coarsest acceptable level. The camera's level is
 `clamp(last, coarsest(B / (1 + h)), coarsest(B))`, `last` being the level the instance drew the
@@ -134,8 +137,9 @@ level the early pass chose. Turning levels off writes nothing (occlusion culling
 store level 0).
 
 Workgroup counting (cull.wgsl's two-level atomics) counts per view **and level** for the
-workgroup's first instance's (variant, mesh): 40 workgroup counters (5 views x 8 levels) instead of
-5; the late pass uses 8. The late pass's triangle counters count the level's triangles, so
+workgroup's first instance's (variant, mesh): 72 workgroup counters (9 views x 8 levels: the
+camera, four cascades and up to four local shadow views) instead of 9; the late pass uses 8. The
+late pass's triangle counters count the level's triangles, so
 occlusion culling's auto mode weighs the triangles it would really save.
 
 ## 5. Drawing, and what it costs
@@ -147,7 +151,10 @@ its mesh's instances, because any of them may draw that level.
 
 That is the price of this layout: an instance of a mesh with `L` levels has `L` entries in each
 view's list, so the camera's `drawn` (48 bytes per entry) and the cascades' `visible` (4 bytes per
-entry and view) grow by the levels: 68 bytes per instance and level (`Renderer::list_bytes`). With
+entry and view) grow by the levels: 68 bytes per instance and level (`Renderer::list_bytes`), and 4
+more per local shadow view in use ([shadows.md](shadows.md) 2; up to 84 with four). `visible` stays
+the smaller list (36 bytes per entry at nine views against `drawn`'s 48), so local views do not
+move the binding limit below. With
 levels off the level rows get no regions (the owner of a level row becomes none), and the lists
 are as before. On the per-batch paths (the browser) every level that holds instances is a draw call
 per view and variant, whether the culling kept any instance at that level or not; a skinned copy's
@@ -182,7 +189,8 @@ dispatches per phase; it is left until scenes need it (9).
 `Renderer::set_lod` and `set_lod_settings` change them at any time (from the next frame);
 `FrameStats::lod` says whether the frame picked levels (`on`, `off`, or `off-limit` past the binding
 limit, 5). `Renderer::draw_counts` reads back, per argument set and level, the instances and
-triangles the last submitted frame drew (natively; it waits for the GPU), and
+triangles the last submitted frame drew (natively; it waits for the GPU): the camera's set, each
+cascade's, the late set and each local shadow view's (`DrawCounts::local`).
 `Renderer::cascade_texels` gives the cascades' texels for a camera.
 
 ## 7. Interactions
@@ -202,6 +210,9 @@ triangles the last submitted frame drew (natively; it waits for the GPU), and
 - **Shadow cascades** pick their own levels (4); a receiver's camera level and its caster level
   differ by at most a pixel's and a texel's error, within the cascades' normal offset of 1.5 texels
   where texels are coarser than pixels.
+- **Local shadow views** (spot lights' maps, [shadows.md](shadows.md) 5) draw the camera's level,
+  so the mesh that casts is the mesh that receives; a coarse level shadows itself only where its
+  own simplified shape does.
 - **The id pass** draws the camera's batches, levels included, so picking and `render.visible` see
   what is drawn.
 - **Skinned meshes** get levels made from the bind pose, drawn over the skinned vertices like the

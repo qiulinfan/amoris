@@ -38,20 +38,25 @@ decides where the base travels, native multi-draw decides how many calls the CPU
 ### 2.1 Batches
 
 The culling pass (`cull.wgsl`) tests every instance against five views (the camera and four shadow
-cascades). A batch is one (view, pipeline variant, mesh); the variants are opaque, alpha-masked,
-double-sided and both (`scene.rs`, `VARIANTS`). The culling pass counts a batch's visible instances
-into its indexed indirect arguments and writes each one to the batch's region of the view's list:
-the camera view's interpolated poses to `drawn`, the cascades' instance indices to `visible`.
+cascades) and one more per local shadow view in use (a spot light's shadow map,
+[shadows.md](shadows.md) 2; at most four). A batch is one (view, pipeline variant, mesh); the
+variants are opaque, alpha-masked, double-sided and both (`scene.rs`, `VARIANTS`). The culling pass
+counts a batch's visible instances into its indexed indirect arguments and writes each one to the
+batch's region of the view's list: the camera view's interpolated poses to `drawn`, the cascades'
+and the local views' instance indices to `visible`.
 With occlusion culling the camera view has a sixth set of arguments, the late one, whose batches
-use the camera's bases on every path ([occlusion.md](occlusion.md) 6).
+use the camera's bases on every path ([occlusion.md](occlusion.md) 6). The late set stays the
+sixth whether it is used or not; local view `k`'s set follows it (set `6 + k`), drawing list
+`5 + k`.
 Instance `k` of a batch is entry `base + k`, with
 
     base = view * stride + offsets[variant * meshes + mesh]
 
 where `offsets` are prefix sums of the instance counts per batch (`Scene::batch_offsets`) and
 `stride` a view's entries. The vertex stages `vs`, `vs_shadow`, `vs_shadow_masked` and `vs_id` read
-entry `instance_index + batch.x`; the shadow stages also derive the cascade as
-`(instance_index + batch.x) / stride - 1`.
+entry `instance_index + batch.x`; the shadow stages also derive their view from it,
+`(instance_index + batch.x) / stride`: 1 to 4 is a cascade (`view - 1`), 5 on a local shadow view
+(`view - 5`).
 
 A mesh's levels of detail are rows of the mesh table, so each level is a batch of its own with a
 region sized by its mesh's instances ([lod.md](lod.md) 5): on the per-batch paths a mesh with
@@ -59,7 +64,8 @@ levels costs a draw per level that holds instances.
 
 `Batches` (batches.rs) keeps the arguments' template (one set per batch, instance counts 0), copies
 it over the live arguments at the start of each frame, and issues the draws. It is rebuilt when the
-meshes or the per-batch instance counts change, never per instance.
+meshes, the per-batch instance counts or the number of local shadow views in use change, never per
+instance.
 
 ### 2.2 The paths
 
@@ -84,8 +90,9 @@ Group 3, binding 1 of the forward, shadow and id pipelines is `var<uniform> batc
 in its own pipeline layout, so the two never collide). Entry 0 is zero; on the baseline path
 entry `1 + view * L + j` holds the base of live batch `j` of view `view`, where `L` is the number of
 live batches. Entries are `minUniformBufferOffsetAlignment` apart (256 bytes on WebGPU's defaults),
-so the buffer is `(1 + 5L) * 256` bytes, rewritten whenever the counts change. The id pass's
-pipeline layout is `[frame, empty, empty, batch]`; it binds the empty groups itself.
+so the buffer is `(1 + (5 + K) L) * 256` bytes, `K` the local shadow views in use (0 without a
+shadowed spot light), rewritten whenever the counts change. The id pass's pipeline layout is
+`[frame, empty, empty, batch]`; it binds the empty groups itself.
 
 ### 2.4 What does not need this
 
@@ -104,6 +111,10 @@ The renderer's pipelines fit WebGPU's default limits (checked natively by
   GI probe buffers). One more storage buffer in either group fails pipeline creation on the
   defaults;
 - bind groups: 4 of 4 in the forward, shadow, id and ocean pipelines.
+
+  Spot lights' shadow maps ([shadows.md](shadows.md) 7) therefore add neither: they are more layers
+  of the shadow array the lighting group already binds, four matrices at the end of the `View`
+  uniform and two words of the lights' padding.
 - the culling passes bind 7 storage buffers each (with occlusion culling's per-instance state;
   the late pass also its counters), within the 8 a compute stage may use
   ([occlusion.md](occlusion.md) 8).
@@ -136,6 +147,9 @@ fix, the mixed scene showed the same 6 of 59 entities natively on Vulkan and in 
   three skinned characters on the three paths and requires the same entities with the same id-pass
   coverage and nearly the same pixels; it skips without a GPU. Putting the base back into
   `first_instance` on the baseline path makes it fail (0 of 36 entities).
+- `crates/amoris-render/tests/local_shadows.rs` (`every_draw_path_draws_the_local_views`) draws a
+  spot light's local shadow view on the three paths and requires the same shadow, the same lit
+  floor and the same draws read back ([shadows.md](shadows.md) 10).
 - `cargo run --release -p amoris-app --example draw_paths -- [--minimal ...] mixed cubes
   samples/anim samples/sailing` compares a full-feature device with an emulated one on any scene or
   project and writes images and `draw_paths.json`.

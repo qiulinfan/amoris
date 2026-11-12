@@ -5,7 +5,9 @@
 //                                             gpuMinimal: "first-instance" /* optional */ });
 //   vp.setCamera([x, y, z], [qx, qy, qz, qw], fovDeg);   // or vp.useSceneCamera()
 //   vp.onStats((s) => ...);                               // {gpu_ms, instances, tick, passes, frame_ms,
-//                                                         //  render_ms, draw_path, draw_calls}, per frame drawn
+//                                                         //  render_ms, draw_path, draw_calls,
+//                                                         //  local_shadows, local_shadows_dropped},
+//                                                         //  per frame drawn
 //   vp.pushFrame(bytes);                                  // a render-feed frame from elsewhere (a game worker)
 //   vp.dispose();
 //
@@ -119,6 +121,7 @@ export async function createViewport(canvas, options = {}) {
     setOcclusion(mode) { vp.set_occlusion(mode); },
     setPrepass(mode) { vp.set_prepass(mode); },
     setShadowCull(mode) { vp.set_shadow_cull(mode); },
+    setLocalShadows(mode) { vp.set_local_shadows(mode); },
     setWaterCulling(on) { vp.set_water_culling(on); },
     setSplashes(mode) { vp.set_splashes(mode); },
     setRipples(mode) { vp.set_ripples(mode); },

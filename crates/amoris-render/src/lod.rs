@@ -11,6 +11,7 @@
 use glam::Vec3;
 
 use crate::camera::CameraState;
+use crate::shadows::LOCAL_VIEWS;
 
 /// Whether instances draw coarser levels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,13 +148,15 @@ impl SetCounts {
     }
 }
 
-/// A frame's draws read back from the GPU: the camera's set, each cascade's and the late set
-/// (occlusion culling's second phase; empty without it).
+/// A frame's draws read back from the GPU: the camera's set, each cascade's, the late set
+/// (occlusion culling's second phase; empty without it) and each local shadow view's (a spot
+/// light's, docs/spec/shadows.md; empty past the views in use).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DrawCounts {
     pub camera: SetCounts,
     pub cascades: [SetCounts; 4],
     pub late: SetCounts,
+    pub local: [SetCounts; LOCAL_VIEWS],
 }
 
 impl DrawCounts {
@@ -162,8 +165,14 @@ impl DrawCounts {
         self.camera.triangles() + self.late.triangles()
     }
 
+    /// The cascades' triangles.
     pub fn shadow_triangles(&self) -> u64 {
         self.cascades.iter().map(SetCounts::triangles).sum()
+    }
+
+    /// The local shadow views' triangles.
+    pub fn local_triangles(&self) -> u64 {
+        self.local.iter().map(SetCounts::triangles).sum()
     }
 }
 

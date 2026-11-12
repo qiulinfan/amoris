@@ -475,7 +475,7 @@ impl Viewport {
             .map(|(l, ms)| format!("{{\"pass\":\"{l}\",\"ms\":{ms:.3}}}"))
             .collect();
         self.last_stats = format!(
-            "{{\"gpu_ms\":{:.3},\"instances\":{},\"entities\":{},\"meshes\":{},\"pending_assets\":{},\"tick\":{},\"backend\":\"{}\",\"draw_path\":\"{}\",\"draw_calls\":{},\"occlusion\":\"{}\",\"occluded\":{},\"prepass\":\"{}\",\"lod\":\"{}\",\"antialiasing\":\"{}\",\"gtao\":\"{}\",\"render_scale\":{},\"passes\":[{}]}}",
+            "{{\"gpu_ms\":{:.3},\"instances\":{},\"entities\":{},\"meshes\":{},\"pending_assets\":{},\"tick\":{},\"backend\":\"{}\",\"draw_path\":\"{}\",\"draw_calls\":{},\"occlusion\":\"{}\",\"occluded\":{},\"prepass\":\"{}\",\"lod\":\"{}\",\"antialiasing\":\"{}\",\"gtao\":\"{}\",\"render_scale\":{},\"local_shadows\":{},\"local_shadows_dropped\":{},\"passes\":[{}]}}",
             s.gpu_ms,
             s.instances,
             s.entities,
@@ -492,6 +492,8 @@ impl Viewport {
             s.antialiasing,
             s.gtao,
             s.render_scale,
+            s.local_shadows,
+            s.local_shadows_dropped,
             passes.join(",")
         );
         self.last_stats.clone()
@@ -762,6 +764,14 @@ impl Viewport {
     pub fn set_shadow_cull(&mut self, mode: &str) {
         if let Some(m) = amoris_render::ShadowCull::parse(mode) {
             self.renderer.set_shadow_cull(m);
+        }
+    }
+
+    /// Spot lights' shadow maps (local shadow views, docs/spec/shadows.md): `off` or `on` (the
+    /// default; anything else leaves it as it is). Off draws spot lights unshadowed.
+    pub fn set_local_shadows(&mut self, mode: &str) {
+        if let Some(m) = amoris_render::LocalShadows::parse(mode) {
+            self.renderer.set_local_shadows(m);
         }
     }
 
