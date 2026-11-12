@@ -43,6 +43,7 @@ fn model() -> ModelAsset {
             height: size,
             rgba8,
             srgb: true,
+            nearest: false,
         }],
         ..ModelAsset::default()
     };

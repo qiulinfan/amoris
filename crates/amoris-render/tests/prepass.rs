@@ -381,6 +381,7 @@ fn coplanar_model(
             height: 1,
             rgba8: vec![255, 255, 255, cutout_alpha],
             srgb: true,
+            nearest: false,
         }],
         ..ModelAsset::default()
     }

@@ -34,9 +34,9 @@ block (`docs/spec/water.md`): the volume's water blocks are liquids that flow (t
 has a `flow`), which the engine turns into the region's water at load and whenever a script places
 one, and `physics.water` moves it as a height field over the blocks' beds.
 
-- `gen_world.py` writes everything the scene loads: `textures/` (16 x 16 pixel art written
-  upscaled by nearest neighbour to 1024 x 1024, the size the engine resamples every texture to,
-  so the pixels stay sharp), `blocks.gltf` (the blocks' materials, no geometry), `world.cells`
+- `gen_world.py` writes everything the scene loads: `textures/` (16 x 16 pixel art written as
+  drawn; the sampler of `blocks.gltf` and of the clouds magnifies with `NEAREST`, so the engine
+  keeps the pixels sharp), `blocks.gltf` (the blocks' materials, no geometry), `world.cells`
   (the volume's cells), `clouds/` and `scene.json` (the player placed where it sees farthest
   across open land; the water region draws 5 km of open sea around the island at its level).
 - `scripts/main.ts` holds the rules: breaking and placing (a ray cast from the eye through water;

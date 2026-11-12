@@ -53,6 +53,7 @@ fn textured_model(m: &procedural::Material) -> ModelAsset {
             })
             .collect(),
         srgb,
+        nearest: false,
     };
     let mut normal = image(
         "normal",

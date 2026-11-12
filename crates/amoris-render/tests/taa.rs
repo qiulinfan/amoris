@@ -895,6 +895,7 @@ fn skinned_board(px: f32) -> ModelAsset {
             height: th,
             rgba8,
             srgb: true,
+            nearest: false,
         }],
         nodes: vec![NodeData {
             name: "board".into(),

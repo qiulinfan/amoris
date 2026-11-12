@@ -217,6 +217,11 @@ pub struct ImageData {
     pub rgba8: Vec<u8>,
     /// Color data (sRGB-encoded) rather than linear data (normals, roughness).
     pub srgb: bool,
+    /// The file's sampler magnifies it with glTF's `NEAREST` (pixel art): the renderer resizes it
+    /// to a texture layer by point sampling, so its pixels keep their edges
+    /// (docs/spec/voxels.md 7.2).
+    #[serde(default)]
+    pub nearest: bool,
 }
 
 /// A PBR metallic-roughness material (glTF 2.0's core model).

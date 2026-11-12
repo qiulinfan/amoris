@@ -193,6 +193,7 @@ pub fn mixed_model() -> ModelAsset {
         height: size,
         rgba8,
         srgb: true,
+        nearest: false,
     };
     let parts = [
         (
@@ -1050,6 +1051,7 @@ pub fn aa_model() -> ModelAsset {
                 height: size,
                 rgba8,
                 srgb: true,
+                nearest: false,
             },
             ImageData {
                 name: "chain link".into(),
@@ -1057,6 +1059,7 @@ pub fn aa_model() -> ModelAsset {
                 height: link,
                 rgba8: links,
                 srgb: true,
+                nearest: false,
             },
         ],
         meshes: vec![ground, panel],

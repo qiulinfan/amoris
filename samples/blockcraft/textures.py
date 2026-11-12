@@ -1,8 +1,8 @@
 """Blockcraft's block textures: original 16 x 16 pixel art in the style of a voxel sandbox.
 
-Each texture is drawn from a small palette with a seeded generator, then written upscaled by
-nearest neighbour to 1024 x 1024 (the size the engine resamples every texture layer to), so the
-pixels stay sharp. Colors are sRGB bytes; alpha is 0 where a plant texture is cut out.
+Each texture is drawn from a small palette with a seeded generator and written as drawn, 16 x 16:
+`blocks.gltf`'s sampler magnifies with NEAREST, so the engine keeps the pixels sharp
+(docs/spec/voxels.md 7.2). Colors are sRGB bytes; alpha is 0 where a plant texture is cut out.
 """
 
 import random
@@ -10,26 +10,22 @@ import struct
 import zlib
 
 N = 16
-OUT = 1024
 
 
-def png(path, pixels, size=N, scale=OUT // N):
-    """Writes size x size RGBA pixels, each repeated scale x scale times."""
-    side = size * scale
+def png(path, pixels, size=N):
+    """Writes size x size RGBA pixels."""
     rows = []
     for y in range(size):
         row = bytearray()
         for x in range(size):
-            row += bytes(pixels[y][x]) * scale
-        first = b"\x00" + bytes(row)
-        same = b"\x02" + bytes(side * 4)  # the Up filter: a copy of the row above
-        rows.append(first + same * (scale - 1))
+            row += bytes(pixels[y][x])
+        rows.append(b"\x00" + bytes(row))  # filter 0: the row as it is
     data = zlib.compress(b"".join(rows), 9)
 
     def chunk(kind, body):
         return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
 
-    header = struct.pack(">IIBBBBB", side, side, 8, 6, 0, 0, 0)
+    header = struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0)
     path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", data)
                      + chunk(b"IEND", b""))
 

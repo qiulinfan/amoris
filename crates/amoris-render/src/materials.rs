@@ -1,8 +1,9 @@
 //! Materials and their textures. A material is a row of a storage buffer that the forward pass
 //! indexes per instance; instances whose looks are equal share a row. Textures live as layers of
-//! two texture arrays (sRGB color data, linear data), each layer resized on the GPU to one size with
-//! a full mip chain: every material is reachable from one bind group, so batches are per mesh only
-//! and work on WebGPU, which has no bindless textures.
+//! two texture arrays (sRGB color data, linear data), each layer resized to one size with a full
+//! mip chain (on the GPU by a linear sampler; an image whose glTF sampler magnifies with `NEAREST`
+//! by point sampling first, blit.rs): every material is reachable from one bind group, so batches
+//! are per mesh only and work on WebGPU, which has no bindless textures.
 
 use std::collections::HashMap;
 
