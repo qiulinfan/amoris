@@ -597,9 +597,12 @@ more than read: `scripts.check` compiles through `scripts.apply {dry_run}` (a re
 in the project's root. By section 3's kinds both are requests; when the catalog says so the list
 (`CHECKER_WITHHELD`) goes. `capture` stays a checker's: it writes a PNG under `.amoris/captures/`
 and nothing of the world. `debug.eval` is kind `write` since this date (debugger.md 7), so a
-checker cannot evaluate in a paused frame. `/ws` and `/render` are a developer's only: a socket's
-requests go through the editor's client, which no gate of a checker's stands before, so a checker
-polls `events.since` and `agent.session.events`.
+checker cannot evaluate in a paused frame. Of the saves, the scene loader and the uploads (3, 3.3),
+`saves.list` is a read and so a checker's (it reads the saves' headers); `saves.write` (a request),
+`saves.load` (control), `scene.load` (write) and `assets.upload` (a request that writes a project
+file) are a developer's alone. `/ws` and `/render` are a developer's only: a socket's requests go
+through the editor's client, which no gate of a checker's stands before, so a checker polls
+`events.since` and `agent.session.events`.
 
 **The debugger's CDP endpoint is off.** That endpoint (port 9229, debugger.md) has no admission,
 and any local process that reached it could evaluate in a paused frame, past every grant. A locked

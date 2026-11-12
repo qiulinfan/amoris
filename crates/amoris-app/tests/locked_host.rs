@@ -676,6 +676,13 @@ fn developer_methods() -> Vec<(&'static str, Value)> {
         ("debug.eval", json!({"expr": "1"})),
         ("scripts.apply", json!({})),
         ("project.save", json!({})),
+        ("saves.write", json!({"name": "a"})),
+        ("saves.load", json!({"name": "a"})),
+        ("scene.load", json!({"path": "scene.json"})),
+        (
+            "assets.upload",
+            json!({"path": "a.txt", "data": "YQ=="}),
+        ),
         ("capture", json!({})),
     ]
 }
@@ -1007,6 +1014,7 @@ fn a_checker_token_reads_and_changes_nothing() {
         ("scripts.guide", json!({})),
         ("docs.search", json!({"query": "crate"})),
         ("assets.list", json!({})),
+        ("saves.list", json!({})),
         ("agent.session.list", json!({})),
         ("agent.session.events", json!({})),
         ("player.session", json!({"seat": "skipper"})),
@@ -1071,7 +1079,11 @@ fn a_checker_token_reads_and_changes_nothing() {
         "play.start",
         "play.stop",
         "snapshots.restore",
+        "saves.write",
+        "saves.load",
+        "scene.load",
         "project.save",
+        "assets.upload",
         "scripts.write",
         "scripts.apply",
         "player.act",
