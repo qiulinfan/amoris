@@ -34,6 +34,7 @@ use crate::files::{self, ScriptReadParams, ScriptWriteParams};
 use crate::history::{Entry, History, HistoryUndoParams};
 use crate::inspect::{self, WorldQueryParams, WorldSchemaParams, WorldTreeParams};
 use crate::project::GameSetup;
+use crate::saves::{self, SavesLoadParams, SavesWriteParams};
 use crate::scene::Scene;
 use crate::scripts::{
     self, ScriptsApplyParams, ScriptsSwapParams, bundle_record, compiled_from_record,
@@ -732,6 +733,10 @@ impl Game {
                 decode::<NoParams>(p, name)?;
                 Ok(self.history.to_json())
             }
+            "saves.list" => {
+                decode::<NoParams>(p, name)?;
+                Ok(saves::list(self.root(name)?))
+            }
             "project.info" => {
                 decode::<NoParams>(p, name)?;
                 let rate = self.setup.rate.0;
@@ -1069,6 +1074,23 @@ impl Game {
                 decode::<NoParams>(&cmd.params, name)?;
                 files::save(self.sim.world(), self.root(name)?)
             }
+            "saves.write" => {
+                let p: SavesWriteParams = decode(&cmd.params, name)?;
+                let root = self.root(name)?.clone();
+                saves::path(&root, &p.name)?;
+                let tick = self.tick().0;
+                let hash = self.world_hash()?.to_string();
+                let bytes = amoris_persist::save::write_save(
+                    self.sim.world(),
+                    &self.reg,
+                    p.label.as_deref().unwrap_or(""),
+                    saves::meta(tick, &hash),
+                )?;
+                let path = saves::write(&root, &p.name, &bytes)?;
+                let rel = path.strip_prefix(&root).unwrap_or(&path);
+                Ok(json!({"name": p.name, "path": rel.display().to_string(),
+                          "bytes": bytes.len(), "tick": tick, "world_hash": hash}))
+            }
             other => Err(catalog::unknown(other, &self.extras.commands)),
         }
     }
@@ -1274,6 +1296,13 @@ impl Game {
                 r
             }
             "player.pacing" => self.set_player_pacing(cmd).map(|(_, v)| v),
+            "saves.load" => {
+                let p: SavesLoadParams = decode(&cmd.params, name)?;
+                let bytes = saves::read(self.root(name)?, &p.name)?;
+                let mut loaded = self.load_save(&bytes)?;
+                loaded["name"] = json!(p.name);
+                Ok(json!({ "loaded": loaded }))
+            }
             other => Err(catalog::thread_only(other)),
         }
     }
@@ -1527,6 +1556,48 @@ impl Game {
             rec.rebase(self.sim.world(), RebaseCause::Restore, &bundle)?;
         }
         r.map(|_| ())
+    }
+
+    /// Loads a save (versions.md 6.2) and restores it as this world (server.md 3.3): the save is
+    /// read into the current versions with the engine's steps and no project steps (TypeScript
+    /// migrations are not built: an older project component is `migrate.missing_step`), restored
+    /// under the scripts this game runs, and a cache whose identity differed is rebuilt from the
+    /// components. A recording sees the restore's rebase, and a second one after a rebuild, so
+    /// its snapshots hold the world as it runs on. Nothing changes when the save does not read.
+    pub fn load_save(&mut self, bytes: &[u8]) -> Result<Value, Problem> {
+        let (snap, report) = amoris_persist::save::load_save(
+            bytes,
+            &self.reg,
+            &amoris_persist::migrate::Migrations::default(),
+            &mut amoris_persist::save::NoProjectMigrator,
+            self.sim.world(),
+        )?;
+        self.restore(&snap)?;
+        if !report.caches_rebuilt.is_empty() {
+            amoris_persist::save::rebuild_caches(
+                self.sim.world_mut(),
+                &self.reg,
+                &report.caches_rebuilt,
+            )?;
+            let rebuilt = self.snapshot()?;
+            self.restore(&rebuilt)?;
+        }
+        let keys = |v: &[amoris_persist::SectionKey]| -> Vec<String> {
+            v.iter().map(ToString::to_string).collect()
+        };
+        let migrated: Vec<Value> = report
+            .migrated
+            .iter()
+            .map(|(k, from, to)| json!({"section": k.to_string(), "from": from, "to": to}))
+            .collect();
+        Ok(json!({
+            "tick": self.tick().0,
+            "world_hash": self.world_hash()?.to_string(),
+            "migrated": migrated,
+            "renamed": report.renamed,
+            "dropped": keys(&report.dropped),
+            "caches_rebuilt": keys(&report.caches_rebuilt),
+        }))
     }
 
     /// Starts recording into `sink` (replay.md 2.3): the start snapshot, its formats and the

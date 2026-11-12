@@ -36,6 +36,7 @@ pub mod player;
 pub mod present;
 pub mod profile;
 mod project;
+pub mod saves;
 mod scene;
 pub mod script_profile;
 mod scripts;

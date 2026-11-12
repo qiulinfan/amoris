@@ -25,6 +25,7 @@ use crate::edit::{WorldEditOps, WorldEditParams, WorldGetParams};
 use crate::files::{ScriptReadParams, ScriptWriteParams};
 use crate::history::HistoryUndoParams;
 use crate::inspect::{WorldQueryParams, WorldSchemaParams, WorldTreeParams};
+use crate::saves::{SavesLoadParams, SavesWriteParams};
 use crate::scripts::{ScriptsApplyParams, ScriptsSwapParams};
 use crate::types::ScriptsTypesParams;
 
@@ -213,6 +214,26 @@ pub const CATALOG: &[CommandDef] = &[
         "Restores the kept snapshot at or before a tick; clears the history.",
         schema::<SnapshotsRestoreParams>,
     )),
+    def(
+        "saves.list",
+        Kind::Read,
+        "The project's saves (.amoris/saves): name, size, label, tick and world hash.",
+        schema::<NoParams>,
+    ),
+    def(
+        "saves.write",
+        Kind::Request,
+        "Writes the world shown (Play's while playing) as a save of this name; a save of the \
+         name is replaced.",
+        schema::<SavesWriteParams>,
+    ),
+    def(
+        "saves.load",
+        Kind::Control,
+        "Loads a save into the current versions and restores it as the world shown, under the \
+         scripts applied now; clears the history.",
+        schema::<SavesLoadParams>,
+    ),
     def(
         "snapshot",
         Kind::Read,

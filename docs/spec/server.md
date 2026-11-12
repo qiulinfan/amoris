@@ -94,6 +94,9 @@ files).
 | `snapshots.list` | read | `{}` | `{every, keep, snapshots: [{tick, world_hash}]}` |
 | `snapshots.restore` | control | `{tick, bundle? = "applied"}` | `status` with `restored` (the kept tick at or before `tick`) and `scripts: {bundle, kept: "applied"\|"snapshot", snapshot_bundle, swapped?, swap_refused?}` (3.3) |
 | `snapshot` | read | `{}` | `{tick, writes, world_hash}` |
+| `saves.list` | read | `{}` | `{dir, saves: [{name, bytes, label, tick, world_hash}]}` (a save whose header does not read: `{name, unreadable: code}`; 3.3) |
+| `saves.write` | request | `{name, label?}` | `{name, path, bytes, tick, world_hash}`: the world shown written as a save (3.3) |
+| `saves.load` | control | `{name}` | `status` with `loaded: {name, tick, world_hash, migrated, renamed, dropped, caches_rebuilt}` (3.3) |
 | `scripts.list` | read | `{}` | `[{path, bytes, diagnostics}]` |
 | `scripts.read` | read | `{path, lines?, numbered?}` | `{path, text}`; with `lines` (`50-80`, `50-`, `-20`, `67`; 1-based, inclusive) or `numbered`, the text of those lines (each `67\| ` prefixed when numbered) and `{first, last, total}` |
 | `scripts.write` | request | `{path, text}` | `{path, bytes, diagnostics}` (compiled, not swapped) |
@@ -253,9 +256,25 @@ gone `null`. A step stopped by the debugger and answered at the stop has none.
   `kept`, the snapshot's bundle and `swapped`; when the applied scripts do not load on the restored
   world it runs the snapshot's and says so (`swap_refused`). The status line prints
   `restored tick 0; scripts 4381c2… (applied)`, and `status` always has the running `bundle`.
-- Each replacement of the world shown (Play, Stop, restore) bumps the reader's **epoch**
-  (`SnapshotReader::world()`: `{mode, epoch}`); presenters reset what they derived (the render
-  feed's `reset: true`, `world.changed {reset}`).
+- **Saves** (2026-11-12; versions.md 6). `saves.write {name, label?}` writes the world shown
+  (Play's while playing, unlike `project.save`) with amoris-persist's `write_save` to
+  `<project>/.amoris/saves/<name>.save`, through a temporary file so a failed write keeps the save
+  it would replace; the header's meta holds the tick and world hash that `saves.list` shows. A
+  name is 1 to 64 letters, digits, `_` and `-` (`request.invalid_value`); a game without a project
+  directory answers `project.no_root`. `saves.load {name}` reads the save into the current versions
+  (`load_save`: renames, the engine's steps, retired types dropped, a cache of another identity
+  listed and rebuilt from the components after the restore) and restores it as
+  `snapshots.restore` restores a kept snapshot: the world shown is replaced under the scripts
+  applied now, a waiting `time.step` is answered `saves.loaded`, the history is cleared, kept
+  snapshots after the save's tick are dropped and the epoch is bumped. A recording sees a rebase
+  onto the loaded world (replay.md 2.5), and a second one after a cache rebuild. TypeScript steps
+  of project components are not built (versions.md 8.3), so a save holding an older version of
+  one is refused with `migrate.missing_step` and the world is left as it was. A game driven
+  directly (`Game::apply`, the tests, `amoris run`) loads too, without the loop's bookkeeping.
+  Scripts neither save nor load yet (11).
+- Each replacement of the world shown (Play, Stop, restore, a loaded save) bumps the reader's
+  **epoch** (`SnapshotReader::world()`: `{mode, epoch}`); presenters reset what they derived (the
+  render feed's `reset: true`, `world.changed {reset}`).
 
 ### 3.4 A host the debugger holds
 
@@ -436,7 +455,7 @@ parameters loosely and the runtime's decoder refuses unknown ones with suggestio
 |---|---|
 | `world` | tree, get, query, schema, edit -> `world.*` |
 | `scripts` | guide, list, read, write, apply, check, status, types -> `scripts.*` |
-| `time` | status -> `status`; pause, resume, speed -> `time.control`; step -> `time.step`; snapshots -> `snapshots.list`; rewind -> `snapshots.restore`; profile -> `profile.frame` |
+| `time` | status -> `status`; pause, resume, speed -> `time.control`; step -> `time.step`; snapshots -> `snapshots.list`; rewind -> `snapshots.restore`; saves -> `saves.list`; save -> `saves.write`; load -> `saves.load`; profile -> `profile.frame` |
 | `play` | start, stop |
 | `history` | undo, redo, list |
 | `assets` | list |
@@ -478,6 +497,7 @@ Schema, so help never drifts from what the host takes.
 | `amoris scripts list|read <p> [--lines a-b] [--numbers]|write <p> [file|-]|apply [--force]|check|types|guide|status` | `scripts.*` (`--lines` numbers the lines) |
 | `amoris events [--since n] [--name n.*] [--limit n]`, `--why <seq>` | `events.*` |
 | `amoris logs [--since n]`, `snapshots [list]|restore <tick> [--bundle snapshot]`, `assets [dir]` | `log.since`, `snapshots.*`, `assets.list` |
+| `amoris saves [list]`, `saves write <name> [--label text]`, `saves load <name>` | `saves.*` |
 | `amoris profile [--ticks n]` | `profile.frame` (a table: ms per tick, max, share of the game thread) |
 | `amoris scripts profile [--ticks n] [--interval steps] [--top n] [--folded <file>]` | `scripts.profile` (by system: its steps, then its functions, lines and stacks with self and total steps; `--folded` writes the folded stacks to the file) |
 | `amoris debug break <file>:<line> [--if <expr>] [--log <text>]`, `clear [id]`, `list` | `debug.breakpoints.*` (`file` may be the module's end, `helm.ts`) |
@@ -511,8 +531,10 @@ error exits 2. Every call waits 60 s at most (`--timeout <s>`, `AMORIS_TIMEOUT`)
 | `history.empty`, `history.stale` | nothing to undo or redo; an entry that no longer applies (dropped) |
 | `history.group` | `history.undo {group}` when the next entry is not the whole of the group (3.1) |
 | `play.running`, `play.not_running` | `play.start` while playing; `play.stop` while editing |
-| `play.started`, `play.stopped`, `snapshots.restored` | a waiting `time.step` whose world was replaced |
+| `play.started`, `play.stopped`, `snapshots.restored`, `saves.loaded` | a waiting `time.step` whose world was replaced |
 | `snapshots.none` | no kept snapshot at or before the tick |
+| `saves.not_found` | `saves.load` of a name with no save (`saves`, `suggestion?`) |
+| `saves.unwritable` | a save's folder or file could not be written or read (`path`, `error`) |
 | `sim.entity_alive` | a revive names a live id (simulation.md 11) |
 | `sim.parent_cycle` | a `world.edit` (or a scene) that would leave an entity under itself or under an entity that is under it (3.1; simulation.md 11) |
 | `project.no_root` | a file command on a game built from data |
@@ -528,14 +550,14 @@ error exits 2. Every call waits 60 s at most (`--timeout <s>`, `AMORIS_TIMEOUT`)
 `tools/host/smoke_server.py` (standard library only) starts `amoris serve` on a copy of
 `samples/sailing` and checks the CLI (status, tree, set, undo, a crate parented to the Sloop with
 the tree indented by it, `--root` and `--depth`, a refused loop and the undo, step with an event and
-a field condition, a refused typo with its suggestion, Play and Stop, help), `/api/call` and
-`/api/catalog` (a destroy undone revives the entity under its id), `/ws` (status on connect,
-subscribe, an edit with its `history` and `world.changed` pushes, undo, steps, Play's reset),
-`events.since`/`why`, and MCP over HTTP (initialize, `tools/list` with its size, calls and
-refusals), a host the debugger holds (3.4: the step that returns at the breakpoint, reads while
-held, `scripts apply` refused at once, the debugger's short forms, restores with and without the
-applied scripts), then that `.amoris/host.json` is gone after SIGTERM (Ctrl-Break on Windows, where
-it now runs:
+a field condition, a save written, listed, loaded and refused, a refused typo with its suggestion,
+Play and Stop, help), `/api/call` and `/api/catalog` (a destroy undone revives the entity under its
+id), `/ws` (status on connect, subscribe, an edit with its `history` and `world.changed` pushes,
+undo, steps, Play's reset), `events.since`/`why`, and MCP over HTTP (initialize, `tools/list` with
+its size, calls and refusals), a host the debugger holds (3.4: the step that returns at the
+breakpoint, reads while held, `scripts apply` refused at once, the debugger's short forms, restores
+with and without the applied scripts), then that `.amoris/host.json` is gone after SIGTERM
+(Ctrl-Break on Windows, where it now runs:
 [smoke-server.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/smoke-server.txt),
 0 failures, 2026-10-09). Its WebSocket client keeps the pushes that arrive before a request's answer
 for the next wait (Play's reset can come first), which `tools/tests/test_smoke_server.py` checks
@@ -545,13 +567,16 @@ undo and redo of a spawn, a set and a destroy, the readers, the stop conditions,
 the kept snapshots; `tests/hierarchy.rs` the hierarchy (set and remove of `Parent`, every refusal
 with its path, a call through a loop, destroys of subtrees with their undo and redo, one of 100
 entities in one call each way, scenes, `project.save`, scripts, a recording, a fork, a restore, the
-storage shuffle, `world.tree`'s parameters); `tests/agent_reads.rs` the field reads, line ranges,
-samples and restores under the applied scripts (with a recording that replays); amoris-app's
-`tests/paused_host.rs` a held host through `Host::call` (also that `profile.frame` answers while
-held and leaves the held tick out, and that the held host answers every nested `world.tree` as the
-game does) and `tests/history_host.rs` a parent destroyed by an MCP session and undone whole by the
-editor; `tests/thread.rs` that ticks are profiled by system and phase once a host serves the profile
-(a reader alone turns nothing on) and that Play starts the ring again; amoris-link's `profile` tests
+storage shuffle, `world.tree`'s parameters); `tests/saves.rs` the saves (a loaded save continues as
+the saved world did, also in a fresh game; refused names, a missing and a damaged save; an older
+project component; a recording that loads one replays; the thread's load drops later kept snapshots
+and bumps the epoch); `tests/agent_reads.rs` the field reads, line ranges, samples and restores
+under the applied scripts (with a recording that replays); amoris-app's `tests/paused_host.rs` a
+held host through `Host::call` (also that `profile.frame` answers while held and leaves the held
+tick out, and that the held host answers every nested `world.tree` as the game does) and
+`tests/history_host.rs` a parent destroyed by an MCP session and undone whole by the editor;
+`tests/thread.rs` that ticks are profiled by system and phase once a host serves the profile (a
+reader alone turns nothing on) and that Play starts the ring again; amoris-link's `profile` tests
 the summaries, the rows' order, the world's ticks only, and that a reader holding the ring never
 stops the game thread.
 
@@ -576,3 +601,6 @@ stops the game thread.
 4. The web worker's loop (`amoris-web`) runs plain step counts; stop conditions, Play and kept
    snapshots are native only, and it refuses a write trace (`time.trace_unavailable`, debugger.md
    13).
+5. Saves (3.3) are the host's: scripts neither write nor load one, the browser has no store for
+   them (its worker answers `project.no_root`), and a save holding an older version of a project
+   component waits for the TypeScript migration steps (versions.md 8.3).

@@ -118,6 +118,11 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
         "snapshots.list",
         "amoris snapshots [list] | restore <tick> [--bundle snapshot]",
     ),
+    (
+        "saves",
+        "saves.list",
+        "amoris saves [list] | write <name> [--label text] | load <name>   (.amoris/saves)",
+    ),
     ("assets", "assets.list", "amoris assets [dir]"),
     ("catalog", "catalog.list", "amoris catalog"),
     ("docs", "docs.search", "amoris docs <words..> [--limit n]"),
@@ -746,6 +751,27 @@ fn request(cmd: &str, args: &Args) -> Result<(String, Value), Problem> {
                     format!("amoris snapshots has no '{other}'"),
                     other,
                     &["list", "restore"],
+                ));
+            }
+        },
+        "saves" => match pos(args, 0).unwrap_or("list") {
+            "list" => "saves.list",
+            verb @ ("write" | "load") => {
+                let name =
+                    pos(args, 1).ok_or_else(|| bad(format!("amoris saves {verb} <name>")))?;
+                p.insert("name".into(), json!(name));
+                if verb == "write" {
+                    put(&mut p, "label", args.value("label").map(|l| json!(l)));
+                    "saves.write"
+                } else {
+                    "saves.load"
+                }
+            }
+            other => {
+                return Err(usage(
+                    format!("amoris saves has no '{other}'"),
+                    other,
+                    &["list", "write", "load"],
                 ));
             }
         },
@@ -1795,6 +1821,48 @@ fn text(method: &str, v: &Value, full: bool) -> String {
             if v["writes"].is_object() {
                 writes_table(&v["writes"], &mut out);
             }
+        }
+        "saves.list" => {
+            let saves = v["saves"].as_array().cloned().unwrap_or_default();
+            if saves.is_empty() {
+                let _ = writeln!(out, "no saves in {}", opt(&v["dir"]));
+            }
+            for s in &saves {
+                if s["unreadable"].is_string() {
+                    let _ = writeln!(
+                        out,
+                        "{}  unreadable ({})",
+                        opt(&s["name"]),
+                        opt(&s["unreadable"])
+                    );
+                    continue;
+                }
+                let mut line = format!(
+                    "{}  tick {}  {} bytes",
+                    opt(&s["name"]),
+                    opt(&s["tick"]),
+                    opt(&s["bytes"])
+                );
+                if s["label"].as_str().is_some_and(|l| !l.is_empty()) {
+                    let _ = write!(line, "  \"{}\"", opt(&s["label"]));
+                }
+                let _ = writeln!(out, "{line}");
+            }
+        }
+        "saves.write" => {
+            let _ = writeln!(
+                out,
+                "saved {} at tick {} ({} bytes): {}",
+                opt(&v["name"]),
+                opt(&v["tick"]),
+                opt(&v["bytes"]),
+                opt(&v["path"])
+            );
+        }
+        "saves.load" => {
+            out = status_line(v) + "\n";
+            let l = &v["loaded"];
+            let _ = writeln!(out, "loaded {} (tick {})", opt(&l["name"]), opt(&l["tick"]));
         }
         "snapshots.list" => {
             let ticks: Vec<String> = v["snapshots"]

@@ -118,12 +118,13 @@ pub fn tools() -> Vec<ToolDef> {
                 changed the field, with values and a script's statement); snapshots: kept every \
                 60 ticks; \
                 rewind {tick, bundle}: restore the kept snapshot at or before tick under the \
-                applied scripts (bundle 'snapshot': its own); profile {ticks}: what the last \
-                ticks cost, ms per tick by system and phase.",
+                applied scripts (bundle 'snapshot': its own); saves; save {name, label}: write \
+                the world shown as a save; load {name}: restore a save; profile {ticks}: what \
+                the last ticks cost, ms per tick by system and phase.",
             schema: obj(
                 json!({
                     "action": action(&["status", "pause", "resume", "speed", "step", "snapshots",
-                                       "rewind", "profile"]),
+                                       "rewind", "saves", "save", "load", "profile"]),
                     "ticks": {"type": "integer"},
                     "speed": {"type": "number"},
                     "until": {"type": "object"},
@@ -137,6 +138,8 @@ pub fn tools() -> Vec<ToolDef> {
                         "required": ["entity", "component"]},
                     "tick": {"type": "integer"},
                     "bundle": {"type": "string", "enum": ["applied", "snapshot"]},
+                    "name": {"type": "string", "description": "save, load: the save's name"},
+                    "label": {"type": "string"},
                 }),
                 &["action"],
             ),
@@ -346,6 +349,9 @@ pub fn route(tool: &str, mut args: Map<String, Value>) -> Result<(String, Value)
             "step" => ("time.step".into(), rest(args)),
             "snapshots" => ("snapshots.list".into(), rest(args)),
             "rewind" => ("snapshots.restore".into(), rest(args)),
+            "saves" => ("saves.list".into(), rest(args)),
+            "save" => ("saves.write".into(), rest(args)),
+            "load" => ("saves.load".into(), rest(args)),
             "profile" => (
                 "profile.frame".into(),
                 Value::Object(take(&mut args, &["ticks"])),

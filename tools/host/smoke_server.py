@@ -3,7 +3,8 @@
 samples/sailing and drives it the three ways clients do.
 
 1. The CLI (`amoris status`, `amoris world ...`, `amoris step`, `amoris profile`, `amoris undo`,
-   `amoris play`, a refused typo with its suggestion).
+   `amoris saves` written, listed, loaded and refused, `amoris play`, a refused typo with its
+   suggestion).
 2. `POST /api/call` and `GET /api/catalog`, and the editor's `/ws` (requests, the history, events,
    world.changed, status and profile pushes, a refused topic, Play and Stop).
 3. MCP over Streamable HTTP (`initialize`, `tools/list` with its size, a `world` call, a refused
@@ -270,6 +271,20 @@ def main():
         r = cli("profile", "--ticks", "60")
         check(r.returncode == 0 and " ticks to tick " in r.stdout.splitlines()[0]
               and "loop.publish" in r.stdout, f"cli profile: {r.stdout.splitlines()[:1]}")
+        # Saves (server.md 3.3): written at this tick, loaded back after more ticks.
+        r = cli("saves", "write", "smoke", "--label", "after the steps")
+        check(r.returncode == 0 and r.stdout.startswith("saved smoke at tick "),
+              f"cli saves write: {r.stdout.strip()}")
+        saved_at = r.stdout.split("at tick ")[1].split()[0]
+        r = cli("saves")
+        check(r.stdout.startswith(f"smoke  tick {saved_at} ") and "after the steps" in r.stdout,
+              f"cli saves: {r.stdout.strip()}")
+        cli("step", "30")
+        r = cli("saves", "load", "smoke")
+        check(r.returncode == 0 and f"loaded smoke (tick {saved_at})" in r.stdout,
+              f"cli saves load: {r.stdout.strip()}")
+        r = cli("saves", "load", "smok", ok=False)
+        check(r.returncode == 1 and "saves.not_found" in r.stderr, f"cli saves load refused: {r.stderr.strip()}")
         r = cli("world", "set", "Sloop", "Boat", "ruder=1", ok=False)
         check(r.returncode == 1 and "request.unknown_field" in r.stderr and "rudder" in r.stderr,
               f"cli refusal: {r.stderr.strip()}")

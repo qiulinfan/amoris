@@ -118,6 +118,7 @@ Each method is a command of the catalog (`GET /api/catalog` is authoritative). K
 | `events.why` | `{seq}` | `{event, causes, complete}`: the cause chain |
 | `log.since` | `{seq?, limit?}` | `{lines, last}` |
 | `snapshots.list` / `snapshots.restore` | `{}` / `{tick, bundle?: "applied"\|"snapshot"}` | `{every, keep, snapshots: [{tick, world_hash}]}` / status with `restored` and `scripts` (the applied scripts are kept by default, server.md 3.3) |
+| `saves.list` / `saves.write` / `saves.load` | `{}` / `{name, label?}` / `{name}` | `{dir, saves: [{name, bytes, label, tick, world_hash}]}` / `{name, path, bytes, tick, world_hash}` / status with `loaded` (the project's `.amoris/saves/`, server.md 3.3) |
 | `scripts.types` | `{text?, tsconfig?}` | `{dir, files, tsconfig, components, ...}`: the project's declarations under `.amoris/types/` (docs/sdk.md) |
 | `scripts.guide` | `{}` | `{path: "docs/sdk.md", text}`: the agent's guide to scripts |
 | `profile.frame` | `{ticks?}` (default 60, at most 600) | `profile`'s summary of the last `ticks` ticks (no `missed`); the server's own read, so it answers while the debugger holds the game |
