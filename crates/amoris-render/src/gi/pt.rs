@@ -1805,6 +1805,7 @@ mod tests {
             width: 2,
             height: 1,
             srgb: true,
+            nearest: false,
             rgba8: vec![0, 0, 0, 0, 255, 255, 255, 255],
         };
         let color = resize_texture(&src, 1, 1, true).unwrap().get_pixel(0, 0).0;

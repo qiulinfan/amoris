@@ -289,6 +289,21 @@ pub struct VoxelUpdate {
 - A part's look names its material (`blocks.gltf#stone`); a generated or built-in mesh whose
   material names an asset not loaded yet loads that asset, as a model's mesh path would.
 - Picking (`pick_ray`, the id pass) answers a part with its volume's entity id.
+- Block textures are pixel art, and the importer reads how a file wants them magnified: an image
+  whose glTF sampler magnifies with `NEAREST` (`magFilter` 9728) is marked (`ImageData::nearest`).
+  The renderer resizes every image to a 1024 x 1024 texture layer; a marked image no larger than a
+  layer gets there by point sampling, each layer texel taking the image's texel under its centre
+  in integer arithmetic (`amoris-render/src/blit.rs` `point_sampled`), so every backend holds the
+  same layer, and the layer's mip chain is built from it as any other's. The one sampler that draws
+  every material stays linear and anisotropic, which is why the filter applies at the resize: a
+  block's 16 x 16 texture keeps its pixels' edges to within a layer texel up close and is still
+  filtered in the distance. An image that textures sample both ways is imported twice, the marked
+  copy after the file's images, and each material slot takes the one its own texture's sampler
+  asks for, so each has a layer. A size that does not divide 1024 gives texels whose widths differ
+  by one layer texel (24 texels across come out 42 or 43 wide). A marked image wider or taller
+  than a layer (a minification), `minFilter`, the wrap modes and the research tracers' own texture
+  sampling are as they were. The viewport holds the importer and the renderer, so
+  `web/viewport/pkg` is rebuilt with them, although no hash refuses an older one.
 
 ## 8. The native window
 
@@ -334,6 +349,7 @@ draw paths are checked under the WebGPU baseline with the existing draw-path too
 | Mesher: culling, chunk borders, cross, liquid, material groups | `amoris-assets` tests |
 | Parts and remeshing of neighbours; after breaks and placements across chunk borders the kept renderer draws as a fresh one, also with ray-traced shadows | `amoris-render --lib voxels`, `--test voxels` (GPU) |
 | Every draw path draws volumes alike | `tests/draw_paths.rs`, `tools/render/web_draw_paths.py` |
+| Pixel art: a `NEAREST` sampler marks its image, an image sampled both ways is imported twice, blockcraft's textures import as 16 x 16 marked images; the point sampling's rule; a marked image draws as its texels repeated to the layer's size, close up and through the mip chain, and an unmarked one does not | `amoris-assets` `import::tests`, `amoris-render --lib blit`, `--test texture_nearest` (GPU) |
 | Cost: edit-tick snapshot, worker snapshot, remesh time, frame time of blockcraft | docs/bench/voxels.md |
 
 ## 11. Open questions
@@ -345,7 +361,9 @@ draw paths are checked under the WebGPU baseline with the existing draw-path too
    snapshotting without the cache.
 3. Light: sky light and block light per cell, and smooth lighting (vertex colours, which the vertex
    format lacks), against the renderer's sun shadows and GTAO used today.
-4. Pixel-art sampling: honouring glTF's `NEAREST` filter instead of upscaling textures to 1024.
+4. (Settled 2026-11-11.) Pixel-art sampling: an image whose glTF sampler magnifies with `NEAREST`
+   is point-sampled to its texture layer (7.2), and blockcraft ships its 16 x 16 art as drawn
+   instead of upscaled to 1024.
 
 ## 12. The game that drives it
 

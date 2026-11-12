@@ -610,7 +610,7 @@ mod compaction_tests {
             let device = &gpu.device;
             let view = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("mesh oracle view"),
-                size: 752,
+                size: 2048,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
@@ -689,8 +689,9 @@ mod compaction_tests {
             let projection = camera.proj(16.0 / 9.0);
             let view = camera.view();
             let vp = projection * view;
-            // Exact common.wgsl View layout; unused lighting/cascade data stays zero.
-            let mut words = [0f32; 188];
+            // common.wgsl's View layout (1,520 bytes in the 2,048 the buffer holds); unused
+            // lighting, cascade and local-view data stays zero.
+            let mut words = [0f32; 512];
             words[..16].copy_from_slice(&vp.to_cols_array());
             words[16..32].copy_from_slice(&view.to_cols_array());
             words[32..48].copy_from_slice(&projection.to_cols_array());

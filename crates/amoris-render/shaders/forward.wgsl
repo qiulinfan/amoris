@@ -1,6 +1,7 @@
 // The opaque forward pass: physically based shading (GGX, Smith, Schlick) lit by the sun with
-// cascaded shadows, punctual lights from the clustered light grid, and image-based light from the
-// sky (prefiltered radiance cube for specular, spherical harmonics for diffuse), with height fog.
+// cascaded shadows, punctual lights from the clustered light grid (spot and point lights shadowed
+// by their local shadow views, docs/spec/shadows.md), and image-based light from the sky (prefiltered
+// radiance cube for specular, spherical harmonics for diffuse), with height fog.
 // Vertices are pulled from the shared mesh buffers; the instance comes from the culling pass's
 // visible list.
 
@@ -162,6 +163,63 @@ fn shadow_factor(world: vec3f, n: vec3f, view_depth: f32) -> f32 {
     // Fade the last cascade out at its far end.
     let fade = clamp((view.cascade_splits[3] - view_depth) / (view.cascade_splits[3] * 0.1), 0.0, 1.0);
     return mix(1.0, s, select(1.0, fade, c == 3u));
+}
+
+// The face of a point light's cube that holds the direction `d` from the light: the axis of its
+// largest coordinate (ties to x, then y), +x, -x, +y, -y, +z, -z (shadows.rs `point_views`).
+fn cube_face(d: vec3f) -> u32 {
+    let a = abs(d);
+    if (a.x >= a.y && a.x >= a.z) {
+        return select(1u, 0u, d.x >= 0.0);
+    }
+    if (a.y >= a.z) {
+        return select(3u, 2u, d.y >= 0.0);
+    }
+    return select(5u, 4u, d.z >= 0.0);
+}
+
+// The share of spot or point light `li`'s light that reaches `world`, from its local shadow view's
+// map (docs/spec/shadows.md 6; `li.shadow` is 1 + the view's slot, a point light's first face's).
+// `n` is the surface's normal and `l` the direction to the light. The point is moved off the
+// surface by the map's texel at its depth from the light, 1.5 texels along the normal and 1 toward
+// the light (in the perspective map's depth a constant bias would be metres at the range), and
+// compared at nine taps one texel apart; a point light's moved point chooses its cube's face.
+// Outside the map, and nearer the light than its near plane, a point is lit.
+fn local_shadow(li: Light, world: vec3f, n: vec3f, l: vec3f) -> f32 {
+    var slot = min(li.shadow - 1u, LOCAL_VIEWS - 1u);
+    var m = view.local_views[slot];
+    var depth: f32;
+    if (li.kind == 1u) {
+        // Along the axis of the face holding the receiver.
+        let a = abs(world - li.pos);
+        depth = max(a.x, max(a.y, a.z));
+    } else {
+        depth = (m * vec4f(world, 1.0)).w;
+    }
+    let texel = max(depth, 0.0) * li.shadow_texel;
+    let moved = world + (n * 1.5 + l) * texel;
+    if (li.kind == 1u) {
+        slot = min(slot + cube_face(moved - li.pos), LOCAL_VIEWS - 1u);
+        m = view.local_views[slot];
+    }
+    let p = m * vec4f(moved, 1.0);
+    if (p.w <= 0.0) {
+        return 1.0;
+    }
+    let q = p.xyz / p.w;
+    let uv = q.xy * vec2f(0.5, -0.5) + 0.5;
+    if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0)) || q.z > 1.0) {
+        return 1.0;
+    }
+    let dim = vec2f(textureDimensions(shadow_map));
+    var sum = 0.0;
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let o = vec2f(f32(x), f32(y)) / dim;
+            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + o, CASCADES + slot, q.z);
+        }
+    }
+    return sum / 9.0;
 }
 
 fn cluster_of(frag: vec4f) -> u32 {
@@ -421,6 +479,9 @@ fn shade(in: VsOut, s: Surface) -> SceneOut {
             let cd = dot(-l, li.dir);
             att *= smoothstep(li.cos_outer, li.cos_inner, cd);
         }
+        if (li.shadow != 0u && att > 0.0) {
+            att *= local_shadow(li, in.world, n, l);
+        }
         let h = normalize(l + v);
         let f = f_schlick(f0, max(dot(v, h), 0.0));
         let spec = d_ggx(max(dot(n, h), 0.0), a) * v_smith(nv, nl, a) * f;
@@ -552,6 +613,9 @@ fn transparent(in: VsOut, s: Surface, du: vec2f, dv: vec2f) -> vec4f {
             if (li.kind == 2u) {
                 att *= smoothstep(li.cos_outer, li.cos_inner, dot(-l, li.dir));
             }
+            if (li.shadow != 0u && att > 0.0) {
+                att *= local_shadow(li, in.world, n, l);
+            }
             let h = normalize(l + v);
             let f = f_schlick(f0, max(dot(v, h), 0.0));
             let spec = d_ggx(max(dot(n, h), 0.0), a) * v_smith(nv, nl, a) * f;
@@ -594,7 +658,13 @@ fn vs_shadow(v: VsIn, @builtin(instance_index) ii: u32) -> ShadowOut {
     let pose = instance_pose(inst, view.params.x);
     let world = pose.pos + quat_rotate(pose.rot, v.position * inst.scale);
     var o: ShadowOut;
-    o.clip = view.cascades[min(i / view.counts.x, 4u) - 1u] * vec4f(world, 1.0);
+    // The list's view: 1 to 4 a cascade, past them a local shadow view (docs/spec/shadows.md).
+    let lv = i / view.counts.x;
+    if (lv > CASCADES) {
+        o.clip = view.local_views[min(lv - CASCADES - 1u, LOCAL_VIEWS - 1u)] * vec4f(world, 1.0);
+    } else {
+        o.clip = view.cascades[min(i / view.counts.x, 4u) - 1u] * vec4f(world, 1.0);
+    }
     return o;
 }
 
@@ -611,7 +681,12 @@ fn vs_shadow_masked(v: VsIn, @builtin(instance_index) ii: u32) -> MaskedShadowOu
     let pose = instance_pose(inst, view.params.x);
     let world = pose.pos + quat_rotate(pose.rot, v.position * inst.scale);
     var o: MaskedShadowOut;
-    o.clip = view.cascades[min(i / view.counts.x, 4u) - 1u] * vec4f(world, 1.0);
+    let lv = i / view.counts.x;
+    if (lv > CASCADES) {
+        o.clip = view.local_views[min(lv - CASCADES - 1u, LOCAL_VIEWS - 1u)] * vec4f(world, 1.0);
+    } else {
+        o.clip = view.cascades[min(i / view.counts.x, 4u) - 1u] * vec4f(world, 1.0);
+    }
     o.uv = v.uv;
     o.material = inst.material;
     return o;

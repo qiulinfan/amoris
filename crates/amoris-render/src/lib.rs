@@ -91,7 +91,7 @@ pub use occlusion::{OcclusionMode, OcclusionStats};
 pub use post::{Antialiasing, AoNormals, Gtao, SceneFormat, defaults_for};
 pub use prepass::PrepassMode;
 pub use renderer::{FrameStats, Renderer, web_time};
-pub use shadows::ShadowCull;
+pub use shadows::{LOCAL_VIEWS, LocalShadows, ShadowCull};
 
 /// A renderer shader's composed WGSL (tools and backend probes).
 pub fn shader_source(name: &str) -> String {

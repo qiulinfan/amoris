@@ -99,7 +99,9 @@ pub struct Light {
     pub inner_deg: f64,
     /// Spot: the cone's half angle, degrees.
     pub outer_deg: f64,
-    /// Whether it casts shadows (directional: cascaded shadow maps).
+    /// Whether it casts shadows (directional: cascaded shadow maps; spot: a shadow map of its own;
+    /// point: six, a cube's faces; at most twelve such maps in view at once,
+    /// docs/spec/shadows.md).
     pub shadows: bool,
 }
 

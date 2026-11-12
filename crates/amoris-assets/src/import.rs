@@ -1,8 +1,9 @@
 //! glTF 2.0 import (charter 4.1): a `.gltf` or `.glb` file to a [`ModelAsset`]. Meshes are split
 //! per primitive (one material each), positions and normals are taken as stored, missing normals
 //! are computed flat, missing tangents are computed; each mesh gets its LOD chain and the GPU's
-//! vertex order (lod.rs); images are decoded to RGBA8. Runs on whatever thread calls it: the host
-//! imports on a worker thread so a large file never freezes a frame.
+//! vertex order (lod.rs); images are decoded to RGBA8, and one whose sampler magnifies with
+//! `NEAREST` is marked as pixel art. Runs on whatever thread calls it: the host imports on a
+//! worker thread so a large file never freezes a frame.
 
 // Asset import for the renderer: its floats never reach the world or its hash.
 #![allow(clippy::disallowed_methods)]
@@ -56,12 +57,43 @@ fn convert(
             srgb[t.texture().source().index()] = true;
         }
     }
-    for (i, img) in images.iter().enumerate() {
-        asset.images.push(to_rgba8(img, srgb[i], i));
+    // Which images a texture magnifies with NEAREST (pixel art), and which a texture samples
+    // smoothly: a filter belongs to a texture's sampler, and the renderer applies it per image.
+    let mut nearest = vec![false; images.len()];
+    let mut smooth = vec![false; images.len()];
+    for t in doc.textures() {
+        let by = if magnifies_nearest(&t) {
+            &mut nearest
+        } else {
+            &mut smooth
+        };
+        by[t.source().index()] = true;
     }
+    for (i, img) in images.iter().enumerate() {
+        let mut image = to_rgba8(img, srgb[i], i);
+        image.nearest = nearest[i] && !smooth[i];
+        asset.images.push(image);
+    }
+    // An image sampled both ways is imported twice, the marked copy after the file's images: the
+    // file's indices keep their meaning, and each copy gets a texture layer of its own.
+    let mut marked: Vec<usize> = (0..images.len()).collect();
+    for i in 0..images.len() {
+        if nearest[i] && smooth[i] {
+            marked[i] = asset.images.len();
+            asset.images.push(ImageData {
+                nearest: true,
+                ..asset.images[i].clone()
+            });
+        }
+    }
+    // The image a material's texture takes: the one its own sampler asks for.
+    let image = |t: gltf::Texture<'_>| {
+        let i = t.source().index();
+        if magnifies_nearest(&t) { marked[i] } else { i }
+    };
     for m in doc.materials() {
         let pbr = m.pbr_metallic_roughness();
-        let tex = |t: Option<gltf::texture::Info<'_>>| t.map(|t| t.texture().source().index());
+        let tex = |t: Option<gltf::texture::Info<'_>>| t.map(|t| image(t.texture()));
         let strength = m.emissive_strength().unwrap_or(1.0);
         let e = m.emissive_factor();
         asset.materials.push(MaterialData {
@@ -74,9 +106,9 @@ fn convert(
             emissive: [e[0] * strength, e[1] * strength, e[2] * strength],
             base_color_texture: tex(pbr.base_color_texture()),
             metallic_roughness_texture: tex(pbr.metallic_roughness_texture()),
-            normal_texture: m.normal_texture().map(|t| t.texture().source().index()),
+            normal_texture: m.normal_texture().map(|t| image(t.texture())),
             emissive_texture: tex(m.emissive_texture()),
-            occlusion_texture: m.occlusion_texture().map(|t| t.texture().source().index()),
+            occlusion_texture: m.occlusion_texture().map(|t| image(t.texture())),
             transmission_texture: m.transmission().and_then(|t| tex(t.transmission_texture())),
             normal_scale: m.normal_texture().map_or(1.0, |t| t.scale()),
             occlusion_strength: m.occlusion_texture().map_or(1.0, |t| t.strength()),
@@ -247,6 +279,13 @@ fn convert(
     asset
 }
 
+/// Whether a texture's sampler magnifies with glTF's `NEAREST`: its image is pixel art whose
+/// pixels keep their edges ([`ImageData::nearest`]). A texture with no sampler, a sampler with no
+/// `magFilter` and `LINEAR` are smooth. `minFilter` and the wrap modes are not read.
+fn magnifies_nearest(t: &gltf::Texture<'_>) -> bool {
+    t.sampler().mag_filter() == Some(gltf::texture::MagFilter::Nearest)
+}
+
 const IDENTITY: [f32; 16] = [
     1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
 ];
@@ -374,5 +413,198 @@ fn to_rgba8(img: &gltf::image::Data, srgb: bool, index: usize) -> ImageData {
         height: h,
         rgba8,
         srgb,
+        nearest: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::*;
+
+    /// A PNG of `width` x `height` pixels, each `color(x, y)`.
+    fn png(width: u32, height: u32, color: impl Fn(u32, u32) -> [u8; 4]) -> Vec<u8> {
+        let img = image::RgbaImage::from_fn(width, height, |x, y| image::Rgba(color(x, y)));
+        let mut out = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut out, image::ImageFormat::Png)
+            .expect("a PNG");
+        out.into_inner()
+    }
+
+    /// A `.glb` in memory, as the browser imports one: `images` are PNGs held in the binary chunk
+    /// (a slice import resolves no external file), under the given samplers, textures and
+    /// materials.
+    fn glb(images: &[Vec<u8>], samplers: Value, textures: Value, materials: Value) -> Vec<u8> {
+        let mut bin = Vec::new();
+        let mut views = Vec::new();
+        for image in images {
+            views.push(json!({"buffer": 0, "byteOffset": bin.len(), "byteLength": image.len()}));
+            bin.extend_from_slice(image);
+            bin.resize(bin.len().next_multiple_of(4), 0);
+        }
+        let mut text = json!({
+            "asset": {"version": "2.0"},
+            "buffers": [{"byteLength": bin.len()}],
+            "bufferViews": views,
+            "images": (0..images.len())
+                .map(|i| json!({"bufferView": i, "mimeType": "image/png"}))
+                .collect::<Vec<_>>(),
+            "samplers": samplers,
+            "textures": textures,
+            "materials": materials,
+        })
+        .to_string()
+        .into_bytes();
+        text.resize(text.len().next_multiple_of(4), b' ');
+        let mut out = Vec::new();
+        out.extend_from_slice(b"glTF");
+        out.extend_from_slice(&2u32.to_le_bytes());
+        out.extend_from_slice(&((12 + 8 + text.len() + 8 + bin.len()) as u32).to_le_bytes());
+        out.extend_from_slice(&(text.len() as u32).to_le_bytes());
+        out.extend_from_slice(b"JSON");
+        out.extend_from_slice(&text);
+        out.extend_from_slice(&(bin.len() as u32).to_le_bytes());
+        out.extend_from_slice(b"BIN\0");
+        out.extend_from_slice(&bin);
+        out
+    }
+
+    /// Pixel art whose every pixel differs from the others.
+    fn art(x: u32, y: u32) -> [u8; 4] {
+        [x as u8 * 16, y as u8 * 16, 255 - (x + y) as u8 * 8, 255]
+    }
+
+    #[test]
+    fn a_sampler_that_magnifies_with_nearest_marks_its_image() {
+        // One image a material draws through a texture whose sampler is `sampler`.
+        let import = |sampler: Option<Value>| {
+            let texture = match &sampler {
+                Some(_) => json!({"source": 0, "sampler": 1}),
+                None => json!({"source": 0}),
+            };
+            let bytes = glb(
+                &[png(16, 16, art)],
+                json!([
+                    {"magFilter": 9729},
+                    sampler.unwrap_or_else(|| json!({}))
+                ]),
+                json!([texture]),
+                json!([{"name": "block", "pbrMetallicRoughness": {
+                    "baseColorTexture": {"index": 0}
+                }}]),
+            );
+            import_glb_bytes(&bytes).expect("the model imports")
+        };
+        // blockcraft's sampler (gen_world.py): NEAREST up close, mipmapped in the distance.
+        let pixel = import(Some(json!({"magFilter": 9728, "minFilter": 9986})));
+        assert_eq!(pixel.images.len(), 1);
+        let image = &pixel.images[0];
+        assert!(image.nearest, "NEAREST marks the image");
+        assert!(image.srgb, "a base color is color data");
+        assert_eq!((image.width, image.height), (16, 16));
+        let drawn: Vec<u8> = (0..16)
+            .flat_map(|y| (0..16).flat_map(move |x| art(x, y)))
+            .collect();
+        assert_eq!(image.rgba8, drawn, "the pixels are the file's");
+        assert_eq!(pixel.materials[0].base_color_texture, Some(0));
+        // Smooth: LINEAR, a sampler that names no magnification filter, a NEAREST minification
+        // alone, and a texture with no sampler.
+        for sampler in [
+            Some(json!({"magFilter": 9729, "minFilter": 9987})),
+            Some(json!({})),
+            Some(json!({"minFilter": 9728})),
+            None,
+        ] {
+            let smooth = import(sampler.clone());
+            assert_eq!(smooth.images.len(), 1, "{sampler:?}");
+            assert!(!smooth.images[0].nearest, "{sampler:?} is smooth");
+            assert_eq!(smooth.images[0].rgba8, drawn, "{sampler:?}");
+            assert_eq!(smooth.materials[0].base_color_texture, Some(0));
+        }
+    }
+
+    #[test]
+    fn an_image_sampled_both_ways_is_imported_twice() {
+        // Image 0 is sampled with NEAREST only, image 1 smoothly only (LINEAR, and no sampler),
+        // image 2 both ways (NEAREST, and a sampler that names no magnification filter).
+        let bytes = glb(
+            &[
+                png(16, 16, art),
+                png(8, 4, |x, y| [x as u8, y as u8, 7, 255]),
+                png(4, 8, |x, y| [200, x as u8 * 60, y as u8 * 30, 128]),
+            ],
+            json!([{"magFilter": 9728, "minFilter": 9986}, {"magFilter": 9729}, {}]),
+            json!([
+                {"source": 0, "sampler": 0},
+                {"source": 1, "sampler": 1},
+                {"source": 1},
+                {"source": 2, "sampler": 0},
+                {"source": 2, "sampler": 2}
+            ]),
+            json!([
+                {"name": "pixel", "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}},
+                {"name": "smooth", "pbrMetallicRoughness": {"baseColorTexture": {"index": 1}},
+                    "normalTexture": {"index": 2}},
+                {"name": "pixel copy", "pbrMetallicRoughness": {
+                    "baseColorTexture": {"index": 3}}},
+                {"name": "mixed",
+                    "pbrMetallicRoughness": {
+                        "baseColorTexture": {"index": 4},
+                        "metallicRoughnessTexture": {"index": 3}},
+                    "normalTexture": {"index": 3},
+                    "occlusionTexture": {"index": 4},
+                    "emissiveTexture": {"index": 0}}
+            ]),
+        );
+        let asset = import_glb_bytes(&bytes).expect("the model imports");
+        // The file's three images keep their indices; image 2's marked copy follows them.
+        let marks: Vec<bool> = asset.images.iter().map(|i| i.nearest).collect();
+        assert_eq!(marks, [true, false, false, true]);
+        let (smooth, pixel) = (&asset.images[2], &asset.images[3]);
+        assert_eq!((pixel.width, pixel.height), (4, 8));
+        assert_eq!(pixel.rgba8, smooth.rgba8, "the copy holds the same pixels");
+        assert_eq!((pixel.srgb, &pixel.name), (smooth.srgb, &smooth.name));
+        // Each slot takes the image its own texture's sampler asks for.
+        let slots = |name: &str| {
+            let m = asset
+                .materials
+                .iter()
+                .find(|m| m.name == name)
+                .expect("the material");
+            [
+                m.base_color_texture,
+                m.metallic_roughness_texture,
+                m.normal_texture,
+                m.occlusion_texture,
+                m.emissive_texture,
+            ]
+        };
+        assert_eq!(slots("pixel"), [Some(0), None, None, None, None]);
+        assert_eq!(slots("smooth"), [Some(1), None, Some(1), None, None]);
+        assert_eq!(slots("pixel copy"), [Some(3), None, None, None, None]);
+        assert_eq!(
+            slots("mixed"),
+            [Some(2), Some(3), Some(3), Some(2), Some(0)]
+        );
+    }
+
+    #[test]
+    fn blockcraft_ships_its_pixel_art_as_drawn() {
+        // samples/blockcraft writes its 16 x 16 art as drawn (textures.py), and its files' one
+        // sampler magnifies with NEAREST (gen_world.py): every image arrives marked, at its size.
+        let blockcraft = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/blockcraft");
+        let blocks = import_gltf(&blockcraft.join("blocks.gltf")).expect("blocks.gltf imports");
+        let cloud = import_gltf(&blockcraft.join("clouds/cloud0.gltf")).expect("a cloud imports");
+        assert_eq!((blocks.images.len(), blocks.materials.len()), (24, 24));
+        assert_eq!(cloud.images.len(), 1);
+        for (i, image) in blocks.images.iter().chain(&cloud.images).enumerate() {
+            assert_eq!((image.width, image.height), (16, 16), "image {i}");
+            assert!(image.nearest, "image {i} is marked");
+            assert_eq!(image.rgba8.len(), 16 * 16 * 4, "image {i}");
+        }
+        for (i, m) in blocks.materials.iter().enumerate() {
+            assert_eq!(m.base_color_texture, Some(i), "{}", m.name);
+        }
     }
 }

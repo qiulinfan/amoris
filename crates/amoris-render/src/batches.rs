@@ -18,6 +18,11 @@
 //! of the camera's list (the early draws are done with them by then), so a late batch has the
 //! camera's base on every path.
 //!
+//! A spot light's shadow view (docs/spec/shadows.md) is a view after the cascades', list index
+//! `VIEWS + k`, with an argument set after the late one ([`local_set`]). The sets and the baseline
+//! path's bases are laid out for the local views in use ([`Batches::rebuild`]): with none, they
+//! are the camera's, the cascades' and the late set, as before local views existed.
+//!
 //! A "mesh" here is a row of the mesh table, so a mesh's levels of detail (docs/spec/lod.md) are
 //! batches of their own, with regions sized by the mesh's instances: nothing in this file knows
 //! about levels.
@@ -31,13 +36,12 @@ use crate::meshes::MeshInfo;
 use crate::scene::{NEURAL_VARIANT, VARIANTS};
 use crate::shadows::CASCADES;
 
-/// The camera and the shadow cascades.
+/// The camera and the shadow cascades: the views every frame's lists hold. Local shadow views
+/// follow them, as many as are in use.
 pub const VIEWS: u32 = 1 + CASCADES as u32;
 /// The argument set of the camera's late draws (occlusion culling's second phase), after the
-/// views' sets (`LATE` in cull.wgsl).
+/// camera's and the cascades' sets (`LATE` in cull.wgsl).
 pub const LATE: u32 = VIEWS;
-/// Argument sets: the views' and the late one.
-const SETS: u32 = VIEWS + 1;
 /// Bytes of one set of indexed indirect arguments.
 const ARGS: u64 = 20;
 /// Bytes of the base uniform the shaders read (`vec4u`).
@@ -102,6 +106,8 @@ pub struct Batches {
     /// The arguments the culling pass counts into and the passes draw.
     pub draws: wgpu::Buffer,
     meshes: u32,
+    /// The local shadow views the sets and bases are laid out for.
+    local: u32,
     /// The meshes of the batches holding instances, variant by variant; variant `v`'s are
     /// `live[live_at[v]..live_at[v + 1]]`.
     live: Vec<u32>,
@@ -141,9 +147,19 @@ fn bind(
     })
 }
 
-/// The view whose list an argument set draws from: the late set draws the camera's.
+/// The argument set of local shadow view `k`: after the late set (`view_set` in cull.wgsl).
+pub fn local_set(k: u32) -> u32 {
+    LATE + 1 + k
+}
+
+/// The view whose list an argument set draws from: the late set draws the camera's, a local view's
+/// set the list after the cascades'.
 fn view_of(set: u32) -> u32 {
-    if set == LATE { 0 } else { set }
+    match set {
+        LATE => 0,
+        s if s > LATE => s - 1,
+        s => s,
+    }
 }
 
 impl Batches {
@@ -178,15 +194,23 @@ impl Batches {
             ),
             draws: buffer(device, "draws", 64 * ARGS, DRAWS_USAGE),
             meshes: 0,
+            local: 0,
             live: Vec::new(),
             live_at: [0; VARIANTS as usize + 1],
         }
     }
 
-    /// Rebuilds the arguments' template and the bases after the meshes or the instance counts
-    /// changed: `offsets` and `sizes` are each batch's region and instance count in a view's list
-    /// (variant-major: `variant * meshes + mesh`), `stride` a view's entries. Returns whether
+    /// Argument sets: the camera's, the cascades', the late one and the local views'.
+    fn sets(&self) -> u32 {
+        VIEWS + 1 + self.local
+    }
+
+    /// Rebuilds the arguments' template and the bases after the meshes, the instance counts or the
+    /// local shadow views in use changed: `offsets` and `sizes` are each batch's region and
+    /// instance count in a view's list (variant-major: `variant * meshes + mesh`), `stride` a
+    /// view's entries, `local` the local views the lists hold after the cascades'. Returns whether
     /// `draws` was replaced (bind groups holding it need rebuilding).
+    #[allow(clippy::too_many_arguments)]
     pub fn rebuild(
         &mut self,
         device: &wgpu::Device,
@@ -195,9 +219,11 @@ impl Batches {
         offsets: &[u32],
         sizes: &[u32],
         stride: u32,
+        local: u32,
     ) -> bool {
         let meshes = infos.len() as u32;
         self.meshes = meshes;
+        self.local = local;
         self.live.clear();
         for variant in 0..VARIANTS {
             self.live_at[variant as usize] = self.live.len();
@@ -219,8 +245,8 @@ impl Batches {
                     .copied()
                     .unwrap_or(0)
         };
-        let mut template = Vec::with_capacity((meshes * SETS * VARIANTS) as usize);
-        for set in 0..SETS {
+        let mut template = Vec::with_capacity((meshes * self.sets() * VARIANTS) as usize);
+        for set in 0..self.sets() {
             let v = view_of(set);
             for variant in 0..VARIANTS {
                 for (m, info) in infos.iter().enumerate() {
@@ -252,10 +278,11 @@ impl Batches {
         if baseline {
             // Base 0 first (the transparent stage's direct draws, `bind_zero_base`), then view by
             // view the live batches' bases.
-            let entries = 1 + u64::from(VIEWS) * self.live.len() as u64;
+            let views = VIEWS + local;
+            let entries = 1 + u64::from(views) * self.live.len() as u64;
             let words = (self.align / 4) as usize;
             let mut data = vec![0u32; entries as usize * words];
-            for v in 0..VIEWS {
+            for v in 0..views {
                 for variant in 0..VARIANTS {
                     let run = self.live_at[variant as usize]..self.live_at[variant as usize + 1];
                     for j in run {
@@ -284,7 +311,7 @@ impl Batches {
     /// GPU is done (checks and benchmarks only).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn read_back(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<[u32; 5]> {
-        let bytes = u64::from(self.meshes * SETS * VARIANTS) * ARGS;
+        let bytes = u64::from(self.meshes * self.sets() * VARIANTS) * ARGS;
         if bytes == 0 {
             return Vec::new();
         }
@@ -327,14 +354,15 @@ impl Batches {
 
     /// Starts a frame's arguments from the template (the culling pass then counts into them).
     pub fn reset(&self, enc: &mut wgpu::CommandEncoder) {
-        let bytes = u64::from(self.meshes * SETS * VARIANTS) * ARGS;
+        let bytes = u64::from(self.meshes * self.sets() * VARIANTS) * ARGS;
         if bytes > 0 {
             enc.copy_buffer_to_buffer(&self.template, 0, &self.draws, 0, bytes);
         }
     }
 
-    /// Draws one variant's batches of one argument set (a view, or [`LATE`]) with the pass's
-    /// current pipeline; returns the number of draw calls issued.
+    /// Draws one variant's batches of one argument set (the camera's, a cascade's, [`LATE`] or a
+    /// local view's, [`local_set`]) with the pass's current pipeline; returns the number of draw
+    /// calls issued.
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, set: u32, variant: u32) -> u32 {
         if self.meshes == 0 {
             return 0;
@@ -370,6 +398,26 @@ impl Batches {
                 }
                 run.len() as u32
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each argument set draws its own view's list: the camera's and the cascades' theirs, the
+    /// late set the camera's, a local view's set the list after the cascades'.
+    #[test]
+    fn sets_draw_their_views_lists() {
+        assert_eq!(view_of(0), 0);
+        for c in 1..=CASCADES as u32 {
+            assert_eq!(view_of(c), c);
+        }
+        assert_eq!(view_of(LATE), 0);
+        for k in 0..crate::shadows::LOCAL_VIEWS as u32 {
+            assert_eq!(local_set(k), LATE + 1 + k);
+            assert_eq!(view_of(local_set(k)), VIEWS + k);
         }
     }
 }

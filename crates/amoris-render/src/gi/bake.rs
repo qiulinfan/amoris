@@ -1417,6 +1417,7 @@ mod tests {
                 width: 1,
                 height: 64,
                 srgb: true,
+                nearest: false,
                 rgba8: (0..=255).collect(),
             }],
             nodes: Vec::new(),
@@ -1620,6 +1621,7 @@ mod tests {
                 width: 1,
                 height: 1,
                 srgb: false,
+                nearest: false,
                 rgba8: pixel.to_vec(),
             }]);
             scene

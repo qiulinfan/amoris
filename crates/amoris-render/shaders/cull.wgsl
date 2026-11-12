@@ -1,13 +1,21 @@
-// GPU culling: one thread per instance tests it against every view (the camera's frustum and each
-// shadow cascade's box) and appends its index to that view's visible list in its mesh's region,
-// counting the instances of each indirect draw. Counting is two-level: threads of a workgroup
-// whose instance has the workgroup's common mesh add to a workgroup counter first, so a scene of
-// one mesh pays one global atomic per workgroup, view and level instead of one per instance.
+// GPU culling: one thread per instance tests it against every view (the camera's frustum, each
+// shadow cascade's box and each local shadow view's frustum) and appends its index to that view's
+// visible list in its mesh's region, counting the instances of each indirect draw. Counting is
+// two-level: threads of a workgroup whose instance has the workgroup's common mesh add to a
+// workgroup counter first, so a scene of one mesh pays one global atomic per workgroup, view and
+// level instead of one per instance.
+//
+// The views: 0 the camera, 1 to 4 the cascades, 5 on the local shadow views (spot lights' and
+// point lights' cube faces, docs/spec/shadows.md). A view's list is region `v` of `visible`; its draw arguments are set `v`
+// for the camera and the cascades and set `v + 1` for a local view (`view_set`: the camera's late
+// set, `LATE`, lies between). `view_mask` names the views culled this frame: without a sun's
+// shadows the cascades' bits are clear while local views are still culled.
 //
 // Levels of detail (docs/spec/lod.md): an instance of a mesh with coarser levels draws, in each
 // view, the coarsest level whose geometric error is small enough there: on screen, at most
 // `lod_pixels` pixels using its sphere's nearest axial depth and off-axis scale, with hysteresis
-// against its last level (kept in `state`); in a shadow cascade, at most one shadow texel. Each
+// against its last level (kept in `state`); in a shadow cascade, at most one shadow texel; in a
+// local shadow view, the camera's level, so a receiver never meets a finer copy of itself. Each
 // level is a row of the mesh table with its own batches, whose regions hold every instance of the
 // mesh, so the level is just another row index here.
 //
@@ -21,7 +29,9 @@
 // A shadow cascade keeps a caster whose sphere is in its box and in its slice planes: the camera
 // slice the cascade shades, extruded toward the sun and widened by what a receiver's sample can
 // reach (shadows.rs `slice_planes`, docs/spec/occlusion.md 11). With AMORIS_SHADOW_CULL=off every
-// slice plane is (0, 0, 0, 1), which keeps every sphere.
+// slice plane is (0, 0, 0, 1), which keeps every sphere. A local shadow view keeps a caster whose
+// sphere is in its frustum: `slices` and `lod_cascades` hold the cascades' terms only and are
+// never indexed with a local view.
 
 struct Planes {
     p: array<vec4f, 6>,
@@ -33,7 +43,7 @@ struct Slice {
 };
 
 struct Cull {
-    planes: array<Planes, 5>,
+    planes: array<Planes, 17>, // the camera's, the cascades', the local shadow views'
     view_proj: mat4x4f,      // the camera's (the occlusion test)
     instance_count: u32,
     view_count: u32,
@@ -44,7 +54,7 @@ struct Cull {
     occlusion: u32,          // 1: two-phase occlusion culling this frame
     hiz_levels: u32,         // the depth pyramid's levels
     viewport: vec2f,         // the depth target's size, pixels
-    _pad0: u32,
+    view_mask: u32,          // bit v: view v is culled this frame
     _pad1: u32,
     // The camera's position; w: the geometric error (world units) a level may have per metre of
     // distance (perspective) or in all (orthographic).
@@ -91,16 +101,18 @@ const LOD_SHIFT: u32 = 4u;
 const LOD_MASK: u32 = 0xf0u;
 // Levels a mesh may have, the full mesh included (amoris_assets::lod::MAX_LEVELS).
 const MAX_LODS: u32 = 8u;
-// The late arguments' set among the draw arguments: after the camera and the four cascades.
+// The late arguments' set among the draw arguments: after the camera and the four cascades, before
+// the local shadow views'.
 const LATE: u32 = 5u;
 const NONE: u32 = 0xffffffffu;
 
 // The workgroup's first instance's batch (variant, mesh) and its mesh's levels.
 var<workgroup> wg_batch: u32;
 var<workgroup> wg_lods: u32;
-// Per (view, level), the instances of the workgroup's batch: counted, then their base.
-var<workgroup> wg_count: array<atomic<u32>, 40>;
-var<workgroup> wg_base: array<u32, 40>;
+// Per (view, level), the instances of the workgroup's batch: counted, then their base (17 views of
+// MAX_LODS levels).
+var<workgroup> wg_count: array<atomic<u32>, 136>;
+var<workgroup> wg_base: array<u32, 136>;
 var<workgroup> wg_stats: array<atomic<u32>, 6>;
 
 fn sphere_in(view: u32, c: vec3f, r: f32) -> bool {
@@ -138,6 +150,12 @@ fn first_batch(first: u32) -> u32 {
     return NONE;
 }
 
+// The draw arguments' set of view `v`: its own for the camera and the cascades, one on for a local
+// shadow view (the late set lies between; batches.rs `local_set`).
+fn view_set(v: u32) -> u32 {
+    return v + select(0u, 1u, v >= LATE);
+}
+
 // The row of the mesh table drawing level `level` of the mesh whose own row is `mesh`.
 fn level_row(mesh: u32, lods: u32, level: u32) -> u32 {
     if (level == 0u) {
@@ -162,7 +180,7 @@ fn coarsest(first: u32, count: u32, scale: f32, bound: f32) -> u32 {
 fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_index) lid: u32,
         @builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u) {
     let idx = gid.x + gid.y * nwg.x * 256u;
-    if (lid < 40u) {
+    if (lid < 136u) {
         atomicStore(&wg_count[lid], 0u);
     }
     if (lid == 0u) {
@@ -174,9 +192,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
     }
     workgroupBarrier();
 
-    var inside: array<bool, 5>;
-    var level: array<u32, 5>;
-    var local_slot: array<u32, 5>;
+    var inside: array<bool, 17>;
+    var level: array<u32, 17>;
+    var local_slot: array<u32, 17>;
     var mesh = NONE;
     var lods = 0u;
     var variant = 0u;
@@ -233,13 +251,19 @@ fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
                 camera_level = clamp(last, coarse, fine);
             }
             for (var v = 0u; v < cull.view_count; v++) {
+                // A view not culled this frame (the cascades without a sun's shadows, while local
+                // shadow views are drawn) keeps `inside[v]` false.
+                if (((cull.view_mask >> v) & 1u) == 0u) {
+                    continue;
+                }
                 // The camera draws every instance but the transparent stage's (transparent.rs:
                 // sorted on the CPU, so never in the prepass, the pyramid or the visible set); a
-                // cascade every shadow caster.
+                // cascade or a local shadow view every shadow caster.
                 let view_ok = select((inst.flags & FLAG_SHADOW) != 0u,
                     (inst.flags & FLAG_TRANSPARENT) == 0u, v == 0u);
+                // Only a cascade has a slice (the short circuit keeps `slices` in bounds).
                 var in_view = view_ok && sphere_in(v, c, r)
-                    && (v == 0u || sphere_in_slice(v - 1u, c, r));
+                    && (v == 0u || v > CASCADES || sphere_in_slice(v - 1u, c, r));
                 if (v == 0u && cull.occlusion != 0u) {
                     // The early pass draws what was visible at the end of the last frame.
                     let was = (before & VIS_VISIBLE) != 0u;
@@ -247,8 +271,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
                     in_view = in_view && was;
                     occl |= select(0u, VIS_EARLY, in_view);
                 }
+                // A local shadow view draws the camera's level: the mesh that casts is the mesh
+                // that receives (docs/spec/shadows.md 5).
                 var lv = camera_level;
-                if (v > 0u && count > 1u) {
+                if (v > 0u && v <= CASCADES && count > 1u) {
                     // A cascade cannot show detail finer than its texels.
                     lv = coarsest(first, count, smax, cull.lod_cascades[v - 1u]);
                 }
@@ -267,12 +293,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
     }
     workgroupBarrier();
     let batches = cull.mesh_count * VARIANTS;
-    if (lid < 40u && wg_batch != NONE) {
+    if (lid < 136u && wg_batch != NONE) {
         let v = lid / MAX_LODS;
         let n = atomicLoad(&wg_count[lid]);
         if (v < cull.view_count && n > 0u) {
             let row = level_row(wg_batch % cull.mesh_count, wg_lods, lid % MAX_LODS);
-            let at = v * batches + (wg_batch / cull.mesh_count) * cull.mesh_count + row;
+            let at = view_set(v) * batches + (wg_batch / cull.mesh_count) * cull.mesh_count + row;
             wg_base[lid] = atomicAdd(&draws[at].instance_count, n);
         }
     }
@@ -289,7 +315,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
         if (key == wg_batch) {
             slot = wg_base[v * MAX_LODS + level[v]] + local_slot[v];
         } else {
-            slot = atomicAdd(&draws[v * batches + batch].instance_count, 1u);
+            slot = atomicAdd(&draws[view_set(v) * batches + batch].instance_count, 1u);
         }
         let region = batch_offsets[batch];
         if (v == 0u) {

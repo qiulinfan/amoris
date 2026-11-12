@@ -24,6 +24,7 @@
 // ?occlusion=off|on|auto sets occlusion culling (auto by default);
 // ?prepass=off|on|auto sets the depth prepass (auto by default; docs/spec/prepass.md);
 // ?shadow_cull=off|on sets the shadow cascades' slice culling (on by default; docs/spec/occlusion.md 11);
+// ?local_shadows=off|on sets spot and point lights' shadow maps (on by default; docs/spec/shadows.md);
 // ?water_cull=off|on compares current-field water patch masking (on by default; docs/spec/water.md 29);
 // ?splashes=off|on sets the water's spray (on by default; docs/spec/water.md 35);
 // ?ripples=off|on sets the ripples bodies stir on water regions (on by default; docs/spec/water.md 57);
@@ -76,6 +77,7 @@ try {
   if (q.get("occlusion")) vp.setOcclusion(q.get("occlusion"));
   if (q.get("prepass")) vp.setPrepass(q.get("prepass"));
   if (q.get("shadow_cull")) vp.setShadowCull(q.get("shadow_cull"));
+  if (q.get("local_shadows")) vp.setLocalShadows(q.get("local_shadows"));
   if (q.get("water_cull")) vp.setWaterCulling(q.get("water_cull") !== "off");
   if (q.get("splashes")) vp.setSplashes(q.get("splashes"));
   if (q.get("ripples")) vp.setRipples(q.get("ripples"));
@@ -97,7 +99,7 @@ try {
     samples.push(s);
     if (samples.length > 600) samples.shift();
     window.amorisStats = s;
-    hud.textContent = `${s.backend}  ${canvas.width}x${canvas.height}  draws: ${s.draw_path} (${s.draw_calls})  occlusion: ${s.occlusion}  prepass: ${s.prepass}  lod: ${s.lod}  aa: ${s.antialiasing}  gtao: ${s.gtao}${s.render_scale < 1 ? `  scale: ${s.render_scale}` : ""}\nframe ${s.frame_ms.toFixed(2)} ms   gpu ${s.gpu_ms.toFixed(2)} ms\ninstances ${s.instances}  tick ${s.tick}\n` +
+    hud.textContent = `${s.backend}  ${canvas.width}x${canvas.height}  draws: ${s.draw_path} (${s.draw_calls})  occlusion: ${s.occlusion}  prepass: ${s.prepass}  lod: ${s.lod}  aa: ${s.antialiasing}  gtao: ${s.gtao}${s.render_scale < 1 ? `  scale: ${s.render_scale}` : ""}${s.local_shadows || s.local_shadows_dropped ? `  local shadows: ${s.local_shadows} (+${s.local_shadows_dropped} dropped)` : ""}\nframe ${s.frame_ms.toFixed(2)} ms   gpu ${s.gpu_ms.toFixed(2)} ms\ninstances ${s.instances}  tick ${s.tick}\n` +
       (s.passes || []).map((p) => `  ${p.pass.padEnd(12)} ${p.ms.toFixed(2)} ms`).join("\n");
   });
   window.amorisSamples = samples;
