@@ -131,6 +131,8 @@ loop {
     pace = time_model.pace(now)                                    // 3.3
     if a Write succeeded and pace is not RunTick:
         publish state (tick, writes so far)                        // 4.3
+    else if pace is not RunTick and the pacing or the pause changed:
+        publish the last state again with the time status of now   // 4.3
     match pace {
         RunTick          => run one tick; record; publish state (tick + 1, 0)
         WaitUntil(t)     => block on the queue until t or a command
@@ -303,6 +305,15 @@ type (persistence.md 4.1).
   when no tick follows at once (so an edit made while paused shows at once, and a running game pays
   for one publication per tick). A batch of Reads publishes nothing. A `Game` with no reader
   attached (headless batch, a headless MCP session no presenter watches) does not publish.
+- **The time status alone** (2026-11-12): a batch that wrote nothing but changed how time runs (a
+  `time.control` that pauses, resumes or sets the pacing) is published too when no tick follows at
+  once: the last published world again, with a new `version` and the `TimeStatus` of now
+  (`publish_time_change`; a poisoned world's halt is published the same way). A snapshot's `time`
+  is otherwise the status at its publication, so until then a paused game's readers went on saying
+  the pacing and the pause of before the command: the server's `status` push said speed 1 after
+  an editor had set 2 in the edit world, and `paused: false` for a Play world paused between
+  ticks, until an edit or a tick published again. A control that changes neither publishes
+  nothing (`amoris-runtime` test `a_time_control_publishes_the_time_status_it_changed`).
 - **How**: the game thread builds the new `WorldSnapshot` and swaps it into the slot; it never waits
   for a reader. A reader takes the latest `Arc` and may keep it as long as it likes; memory is freed
   when the last holder drops it. The presenter keeps the latest two (for interpolation, 4.5); the
@@ -728,7 +739,12 @@ Every command is asynchronous now, which removes master's split between `command
 - **A poisoned world** is not a stopped game. A panic inside `Sim::step` (in a system, or in a
   native a script called, which the native catches, script-sandbox.md 4.3) and a script fault poison
   the world (simulation.md 4.6): `step` refuses with `sim.world_poisoned` until a restore, while the
-  game thread keeps running, answering commands and publishing.
+  game thread keeps running, answering commands and publishing. In real time the time model pauses
+  (a resume asks for one tick, which is refused, and pauses again), the publication says `halted`,
+  and the tick's error goes to the log stream as an `error` line with the failed tick
+  (2026-11-12, `log_fault`): a `time.step` gets the error as its answer, but in real time nobody
+  waits for the tick, and a presenter showed a halted world that nothing explained (`amoris-runtime`
+  test `a_poisoned_world_halts_real_time_and_records_one_fault`).
 - **A panic on the game thread outside `Sim::step`** (native, `panic = "unwind"` in the release
   profile, `architecture.md`, 7.2) is caught at the thread's top with `std::panic::catch_unwind`.
   The status becomes `Stopped`, every queued and later command is answered `game.stopped` with the

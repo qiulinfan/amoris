@@ -62,10 +62,10 @@ nothing. A socket more than 1,024 pushes behind gets `{"event": "lagged", "data"
 
 | Topic | Data | When |
 |---|---|---|
-| `status` | `{tick, t_s, paused, pacing, halted, behind_ms, mode: "edit"|"play", epoch, world_hash, entities, tps, state, version}` | at most 10 Hz when it changed, else every second |
+| `status` | `{tick, t_s, paused, pacing, halted, behind_ms, mode: "edit"|"play", epoch, world_hash, entities, tps, state, version}`; `pacing` is `"stepped"` or `{"real_time": {"speed": x}}`, the pacing of the world shown (each world has its own); `paused` and `pacing` are the game's now, also after a `time.control` that no tick follows (threads.md 4.3); `halted` is true while the world is poisoned (a tick stopped halfway: no tick runs until Stop or a restore), and `world_hash` is then the last publication's | at most 10 Hz when it changed, else every second |
 | `world.changed` | `{tick, spawned: [id], despawned: [id], changed: [[id, component]], truncated?}`, or `{tick, reset: true, epoch}` when the world was replaced (restore, Play, Stop) | after a tick or write that changed something, coalesced to 10 Hz |
 | `events` | `[{seq, id, tick, name, subject, data, cause}]` (`seq` the stream number, `id` and `cause` the world's event numbers) | game events as they are emitted, every 50 ms |
-| `log` | `{seq, level, source, message, file?, line?, tick?}` | one per line: script `console.*`, failed system runs |
+| `log` | `{seq, level, source, message, file?, line?, tick?}` | one per line: script `console.*`, failed system runs, the error of a tick that poisoned the world |
 | `history` | `{undo: [label], redo: [label], entries: {undo: [entry], redo: [entry]}}` (as `history.list`) | after any edit, undo, redo, restore, Play or Stop that changed it |
 | `debug` | `{state: "paused"|"running", reason?, location?: {file, line, column}, frames?}` | debugger state changes |
 | `profile` | `{tick, epoch, ticks, held, missed, tick_ms, tick_max_ms, busy_ms, systems: [{name, ms, max_ms}], phases: [{name, ms, max_ms}]}`: the ticks since the last push, ms per tick (below) | 4 Hz while subscribed, also when no tick ran (`ticks: 0`) |
@@ -93,7 +93,7 @@ Each method is a command of the catalog (`GET /api/catalog` is authoritative). K
 | Method | Params | Result |
 |---|---|---|
 | `catalog.list` | `{}` | the catalog |
-| `status` | `{}` | status (section 3) with `bundle`, `writes`, `poisoned` |
+| `status` | `{}` | status (section 3) with `bundle`, `writes`, `poisoned` (the tick that poisoned the world, else null); `world_hash` is null while the world is poisoned. `time.control`, `play.start` and `play.stop` answer this form too |
 | `project.info` | `{}` | `{name, root, rate, scenes, scripts, assets}` |
 | `project.save` | `{}` | `{files, entities}` (the edit world, even during Play) |
 | `world.tree` | `{root?, depth?, filter?, with?, limit?}` | `[{id, name, components: [name], children: [...]}]` |
@@ -103,7 +103,7 @@ Each method is a command of the catalog (`GET /api/catalog` is authoritative). K
 | `world.edit` | `{ops: [op], label?, group?}` | `{tick, applied, spawned: [id], results, label}`; all or nothing; edits of one `group` in a row from one caller are one undo entry |
 | `history.undo` / `history.redo` | `{group?}` / `{}` | as `world.edit`, with the entry's `label`; an undo with `group` only when the next entry is the whole of that group (server.md 3.1) |
 | `history.list` | `{}` | `{undo, redo, entries}`: each stack most recent last, each entry `{label, source, group?, session?}` (server.md 3.1) |
-| `time.control` | `{pause?, speed?, pacing?}` | status |
+| `time.control` | `{pause?, speed?, pacing?}` | status; a refused call (a speed outside (0, 1000]) changes nothing |
 | `time.step` | `{ticks?, until?: {event?, subject?, tick?}, watch?: {entity, component, field, op?, value?}, sample?: {fields: ["E.C.f"], every?}, trace?: {entity, component, field?}}` | `{tick, world_hash, errors, stopped_by?, samples?, writes?}` (`writes`: every write that changed the traced field, tick by tick, debugger.md 13); a debugger stop ends the step and answers at once with `paused: true` (server.md 3.2, 3.4); a step queued behind it answers `debug.paused {queued: true}` and runs after the resume |
 | `play.start` / `play.stop` | `{speed?, paused?}` / `{}` | status (Play runs a fork of the edit world; Stop discards it) |
 | `scripts.list` | `{}` | `[{path, bytes, diagnostics}]` |

@@ -76,7 +76,7 @@ files).
 | Method | Kind | Params | Result |
 |---|---|---|---|
 | `catalog.list` | read | `{}` | the catalog |
-| `status` | read | `{}` | `{tick, t_s, pacing, paused, halted, behind_ms, mode, epoch, world_hash, entities, bundle, writes, poisoned, steps_due, kept, tainted}`; while the debugger holds the game, from the last publication with `state: "breakpoint"` and `paused_at` (3.4) |
+| `status` | read | `{}` | `{tick, t_s, pacing, paused, halted, behind_ms, mode, epoch, world_hash, entities, bundle, writes, poisoned, steps_due, kept, tainted}`; `poisoned` is the tick that stopped halfway, else null, and while it is set `halted` is true and `world_hash` is null (a world between boundaries has no hash); while the debugger holds the game, from the last publication with `state: "breakpoint"` and `paused_at` (3.4) |
 | `project.info` | read | `{}` | `{name, root, rate, scenes, scripts, assets}` |
 | `project.save` | request | `{}` | `{files: ["scene.json"], entities}`: the edit world, one entity per line, every component whole |
 | `world.tree` | read | `{root?, depth?, filter?, with?, limit?}` | `[{id, name, components: [name], children: []}]` (no hierarchy yet; `depth` is accepted) |
@@ -87,7 +87,7 @@ files).
 | `world_edit` | write | `{edits: [{op: ...}]}` | the canonical recorded form (below) |
 | `history.list` | read | `{}` | `{undo: [label], redo: [label], entries: {undo: [entry], redo: [entry]}}`: each stack most recent last (the next to undo or redo last), `entries` the same entries in the same order as `{label, source, group?, session?}` (3.1) |
 | `history.undo` / `history.redo` | write | `{group?}` / `{}` | as `world.edit`, with the entry's `label`; an undo with `group` only when the next entry is the whole of that group, else `history.group` (3.1) |
-| `time.control` (`time_control`) | control | `{pause?, speed?, pacing?}` | `status` |
+| `time.control` (`time_control`) | control | `{pause?, speed?, pacing?}` | `status`; `speed` is real time at that speed, `pacing` the pacing itself (it wins when both are given); both are checked before either is applied, so a refused call changes nothing |
 | `time.step` (`step`) | control | `{ticks?, until?, watch?, sample?, trace?}` | `{tick, world_hash, errors, stopped_by?, samples?, writes?}` (`writes`: the write trace, debugger.md 13); at a debugger stop `{tick, world_hash: null, errors: [], paused: true, stopped_by}` (3.2, 3.4) |
 | `play.start` | control | `{speed? = 1, paused?}` | `status` (mode `play`) |
 | `play.stop` | control | `{}` | `status` (mode `edit`) |
@@ -343,10 +343,10 @@ always). A socket that falls more than 1,024 pushes behind gets
 
 | Topic | Data | When |
 |---|---|---|
-| `status` | `{tick, t_s, paused, pacing, halted, behind_ms, mode, epoch, world_hash, entities, tps, state, version}` | on connect; every 100 ms if it changed, else every second |
+| `status` | `{tick, t_s, paused, pacing, halted, behind_ms, mode, epoch, world_hash, entities, tps, state, version}`: the last publication's, which a `time.control` that changes the pacing or the pause brings up to date even when no tick follows (threads.md 4.3). For a poisoned world `halted` is true and `world_hash` is still the last publication's, where the `status` method's is null | on connect; every 100 ms if it changed, else every second |
 | `world.changed` | `{tick, spawned, despawned, changed: [[id, component]], truncated?}`, or `{tick, reset: true, epoch}` | every 100 ms when publications came, coalesced; a reset when the world was replaced (it covers changes in the same 100 ms) |
 | `events` | `[{seq, id, tick, name, subject, cause, data}]` | every 50 ms, at most 500 per push |
-| `log` | `{seq, level, source, message, file?, line?, tick?}` | one per line: script `console.*`, failed system runs |
+| `log` | `{seq, level, source, message, file?, line?, tick?}` | one per line: script `console.*`, failed system runs, and the error of a tick that poisoned the world (`<code>: <message>` at level `error`, with that tick; threads.md 8) |
 | `history` | `{undo, redo, entries}` (`history.list`'s answer, with sessions) | after `world.edit`, undo, redo, restore, Play, Stop, when it changed (3.1) |
 | `agent` | `{session, kind: "call"/"result", method, ok?, summary}` | each MCP call and its result |
 | `debug` | debugger.md 7's state on a pause, `{state: "running"}` on a resume | pushed by `amoris serve`'s debugger (amoris-app `forward_debug_events`); script console lines and failed calls the debugger saw go to `log` |
