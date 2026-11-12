@@ -55,6 +55,8 @@ struct Play {
     walk: Option<WalkSession>,
     /// `--walk` on a game whose catalog is `first_person`: the window is seat `player`.
     seat: Option<SeatWalk>,
+    /// The game UI's presses (docs/spec/ui.md 6), sent as the local player.
+    ui: amoris_link::GameClient,
 }
 
 impl Host for Play {
@@ -111,6 +113,19 @@ impl Host for Play {
         // Capture warmup starts when the town and its collision geometry are both ready.
         if self.walk.as_ref().is_none_or(|w| w.ready) {
             self.frames += 1;
+        }
+    }
+
+    fn ui_press(&mut self, entity: u64) {
+        let sent = self
+            .ui
+            .send("ui.press", json!({ "entity": entity }), None, |reply| {
+                if let Err(p) = reply {
+                    eprintln!("ui.press refused: {}", p.message);
+                }
+            });
+        if let Err(p) = sent {
+            eprintln!("ui.press not sent: {}", p.message);
         }
     }
 
@@ -240,6 +255,7 @@ fn play_inner(raw: &[String]) -> Result<Outcome, Problem> {
     } else {
         None
     };
+    let ui = game.client(amoris_link::Source::Player(0))?;
     let fly = args
         .has("fly")
         .then(|| CameraState::look_at(Vec3::new(-14.0, 7.0, 16.0), Vec3::new(8.0, 0.0, 0.0)));
@@ -267,6 +283,7 @@ fn play_inner(raw: &[String]) -> Result<Outcome, Problem> {
             frames: 0,
             walk,
             seat,
+            ui,
         },
         RunOptions {
             title: format!("Amoris — {}", project.manifest.name),
