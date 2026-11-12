@@ -465,6 +465,14 @@ impl EntityId {
   UTF-8 bytes, not necessarily unique, persisted like any component. The shared contract resolves an
   `EntityRef` given as a string through it (shared/contract/README.md, Positions and entity
   references).
+- `Parent { parent: EntityId }` places an entity under another (2026-11-12). It sits on the child
+  and is the hierarchy's only stored fact: an entity without a parent has no `Parent`, and no list
+  of children, depth or root is kept anywhere. Who is under whom is read from the `Parent` rows
+  when it is asked for (`amoris_sim::Hierarchy`: each child's parent, each parent's children in
+  ascending id order), so a restore, a fork, a replay and the storage shuffle have nothing to
+  rebuild, and a world without a `Parent` row snapshots and hashes as it did before the component
+  existed. It is persisted like any component (section `Parent`, version 1), and every world
+  registers it. `Transform` stays in world space: a child does not follow its parent yet (14).
 
 ### 7.2 Allocation
 
@@ -507,21 +515,46 @@ impl EntityAllocator {
   despawn it does nothing and returns `false`, so two rules that remove the same crate in one tick
   are not an error (`script-host.md`, 5.4: "a second `despawn` is a no-op"). An id that was never
   allocated (0, at least `next`, or not an integer) is refused with `sim.entity_id_invalid`.
-- Despawning never despawns other entities implicitly. Components that pointed at a despawned entity
-  keep the id; reading through it finds nothing: a script's `get` answers `undefined` and a write
-  naming it throws `script.entity_missing` (`script-host.md`, 5.4). A hierarchy feature that wants
-  recursive despawn says so in its own specification.
+- A despawn takes the entity and every entity under it by `Parent` (2026-11-12), by every route:
+  `entity::despawn` and `Boundary::despawn` (what `world_edit`'s destroy and a replay of it call), a
+  script's `ctx.world.despawn` (the call sees the entities gone at once and its commit removes the
+  same ones, `script-host.md` 5.4) and an engine system's `SimCommands::despawn`.
+  `entity::despawn_tree` answers the ids it took: the entity first, then a parent before its
+  children and siblings in ascending id order. `SimCommands::despawn` takes the entity out of the
+  index at the call and the entities under it when the system returns: those the world shows once
+  the commands staged before it have applied, so a child staged after the call is not taken and
+  comes into a world whose parent is gone.
+- Nothing else is despawned implicitly. A component that refers to a despawned entity in another
+  way keeps the id; reading through it finds nothing: a script's `get` answers `undefined` and a
+  write naming it throws `script.entity_missing` (`script-host.md`, 5.4).
+- A `Parent` is checked where the world is in view: `world_edit` (`server.md` 3.1), a scene's load
+  (7.4) and a script's write (`script-host.md` 5.4) refuse one that names the entity itself, an
+  entity under it (`sim.parent_cycle`, `script.parent_cycle`) or nothing alive. Decoding sees no
+  world, so a snapshot made by hand or a component inserted from Rust can hold such a `Parent`. It
+  is tolerated: every walk of the hierarchy is a loop over a list that remembers where it has been
+  (none recurses, none loops), an entity whose parent is itself or is not live lists as a root, the
+  entities no root reaches (a loop and what hangs under it) are listed once each (the lowest id
+  among them as one more root, until all have a place), and a despawn inside a loop takes the loop.
 
 ### 7.4 Scenes, restore and fork
 
-- Loading a scene or instantiating a prefab allocates ids in document order, depth first, a parent
-  before its children, and rewrites the document's local references to the new ids. The same
-  document loaded into the same world state yields the same ids.
+- A scene (`scene.json`) is a flat list of entities, spawned in file order, so in a new world the
+  ids are the entities' places in the file, from 1. An entity field of a component, `Parent.parent`
+  among them, is the place of the entity it names; every entity is spawned before any component is
+  checked, so a field may name an entity later in the file. The same document loaded into the same
+  world state yields the same ids. Nested scene files and prefabs with children are not built
+  (14).
+- A scene's `Parent`s are checked together once its entities are in the world: each names a live
+  entity (`sim.entity_not_found`, or `sim.entity_id_invalid` for a place past the file) and none
+  closes a loop (`sim.parent_cycle`), with `path` at the parent in the file
+  (`/entities/<i>/components/Parent/parent`). A refused scene is rolled back whole.
 - `project.save` writes the world back as a scene: the live entities in id order, each entity id
   inside a component renumbered to the entity's place in the file, and one naming an entity that is
   gone written as `null`. Project components are renumbered by their schema's entity fields and
   engine components by their JSON Schema (every place typed `EntityId`, nested ones and those
-  inside tagged variants included; ids that are a map's keys are left as they are).
+  inside tagged variants included; ids that are a map's keys are left as they are). A `Parent`
+  whose parent is gone is left out, since a `Parent` always names an entity: the entity is a root
+  of the saved scene.
 - Restore (spec-persist) recreates every entity with its recorded `EntityId` and restores the
   allocator. The `bevy_ecs::Entity` values and the storage order of the restored world differ from
   the original's; nothing observable depends on them (section 8).
@@ -589,8 +622,10 @@ order survives a call inside the VM.
   and growth history, which a restored or forked world does not share. A hash map may serve lookups
   only behind a type that offers no iteration, with a comment saying why (`checks.md`, 5.3). rustc
   guards the same hazard in its own code with the internal lint `potential_query_instability`.
-- Child order in a hierarchy is explicit data (a `Vec<EntityId>` in the parent's component, in
-  insertion order), never derived from storage.
+- An entity's children are the entities whose `Parent` names it, in ascending `EntityId` order
+  (7.1). The order is read from the rows by id when it is asked for, never from storage. An
+  authored sibling order (an earlier draft kept a `Vec<EntityId>` in the parent's component)
+  would be explicit data added to `Parent` with a version bump.
 - Ties in any sort that affects state are broken by `EntityId`.
 
 ### 8.5 Physics
@@ -688,6 +723,7 @@ order of 4.4 is total by construction, so there is no ambiguity to detect (14, c
 | `sim.entity_id_invalid` | an id that was never allocated, 0, or not an integer in range | `{id, next}` |
 | `sim.entity_not_found` | an operation needs a live entity and the id's entity is despawned | `{id}` |
 | `sim.entity_alive` | a revival (the editor's undo of a destroy, `entity::revive`) names an id whose entity is live | `{id}` |
+| `sim.parent_cycle` | a `Parent` that would put an entity under itself or under an entity that is under it, in a `world_edit` or a scene (7.3; scripts report `script.parent_cycle`) | `{entity, parent, chain, path?}`: `chain` from `parent` up to `entity`, `path` the parent in the request or the scene |
 | `sim.system_failed` | an invocation failed; its effects were discarded | `{tick, phase, system, entity?, cause}`, `cause` in the error protocol's shape |
 | `sim.internal` | a system panicked | `{tick, phase, system, message}` |
 | `sim.world_poisoned` | `step` on a world whose last tick panicked | `{tick}` |
@@ -748,6 +784,18 @@ what tick semantics add.
    logic.
 10. **Debug against release** and **native against web** (`checks.md`, 7.2): the determinism
     comparison of the sailing scene across build profiles and targets gives the same hash chain.
+11. **Hierarchy** (`sim.hierarchy`): amoris-sim's unit tests of `Hierarchy` and the listing
+    (children and descendants in id order whatever the insertion order; loops, self parents and
+    dangling parents end every walk; a chain of 20,000 is walked without recursion; the listing's
+    roots, depth, `more`, filter, limit and nesting) and `tests/entities.rs` (a despawn takes the
+    subtree and answers its ids, a system's despawn takes it when the system returns, the hierarchy
+    is the same after the storage shuffle); amoris-script's `tests/writes.rs` (a script's despawn
+    in the call and at the commit); amoris-runtime's `tests/hierarchy.rs` (`world.edit`, the undo
+    and redo of destroys, scenes, `project.save`, scripts, a recording that verifies, a fork, a
+    restore and a run with the storage shuffled before every tick, `world.tree`) and
+    `tests/save.rs` (the renumbering of engine components' entity fields); and the check project
+    `tests/fixtures/scenes/hierarchy`, whose rule and inputs parent, move, free and despawn
+    entities through determinism, fork, replay and reload.
 
 ## 13. Performance
 
@@ -811,6 +859,15 @@ is built.
    invocations and boundary writes as transactions, and reserved ids; 12, sorted iteration helpers;
    13, `EntityId::from_f64` has no `next`; 14, the component registry and its checks; 15, decoding
    checks what constructors check; 16, the physics rows as built. Section 13 has their measurements.
+17. **The hierarchy (2026-11-12).** Built as 7.1, 7.3, 7.4 and 8.4 say: the relation is `Parent` on
+    the child, children are read in id order, a despawn takes the subtree. The alternative of 8.4's
+    earlier draft (a `Vec<EntityId>` of children in the parent's component) stores the relation
+    twice and has to be kept in step by every write, restore and fork. Still open: children do not
+    follow their parent (`Transform` is in world space; local transforms, their propagation and
+    scale come with the next step), prefabs with children and nested scene files, an authored
+    sibling order, and a kept child index, which is worth building only if reading the `Parent`
+    rows on demand (once for a despawn at a boundary, once at the call and once at the commit for a
+    script call that despawns, once for a `world.tree`) proves too slow.
 
 ## 15. References
 

@@ -10,7 +10,10 @@ use rquickjs::{Ctx, Object, Persistent, TypedArray, Value};
 use serde_json::json;
 
 use super::{NResult, Thrown, arg, with_call};
-use crate::call::{CallState, CellWrite, Column, Comp, QueryRecord, not_held, resolve_comp};
+use crate::access::SlotRefusal;
+use crate::call::{
+    CallState, CellWrite, Column, Comp, QueryRecord, not_held, parent_slot, resolve_comp,
+};
 use crate::convert::{check_number, freeze_new, is_plain_object};
 use crate::error::{ErrorPhase, ScriptError};
 use crate::host::{Shared, charge_host_bytes, shared};
@@ -286,6 +289,19 @@ pub fn changed_cells<'js>(
                     let (old, new) = (col.original[row], vals[row]);
                     if old.to_bits() == new.to_bits() {
                         continue;
+                    }
+                    // The hierarchy changes through commands, which the call follows in order;
+                    // a column is written back before all of them.
+                    if parent_slot(world, comp).is_some() {
+                        let refusal = SlotRefusal {
+                            field: "parent",
+                            message: "Parent.parent is read through its column and written with \
+                                      ctx.world.set, insert or remove, which check the hierarchy."
+                                .to_owned(),
+                        };
+                        return Err(
+                            not_held(comp, refusal, ErrorPhase::WriteBack).entity(id.to_f64())
+                        );
                     }
                     let f = &comp.schema.fields[col.field];
                     let name = if f.ty.slots() > 1 {

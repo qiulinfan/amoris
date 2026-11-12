@@ -134,6 +134,37 @@ Writes apply when `run` returns (none if it throws); `get`/`has`/`exists` see th
 `ctx.tick`, `ctx.dt`, `ctx.time`; `Math.random()` is the system's stream. Events: declare
 `events: ["crate."]`, read `ctx.events`.
 
+## Hierarchy
+
+An entity is under another when it carries `Parent { parent }`; an entity without one is a root.
+Despawning an entity despawns everything under it.
+
+```ts
+const rig = ctx.world.spawn({ Transform: {} });
+const arm = ctx.world.spawn({ Parent: { parent: rig } });  // spawned under the rig
+ctx.world.insert(hand, "Parent", { parent: arm });         // an entity that had no parent
+ctx.world.set(hand, "Parent", { parent: rig });            // moved, with what is under it
+const over = ctx.world.get(hand, "Parent")?.parent ?? null; // its parent, or null for a root
+ctx.world.remove(hand, "Parent");                          // a root again
+// children of `rig`: the rows of a query with: ["Parent"] whose parent column holds its id
+for (let r = 0; r < kids.len; r++) if (kids.cols.Parent.parent[r] === rig) use(kids.id(r));
+ctx.world.despawn(rig);                                    // rig, arm and all under them
+```
+
+- A parent is a live entity, never the entity itself or one under it: `script.parent_cycle` at the
+  line that would close the loop. Before moving `a` under `b`, walk up from `b` with
+  `get(e, "Parent")?.parent` and stop if you meet `a`.
+- After `despawn(e)`, `exists` is false in the same call for every entity under `e`, and a write to
+  one throws `script.entity_missing`. Other references to a despawned entity (an entity field of
+  your own component) keep the id and read nothing.
+- Change a parent with `set`, `insert` and `remove`; the `parent` column is read only, and a write
+  to it fails the system (`script.write_not_held`).
+- `Transform` is in world space: a child does not move with its parent yet. Use `Attach` to hold a
+  thing at another entity's joint.
+- From outside: `amoris world tree` shows the hierarchy indented, `amoris world set <e> Parent
+  parent=<id>` moves an entity and `amoris world remove <e> Parent` makes it a root; in a scene,
+  `"Parent": {"parent": 3}` names the third entity of the file.
+
 ## Rigid bodies
 
 An entity with a `Transform` and a `Collider` has a body in the solver: fixed without a `RigidBody`,
@@ -274,6 +305,8 @@ done_event = "course.finished"   # emitting it ends the episode; its data are th
 | `crew.take[r] = 5` | `Type '5' is not assignable to type '0 \| (number & ...)'` (an `Entity`) |
 | `tally.taken[r] = n / 2` | at run time: `script.write_not_integer` |
 | `Collider: { shape: "Ball" }`; `set(e, "Collider", { radius: 1 })` on a Cuboid | `'shape' does not exist in type 'Patch<...>'`; at run time: `script.write_not_held` |
+| `set(e, "Parent", { parent: null })`; `kids.cols.Parent.parent[r] = rig` | at run time: `script.write_not_held` (`remove` the component for a root; `set` it to move) |
+| `set(rig, "Parent", { parent: arm })` with `arm` under `rig` | at run time: `script.parent_cycle` |
 | a component not in `game({components})` | `'"Cargo"' is not assignable to parameter of type 'ComponentName'.` |
 
 Runtime errors name the TypeScript file and line (`amoris logs`).

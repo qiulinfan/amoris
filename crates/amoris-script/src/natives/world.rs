@@ -10,7 +10,7 @@ use serde_json::json;
 
 use super::{NResult, arg, with_call};
 use crate::access::defaults;
-use crate::call::{CallState, Command, Comp, not_held, resolve_comp};
+use crate::call::{CallState, Command, Comp, not_held, parent_slot, resolve_comp};
 use crate::convert::{self, is_plain_object};
 use crate::error::{ErrorPhase, ScriptError, num};
 use crate::js;
@@ -88,6 +88,38 @@ fn with_entity(e: ScriptError, id: EntityId) -> ScriptError {
     e.entity(id.to_f64())
 }
 
+/// A write of `Parent` that puts `id` under the entity in `slot` of `value`: refused with
+/// `script.parent_cycle` when that entity is `id` or is under it as the call's commands so far
+/// leave the hierarchy, else followed in the call's hierarchy. The slot holds a live entity's id:
+/// the field's own check and `Parent`'s slot rule ran before.
+fn reparent(
+    call: &mut CallState,
+    world: &World,
+    id: EntityId,
+    value: &amoris_sim::registry::ProjectValues,
+    slot: usize,
+) -> Result<(), ScriptError> {
+    let Ok(parent) = EntityId::from_f64(value.nums[slot]) else {
+        return Ok(());
+    };
+    let h = call.hierarchy(world);
+    if let Some(chain) = h.loop_through(id, parent) {
+        let p = entity::hierarchy::parent_cycle(id, parent, &chain);
+        let chain: Vec<u64> = chain.iter().map(|c| c.get()).collect();
+        return Err(with_entity(
+            ScriptError::new("script.parent_cycle", p.message, ErrorPhase::Run)
+                .component("Parent")
+                .field("parent")
+                .value(num(parent.to_f64()))
+                .with("chain", json!(chain))
+                .hint("remove or change the Parent of the entity under it first"),
+            id,
+        ));
+    }
+    h.set(id, parent);
+    Ok(())
+}
+
 pub fn set<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
     let (e, c, p) = (arg(ctx, args, 0), arg(ctx, args, 1), arg(ctx, args, 2));
     with_call(ctx, "world.set", |call, world| {
@@ -115,6 +147,7 @@ pub fn set<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
         let overlay = &call.overlay;
         let patch = convert::patch_from_js(ctx, &comp.schema, &p, &|x| overlay.alive(world, x))
             .map_err(|err| with_entity(err, id))?;
+        let parent = parent_slot(world, &comp).map(|slot| (slot, value.nums[slot]));
         match comp.rule {
             // The rule sees the value before and after the patch, and the overlay takes the value
             // as the rule settles it: what the component will read once the patch is written.
@@ -125,6 +158,11 @@ pub fn set<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
                     .map_err(|r| with_entity(not_held(&comp, r, ErrorPhase::Run), id))?;
             }
             None => patch.apply(&mut value),
+        }
+        if let Some((slot, before)) = parent
+            && value.nums[slot].to_bits() != before.to_bits()
+        {
+            reparent(call, world, id, &value, slot)?;
         }
         call.overlay.put(id, comp.id, Some(value));
         call.commands.push(Command::Set {
@@ -167,6 +205,9 @@ pub fn insert<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
             rule(None, &mut value)
                 .map_err(|r| with_entity(not_held(&comp, r, ErrorPhase::Run), id))?;
         }
+        if let Some(slot) = parent_slot(world, &comp) {
+            reparent(call, world, id, &value, slot)?;
+        }
         call.overlay.put(id, comp.id, Some(value.clone()));
         call.commands.push(Command::Insert { id, comp, value });
         Ok(())
@@ -180,6 +221,9 @@ pub fn remove<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
         let id = live(call, world, &e)?;
         let comp = resolve_comp(world, &name_arg(&c)?)?;
         if call.overlay.value(world, id, &comp).is_some() {
+            if parent_slot(world, &comp).is_some() {
+                call.hierarchy(world).clear(id);
+            }
             call.overlay.put(id, comp.id, None);
             call.commands.push(Command::Remove { id, comp });
         }
@@ -197,7 +241,16 @@ pub fn despawn<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
             return Err(missing(&e));
         };
         if call.overlay.alive(world, id) {
-            call.overlay.despawn(id);
+            // The entities under it go with it, here as at the commit (`entity::despawn_in`).
+            let h = call.hierarchy(world);
+            let mut gone = h.descendants(id);
+            gone.push(id);
+            for id in &gone {
+                h.clear(*id);
+            }
+            for id in gone {
+                call.overlay.despawn(id);
+            }
             call.commands.push(Command::Despawn { id });
         }
         Ok(())
@@ -244,6 +297,14 @@ pub fn spawn<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
         }
         let id = entity::reserve(world)
             .map_err(|p| ScriptError::new(&p.code, p.message, ErrorPhase::Run))?;
+        // A new entity has nothing under it, so its `Parent` closes no loop.
+        for (comp, value) in &comps {
+            if let Some(slot) = parent_slot(world, comp)
+                && let Ok(parent) = EntityId::from_f64(value.nums[slot])
+            {
+                call.hierarchy(world).set(id, parent);
+            }
+        }
         call.overlay.spawn(id, &comps);
         call.commands.push(Command::Spawn { id, comps });
         Ok(id)

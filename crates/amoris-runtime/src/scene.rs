@@ -3,7 +3,8 @@
 //! `amoris_physics::sailing` builds) and components by name, engine or project, each a JSON value
 //! that overrides the prefab's component field by field. A scene spawns its entities by name first
 //! and then checks and inserts their components, so an entity field may name any entity of the
-//! scene; a refused scene is rolled back whole. A `world_edit` spawn is checked before anything is
+//! scene (a `Parent` too: the scene's hierarchy is checked once every entity has its components);
+//! a refused scene is rolled back whole. A `world_edit` spawn is checked before anything is
 //! spawned, so a refused one changes nothing.
 
 use std::collections::BTreeMap;
@@ -183,6 +184,19 @@ pub fn prepare(
     components: &Map<String, Value>,
     path: &Pointer,
 ) -> Result<PreparedSpawn, Problem> {
+    prepare_among(world, name, prefab, components, path, &values::none_else)
+}
+
+/// [`prepare`], where a project component's entity field may also name an entity `also` accepts:
+/// one an earlier edit of the same `world_edit`, or the same `revive`, brings back.
+pub fn prepare_among(
+    world: &bevy_ecs::prelude::World,
+    name: Option<&str>,
+    prefab: Option<&Prefab>,
+    components: &Map<String, Value>,
+    path: &Pointer,
+    also: values::AlsoAlive<'_>,
+) -> Result<PreparedSpawn, Problem> {
     let name = name.map(Name::new).transpose()?;
     let mut base = prefab.map(prefab_components).unwrap_or_default();
     let mut parts = Vec::new();
@@ -202,7 +216,7 @@ pub fn prepare(
                 .as_object()
                 .ok_or_else(|| bad_value(&at, "a component's value is an object of its fields"))?;
             let defaults = amoris_script::access::defaults(&schema);
-            let values = values::patch(world, &schema, &defaults, patch, &at)?;
+            let values = values::patch_among(world, &schema, &defaults, patch, &at, also)?;
             parts.push(Part::Project { access, values });
         } else {
             return Err(unknown_component(world, cname));
@@ -332,8 +346,10 @@ impl Scene {
         for (p, id) in prepared.into_iter().zip(&ids) {
             p.insert(b, *id)?;
         }
-        // Checks across entities: a water region sits on its volume's grid (water.md 5).
+        // Checks across entities: a water region sits on its volume's grid (water.md 5), and
+        // every `Parent` names a live entity and closes no loop (simulation.md 7.4).
         amoris_physics::water::check_world(b.world())?;
+        crate::hierarchy::check_scene(b.world(), &ids)?;
         Ok(ids)
     }
 }

@@ -3,6 +3,8 @@
 //! `group`, so the editor streams a gizmo drag; the drag's edits are one undo entry; an MCP
 //! session's edit in the middle of the drag splits it; every entry names its source, and the
 //! server adds the session (`mcp-<n>` as `agent` events name it, `api` for the HTTP API's client).
+//! A parent destroyed through the host goes with what is under it and comes back whole in one
+//! undo, one history entry.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -161,6 +163,84 @@ fn a_streamed_drag_is_one_entry_and_entries_name_their_sources() {
         let h = call(Via::Editor, "history.list", json!({})).await;
         assert_eq!(h["redo"][3], json!("Move Sloop"), "{h:#}");
         assert_eq!(h["entries"]["redo"][0]["session"], json!("api"), "{h:#}");
+    });
+    drop(host);
+    handle.shutdown(5000).unwrap();
+}
+
+/// The hierarchy through the host (server.md 3.1): the editor parents two crates to the Sloop, an
+/// agent destroys the Sloop, which takes them, and one undo of the one entry brings all three
+/// back under their ids, nested as before.
+#[test]
+fn a_parent_destroyed_through_the_host_is_undone_whole() {
+    let (handle, host) = start();
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let call = |via: Via, method: &'static str, params: Value| {
+            let host = host.clone();
+            async move {
+                host.call(&via, method, params)
+                    .await
+                    .unwrap_or_else(|e| panic!("{method}: {e:#?}"))
+            }
+        };
+        let under_sloop = |entity: &str| {
+            json!({"set": {"entity": entity, "component": "Parent", "value": {"parent": 3}}})
+        };
+        call(
+            Via::Editor,
+            "world.edit",
+            json!({"ops": [under_sloop("Crate1"), under_sloop("Crate3")], "label": "Parent crates"}),
+        )
+        .await;
+        let sloop = |tree: &Value| -> Value {
+            let nodes = tree.as_array().unwrap();
+            let found = nodes.iter().find(|n| n["name"] == "Sloop");
+            found.cloned().unwrap_or(Value::Null)
+        };
+        let before = call(Via::Editor, "world.tree", json!({})).await;
+        assert_eq!(before.as_array().unwrap().len(), 7, "{before:#}");
+        let children: Vec<Value> = sloop(&before)["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| json!([c["id"], c["name"]]))
+            .collect();
+        assert_eq!(children, [json!([4, "Crate1"]), json!([6, "Crate3"])]);
+        let hash = call(Via::Api, "status", json!({})).await["world_hash"].clone();
+
+        let agent = McpBackend::new(host.clone()).open();
+        let r = agent
+            .call(
+                "world.edit".to_owned(),
+                json!({"ops": [{"destroy": {"entity": "Sloop"}}]}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r["results"], json!([{"op": "destroyed", "count": 3}]), "{r:#}");
+        let after = call(Via::Editor, "world.tree", json!({})).await;
+        assert_eq!(after.as_array().unwrap().len(), 6, "{after:#}");
+        assert_eq!(sloop(&after), Value::Null);
+        let h = call(Via::Editor, "history.list", json!({})).await;
+        assert_eq!(h["undo"], json!(["Parent crates", "destroy Sloop"]), "{h:#}");
+        assert_eq!(h["entries"]["undo"][1]["session"], json!("mcp-1"), "{h:#}");
+
+        let u = call(Via::Editor, "history.undo", json!({})).await;
+        assert_eq!(u["label"], json!("destroy Sloop"), "{u:#}");
+        assert_eq!(
+            u["results"],
+            json!([{"op": "revived", "id": 3, "count": 3}]),
+            "{u:#}"
+        );
+        assert_eq!(call(Via::Editor, "world.tree", json!({})).await, before);
+        let status = call(Via::Api, "status", json!({})).await;
+        assert_eq!(status["world_hash"], hash, "{status:#}");
+        let h = call(Via::Editor, "history.list", json!({})).await;
+        assert_eq!(h["undo"], json!(["Parent crates"]), "{h:#}");
+        assert_eq!(h["redo"], json!(["destroy Sloop"]), "{h:#}");
     });
     drop(host);
     handle.shutdown(5000).unwrap();

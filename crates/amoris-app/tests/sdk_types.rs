@@ -77,6 +77,17 @@ fn the_declarations_type_check_every_field_type_and_api() {
     ] {
         assert!(components.contains(declared), "{declared}: {components}");
     }
+    // The hierarchy (scripts/hierarchy.ts): `Parent`'s one field, an entity, and its column.
+    for declared in [
+        "readonly parent: Entity | null;",
+        "readonly parent: EntityColumn;",
+    ] {
+        assert!(components.contains(declared), "{declared}: {components}");
+    }
+    assert!(
+        components.contains("Places an entity under another in the hierarchy"),
+        "{components}"
+    );
     // The check writes into the engine's directory only; tsc ran with its tsconfig.json.
     assert!(!dir.join("tsconfig.json").exists());
     assert!(dir.join(".amoris/types/tsconfig.json").is_file());

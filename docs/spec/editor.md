@@ -352,6 +352,11 @@ adopt them or the editor should change:
 2. `set` of `Name` takes the name as a string `value`; `world.get` may list `Name` among components
    (the editor ignores it there).
 3. The hierarchy is the `Parent {parent: EntityId}` component, and `world.tree` nests by it.
+   Adopted 2026-11-12 (server.md 3 and 3.1). Two things the host does that the mock does not: a
+   destroy takes the entities under the destroyed one (destroying children first, as the editor
+   sends them, still works; destroying a parent and then its child in one call is refused), and
+   `world.tree` nests 48 levels at most, an entity whose children were left out carrying their
+   number in `more` (`root` reads on from it).
 4. The debugger is the host's as-built `debug.*` (section 8.1), not an editor-specific form.
 5. Agent edits are marked in the history. Adopted 2026-10-15 with item 1 (server.md 3.1): each
    entry names its `source` (and the server its `session`); a host without sources marks agent

@@ -55,6 +55,8 @@ const FLAGS: &[Flag] = &[
     ("interval", true),
     ("top", true),
     ("folded", true),
+    ("root", true),
+    ("depth", true),
 ];
 
 /// How long the CLI waits for an answer unless `--timeout <s>` or `AMORIS_TIMEOUT` says otherwise
@@ -75,7 +77,7 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "world",
         "world.tree",
-        "amoris world tree [filter] [--with C,..] | get <entity> [C.. | C.f,C.g..] | query <C,..> [--fields C.f,..] [--name n] [--limit n] | schema [C] | edit '<ops json>' [--label l] | set <entity> <C> f=v.. | spawn [name] [--prefab json] [--components json] | remove <entity> <C> | destroy <entity>..",
+        "amoris world tree [filter] [--with C,..] [--root e] [--depth n] [--limit n] | get <entity> [C.. | C.f,C.g..] | query <C,..> [--fields C.f,..] [--name n] [--limit n] | schema [C] | edit '<ops json>' [--label l] | set <entity> <C> f=v.. | spawn [name] [--prefab json] [--components json] | remove <entity> <C> | destroy <entity>..",
     ),
     (
         "step",
@@ -416,6 +418,8 @@ fn request(cmd: &str, args: &Args) -> Result<(String, Value), Problem> {
                 put(&mut p, "filter", pos(args, 1).map(|f| json!(f)));
                 put(&mut p, "with", args.value("with").map(|w| json!(list(w))));
                 put(&mut p, "limit", num("limit")?);
+                put(&mut p, "root", args.value("root").map(entity));
+                put(&mut p, "depth", num("depth")?);
                 "world.tree"
             }
             "get" => {
@@ -1376,6 +1380,27 @@ fn entity_line(e: &Value) -> String {
     )
 }
 
+/// `world.tree` as lines: each entity as [`entity_line`] writes it, its children two spaces
+/// deeper, and an entity whose children the depth left out ending with how many and how to list
+/// them. A loop over a list, so a deep tree costs no stack.
+fn tree_lines(roots: &Value, out: &mut String) {
+    let mut todo: Vec<(&Value, usize)> = roots
+        .as_array()
+        .map(|a| a.iter().rev().map(|n| (n, 0)).collect())
+        .unwrap_or_default();
+    while let Some((node, level)) = todo.pop() {
+        let _ = write!(out, "{:width$}{}", "", entity_line(node), width = 2 * level);
+        match node["more"].as_u64() {
+            Some(n) if n > 0 => {
+                let _ = writeln!(out, "  (+{n} below: --root {})", opt(&node["id"]));
+            }
+            _ => out.push('\n'),
+        }
+        let children = node["children"].as_array();
+        todo.extend(children.into_iter().flatten().rev().map(|c| (c, level + 1)));
+    }
+}
+
 fn event_line(e: &Value) -> String {
     let seq = if e["seq"].is_null() {
         format!("id{}", opt(&e["id"]))
@@ -1574,7 +1599,7 @@ fn text(method: &str, v: &Value, full: bool) -> String {
         }
         "world.tree" => {
             paused_rows_note(v, &mut out);
-            lines(&mut out, v, &entity_line);
+            tree_lines(v, &mut out);
         }
         "world.get" | "world_get" => {
             if !v["paused_at"].is_null() {
@@ -2435,6 +2460,54 @@ mod tests {
         assert_eq!(
             req("profile", &["--ticks", "120"]),
             ("profile.frame".into(), json!({"ticks": 120}))
+        );
+    }
+
+    /// `amoris world tree`: the root and the depth go to the host, and the answer reads as an
+    /// indented tree, one line an entity, as a flat world read before.
+    #[test]
+    fn a_tree_reads_indented() {
+        assert_eq!(
+            req(
+                "world",
+                &[
+                    "tree", "arm", "--root", "Rig", "--depth", "2", "--limit", "9"
+                ]
+            ),
+            (
+                "world.tree".into(),
+                json!({"filter": "arm", "root": "Rig", "depth": 2, "limit": 9})
+            )
+        );
+        assert_eq!(
+            req("world", &["tree", "--root", "7", "--with", "Model,Light"]),
+            (
+                "world.tree".into(),
+                json!({"root": 7, "with": ["Model", "Light"]})
+            )
+        );
+        assert_eq!(req("world", &[]), ("world.tree".into(), json!({})));
+        let node = |id: u64, name: &str, children: Value| json!({"id": id, "name": name, "components": ["Transform"], "children": children});
+        let mut hand = node(4, "Hand", json!([]));
+        hand["more"] = json!(3);
+        let tree = json!([
+            node(
+                1,
+                "Rig",
+                json!([node(2, "Arm", json!([hand])), node(5, "Leg", json!([]))])
+            ),
+            json!({"id": 9, "name": null, "components": [], "children": []}),
+        ]);
+        assert_eq!(
+            text("world.tree", &tree, false),
+            "#1 Rig  Transform\n  #2 Arm  Transform\n    #4 Hand  Transform  (+3 below: --root 4)\n  \
+             #5 Leg  Transform\n#9 -  \n"
+        );
+        // A flat world reads as it did: a line an entity.
+        let flat = json!([node(1, "Sea", json!([])), node(2, "Sloop", json!([]))]);
+        assert_eq!(
+            text("world.tree", &flat, false),
+            "#1 Sea  Transform\n#2 Sloop  Transform\n"
         );
     }
 

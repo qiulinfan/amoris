@@ -7,8 +7,8 @@
 //! (architecture.md 11, choice 7). The runtime, which links both physics and the script host,
 //! therefore rebuilds the world's component registry with schemas for `Transform`, `Velocity`,
 //! `Boat`, `Wind`, `Walker`, UI, the visual components a game animates (`Model`, `Light`,
-//! `Environment`) and water request components, and registers hand-written slot functions for
-//! them (architecture.md 11, Slice 1). The rebuilt registry must name exactly the components the old one did, so a component
+//! `Environment`), water request components and amoris-sim's `Parent`, and registers hand-written
+//! slot functions for them (architecture.md 11, Slice 1). The rebuilt registry must name exactly the components the old one did, so a component
 //! physics adds later fails the game's construction instead of vanishing from it.
 
 use amoris_assets::{
@@ -92,7 +92,7 @@ where
 /// Every engine component a scene or `world_edit` can name (`Name` is the entity's own `name`);
 /// the first three are the player layer's (perception.md: who observes, what can be perceived,
 /// what blocks sight).
-pub fn engine_components() -> [EngineComponent; 48] {
+pub fn engine_components() -> [EngineComponent; 49] {
     [
         entry::<amoris_interface::perception::Observer>(),
         entry::<amoris_interface::perception::Perceivable>(),
@@ -142,6 +142,7 @@ pub fn engine_components() -> [EngineComponent; 48] {
         displacement_entry(),
         flow_entry::<WaterSource>(),
         flow_entry::<WaterDrain>(),
+        entry::<amoris_sim::Parent>(),
     ]
 }
 
@@ -363,6 +364,7 @@ pub fn merge(target: &mut Value, patch: &Map<String, Value>) -> Result<(), Strin
 }
 
 mod bodies;
+mod hierarchy;
 
 // --- Script schemas and slot functions -----------------------------------------------------------
 
@@ -1893,6 +1895,7 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     let before = names(world);
     world.insert_resource(ComponentRegistry::default());
     ComponentRegistry::register::<Name>(world, None)?;
+    ComponentRegistry::register::<amoris_sim::Parent>(world, Some(hierarchy::parent_schema()?))?;
     ComponentRegistry::register::<Transform>(world, Some(transform_schema()?))?;
     ComponentRegistry::register::<Velocity>(world, Some(velocity_schema()?))?;
     ComponentRegistry::register::<Boat>(world, Some(boat_schema()?))?;
@@ -2027,6 +2030,7 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     register_engine::<Transform>(world, transform_fns())?;
     register_engine::<Velocity>(world, velocity_fns())?;
     bodies::register(world)?;
+    hierarchy::register(world)?;
     register_engine::<Boat>(world, boat_fns())?;
     register_engine::<Board>(world, board_fns())?;
     register_engine::<Wind>(world, wind_fns())?;

@@ -103,13 +103,16 @@ pub const CATALOG: &[CommandDef] = &[
     (def(
         "project.save",
         Kind::Request,
-        "Writes the edit world to the project's scene.json (Play's world is never saved).",
+        "Writes the edit world to the project's scene.json, entity ids as places in the file \
+         (Play's world is never saved).",
         schema::<NoParams>,
     )),
     def(
         "world.tree",
         Kind::Read,
-        "Entities with their names and component names; filter by name or components.",
+        "Entities with their names and component names, nested by Parent (children in id order); \
+         one subtree by root, levels by depth (a cut entity says how many children it has more), \
+         filter by name or components (a match comes with the entities it is under).",
         schema::<WorldTreeParams>,
     ),
     aka(
@@ -137,13 +140,15 @@ pub const CATALOG: &[CommandDef] = &[
         "world.edit",
         Kind::Write,
         "Spawn, set (fields merge), remove and destroy, all or nothing at one boundary; undoable \
-         (edits of one `group` in a row are one undo entry).",
+         (edits of one `group` in a row are one undo entry). Set or remove Parent to place an \
+         entity under another; destroy takes everything under the entity.",
         schema::<WorldEditOps>,
     ),
     def(
         "world_edit",
         Kind::Write,
-        "world.edit's canonical recorded form (edits tagged by op; revive restores a destroyed id).",
+        "world.edit's canonical recorded form (edits tagged by op; revive restores a destroyed id, \
+         and with `others` the entities destroyed under it).",
         schema::<WorldEditParams>,
     ),
     def(

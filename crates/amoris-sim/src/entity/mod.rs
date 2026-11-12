@@ -3,12 +3,15 @@
 //! number. `bevy_ecs::Entity` never leaves this crate's world operations: it is not in components,
 //! events, snapshots, hashes or anything a script sees.
 
+pub mod hierarchy;
 mod index;
 mod ops;
 
+pub use hierarchy::{Hierarchy, Parent};
 pub use index::EntityIndex;
 pub use ops::{
-    ReservedIds, SimCommands, despawn, entity, require, reserve, revive, spawn, spawn_allocated,
+    ReservedIds, SimCommands, despawn, despawn_in, despawn_tree, entity, require, reserve, revive,
+    spawn, spawn_allocated,
 };
 
 use std::borrow::Cow;

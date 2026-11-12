@@ -221,6 +221,18 @@ fn a_held_host_never_blocks_its_callers() {
                 .contains(&json!("debug.break"))
         );
 
+        // A hierarchy for the tree to nest: Gauge > Dial > Needle, and Stand beside them.
+        let spawn = |name: &str, parent: Option<u64>| {
+            let components = match parent {
+                Some(p) => json!({"Parent": {"parent": p}}),
+                None => json!({}),
+            };
+            json!({"ops": [{"spawn": {"name": name, "components": components}}]})
+        };
+        for (name, parent) in [("Dial", Some(1)), ("Needle", Some(2)), ("Stand", None)] {
+            call("world.edit", spawn(name, parent)).await;
+        }
+
         // The world before any stop, read by the game.
         let stepped = call("time.step", json!({"ticks": 3})).await;
         assert_eq!(stepped["tick"], 3);
@@ -232,6 +244,12 @@ fn a_held_host_never_blocks_its_callers() {
             ),
             ("world.tree", json!({})),
             ("world.tree", json!({"filter": "gau", "with": ["Gauge"]})),
+            ("world.tree", json!({"depth": 0})),
+            ("world.tree", json!({"root": "Dial"})),
+            ("world.tree", json!({"root": 1, "depth": 1})),
+            ("world.tree", json!({"filter": "NEED", "with": ["Parent"]})),
+            ("world.tree", json!({"with": ["Parent"], "limit": 2})),
+            ("world.get", json!({"entity": "Needle"})),
             (
                 "world.query",
                 json!({"with": ["Gauge"], "fields": ["Gauge.level"]}),
@@ -247,6 +265,18 @@ fn a_held_host_never_blocks_its_callers() {
         for (m, p) in &reads {
             live.push(call(m, p.clone()).await);
         }
+        // The trees the held host must answer are nested ones.
+        let names = |v: &Value| -> Vec<String> {
+            let list = v.as_array().unwrap().iter();
+            list.map(|n| n["name"].as_str().unwrap().to_owned())
+                .collect()
+        };
+        assert_eq!(names(&live[2]), ["Gauge", "Stand"]);
+        assert_eq!(live[2][0]["children"][0]["children"][0]["name"], "Needle");
+        assert_eq!(live[4][0]["more"], 1, "{:#}", live[4]);
+        assert_eq!(live[6][0]["children"][0]["more"], 1, "{:#}", live[6]);
+        assert_eq!(live[7][0]["children"][0]["children"][0]["id"], 3);
+        assert_eq!(live[8][0]["children"].as_array().unwrap().len(), 1);
         let status = call("status", json!({})).await;
 
         // A breakpoint by the module's short name stops the step at once.

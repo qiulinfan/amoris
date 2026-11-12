@@ -762,11 +762,13 @@ or chosen here. They feed the budgets `hash.sail`, `publish.sail`, `fork.*` and 
    generic methods mirror `RegistryBuilder`'s (`entities`, `resource`, `component`, `cache`,
    `derived`, `ignore`, `rebuild`) and which `RegistryBuilder` implements;
    `amoris_sim::persisted::declare` is amoris-sim's declaration (the clock, the seed, the event
-   counter and inbox and `Name` persisted; the index, RNG table, outbox, tick state, tick output,
-   reserved ids and poison mark Derived, rebuilt by `rebuild_derived`; the component registry
-   Ignored). `dynamic` is not in the trait: project components' rows are
-   `amoris_sim::registry::ProjectValues` described by the registry's `ComponentSchema`, which
-   persistence reads without the script host.
+   counter and inbox, `Name` and, since 2026-11-12, `Parent` persisted; the index, RNG table,
+   outbox, tick state, tick output, reserved ids and poison mark Derived, rebuilt by
+   `rebuild_derived`; the component registry Ignored; the hierarchy keeps nothing derived, since who
+   is under whom is read from the `Parent` rows, and a component section without a row is not
+   written, so a world without a `Parent` snapshots and hashes as before the component existed).
+   `dynamic` is not in the trait: project components' rows are `amoris_sim::registry::ProjectValues`
+   described by the registry's `ComponentSchema`, which persistence reads without the script host.
 9. **Slice 1: tracing needs samples.** `EntityId`'s `Deserialize` refuses 0, the value the tracer
    offers, and so do the other types whose decoding checks their values (simulation-slice1.md, 15),
    so a tracer made with `persisted::tracer_config()` (samples for structs on) takes

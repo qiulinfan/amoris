@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
 use amoris_contract::{Problem, detail};
-use amoris_sim::ComponentRegistry;
 use amoris_sim::registry::FieldType;
+use amoris_sim::{ComponentRegistry, Parent, Persisted};
 use bevy_ecs::prelude::World;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -253,7 +253,7 @@ pub fn info(root: &Path, name: &str, rate: u32) -> Value {
 /// renumbered to the entity's place in the file, and one naming an entity that is gone becomes
 /// `null`: a project component's entity fields by its schema, an engine component's by its JSON
 /// Schema ([`values::entity_refs`]: every place typed `EntityId`, nested ones included; ids that
-/// are a map's keys are left).
+/// are a map's keys are left). A `Parent` whose parent is gone is left out: the entity is a root.
 pub fn scene_of(world: &World) -> Value {
     let live: Vec<(amoris_sim::EntityId, bevy_ecs::prelude::Entity)> =
         world.resource::<amoris_sim::EntityIndex>().iter().collect();
@@ -289,6 +289,13 @@ pub fn scene_of(world: &World) -> Value {
                     }
                 }
             }
+        }
+        // A `Parent` never holds none: an entity whose parent is gone is a root of the scene.
+        if comps
+            .get(Parent::NAME)
+            .is_some_and(|p| p.get("parent").is_some_and(Value::is_null))
+        {
+            comps.remove(Parent::NAME);
         }
         let mut ent = Map::new();
         if let Some(n) = world.get::<amoris_sim::Name>(*e) {

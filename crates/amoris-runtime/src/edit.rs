@@ -10,10 +10,20 @@
 //! An edit cannot name an entity an earlier edit of the same call spawns: its id is not known until
 //! it is applied (threads.md 13, Slice 1: `world_edit` as built).
 //!
+//! The hierarchy (docs/spec/server.md 3.1): a destroy takes the entity and every entity under it
+//! by `Parent`, and the plan marks them all destroyed, so a later edit of the call naming one of
+//! them is refused like one naming the destroyed entity. A `Parent` an edit writes names an entity
+//! that is alive as the earlier edits leave the world, and not the entity itself; whether it
+//! closes a loop is judged once, on the hierarchy the whole call leaves, so a call may pass
+//! through a loop (swapping a parent with its child takes two sets) but never leave one
+//! (`sim.parent_cycle`).
+//!
 //! Every applied call also yields its inverse (docs/spec/server.md, history): the edits that bring
-//! the world back, computed from the call's net effect on each entity it touched: the entities it
-//! spawned or revived are destroyed, those it destroyed are revived whole under their ids, and the
-//! components it set or removed on the others get their values from before the call back.
+//! the world back, computed from the call's net effect on each entity it touched, in the order
+//! that applies as one call: first the entities it destroyed are revived whole under their ids, by
+//! one `revive` edit however many they are; then the components it set or removed on the others
+//! get their values from before the call back; then the entities it spawned or revived are
+//! destroyed, the topmost of them alone, since a destroy takes what is under it.
 //! `world.edit` is the protocol's form of the same call (`{ops: [{set: {...}}], label}`).
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -21,15 +31,16 @@ use std::sync::Arc;
 
 use amoris_contract::{Pointer, Problem, detail};
 use amoris_script::ComponentAccess;
+use amoris_sim::entity::hierarchy;
 use amoris_sim::registry::{ComponentSchema, FieldType, ProjectValues};
-use amoris_sim::{Boundary, EntityId};
+use amoris_sim::{Boundary, EntityId, Hierarchy, Parent, Persisted};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::engine::{Inserter, engine_component, merge};
 use crate::scene::{
-    Prefab, PreparedSpawn, bad_value, prepare, project_component, unknown_component,
+    Prefab, PreparedSpawn, bad_value, prepare_among, project_component, unknown_component,
 };
 use crate::values::{self, EntityRef, resolve};
 
@@ -71,14 +82,29 @@ pub enum Edit {
     Destroy {
         entity: EntityRef,
     },
-    /// Spawns a destroyed entity again under its id with these components (an undo of `destroy`).
+    /// Spawns a destroyed entity again under its id with these components (an undo of `destroy`),
+    /// and with it the `others`: the entities the destroy took from under it. They are checked
+    /// together, so each one's `Parent` may name another of them, in any order.
     Revive {
         entity: u64,
         #[serde(default)]
         name: Option<String>,
         #[serde(default)]
         components: Map<String, Value>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        others: Vec<Revived>,
     },
+}
+
+/// One more entity of a `revive`: a destroyed entity's id, its name and its components.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Revived {
+    pub entity: u64,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub components: Map<String, Value>,
 }
 
 /// `world.edit`'s parameters (docs/spec/host-protocol.md 4): one transaction.
@@ -195,11 +221,17 @@ pub fn label_of(edits: &[Edit]) -> String {
             format!("remove {component} from {}", entity_text(entity))
         }
         Some(Edit::Destroy { entity }) => format!("destroy {}", entity_text(entity)),
-        Some(Edit::Revive { entity, name, .. }) => {
-            format!(
-                "revive {}",
-                name.clone().unwrap_or_else(|| format!("#{entity}"))
-            )
+        Some(Edit::Revive {
+            entity,
+            name,
+            others,
+            ..
+        }) => {
+            let what = name.clone().unwrap_or_else(|| format!("#{entity}"));
+            match others.len() {
+                0 => format!("revive {what}"),
+                n => format!("revive {what} and {n} under it"),
+            }
         }
         None => "no edit".into(),
     };
@@ -271,8 +303,10 @@ enum Checked {
     Spawn(PreparedSpawn),
     Set(EntityId, String, Setter),
     Remove(EntityId, String, Remover),
-    Destroy(EntityId),
-    Revive(EntityId, PreparedSpawn),
+    /// The entity, and the entities under it as the edits before leave the hierarchy.
+    Destroy(EntityId, Vec<EntityId>),
+    /// The entities of one `revive`, the edit's own first.
+    Revive(Vec<(EntityId, PreparedSpawn)>),
 }
 
 enum Setter {
@@ -294,12 +328,17 @@ enum Pending {
 }
 
 /// The world as the edits checked so far leave it: the entities they destroy (with the destroying
-/// edit's index) and the components they set or remove.
+/// edit's index), the components they set or remove, the entities they revive, and the hierarchy.
 #[derive(Default)]
 struct Plan {
     destroyed: BTreeMap<EntityId, usize>,
     pending: BTreeMap<(EntityId, String), Pending>,
     revived: BTreeSet<EntityId>,
+    /// The hierarchy, once an edit needed it (see [`Plan::hierarchy`]).
+    hierarchy: Option<Hierarchy>,
+    /// The entities whose `Parent` an edit of the call wrote and that still have it, each with
+    /// where the last such edit gave the parent: what the call's last check judges.
+    parented: BTreeMap<EntityId, Pointer>,
 }
 
 /// `sim.entity_not_found` for an entity an earlier edit of the same call destroys.
@@ -320,6 +359,12 @@ fn destroyed_earlier(id: EntityId, by: usize, at: &Pointer) -> Problem {
     )
 }
 
+/// `problem` with the place of the request it is about.
+fn at_path(mut problem: Problem, at: &Pointer) -> Problem {
+    problem.detail.insert("path".into(), json!(at.to_string()));
+    problem
+}
+
 impl Plan {
     /// `id`, unless an earlier edit destroys it.
     fn live(&self, id: EntityId, at: &Pointer) -> Result<EntityId, Problem> {
@@ -327,6 +372,69 @@ impl Plan {
             Some(by) => Err(destroyed_earlier(id, *by, at)),
             None => Ok(id),
         }
+    }
+
+    /// The hierarchy as the edits checked so far leave it. It is read from the world by the first
+    /// edit that bears on it (a destroy, a revive, or an edit naming `Parent`) before that edit
+    /// takes effect here: the world does not change while a call is checked and no earlier edit
+    /// changed the hierarchy, so the world's rows are it. Every such edit then keeps it in step.
+    fn hierarchy(&mut self, b: &Boundary<'_>) -> &mut Hierarchy {
+        self.hierarchy
+            .get_or_insert_with(|| Hierarchy::read(b.world()))
+    }
+
+    /// Refuses a `Parent` naming `parent` unless it is alive as the edits checked so far leave the
+    /// world: live or revived by an earlier edit, and not destroyed by one.
+    fn parent_ok(&self, b: &Boundary<'_>, parent: EntityId, at: &Pointer) -> Result<(), Problem> {
+        if let Some(by) = self.destroyed.get(&parent) {
+            return Err(destroyed_earlier(parent, *by, at));
+        }
+        if self.revived.contains(&parent) {
+            return Ok(());
+        }
+        match amoris_sim::entity::require(b.world(), parent) {
+            Ok(_) => Ok(()),
+            Err(p) => Err(at_path(p, at)),
+        }
+    }
+
+    /// Follows a `Parent` written on the live entity `id` (a set, or a revived entity's): its
+    /// parent, read from the pending value, is not `id` itself and is alive.
+    fn reparent(&mut self, b: &Boundary<'_>, id: EntityId, at: &Pointer) -> Result<(), Problem> {
+        let key = (id, Parent::NAME.to_owned());
+        let Some(Pending::Engine(whole)) = self.pending.get(&key) else {
+            return Ok(());
+        };
+        let Some(parent) = parent_in(whole) else {
+            return Ok(());
+        };
+        if parent == id {
+            return Err(at_path(hierarchy::parent_cycle(id, parent, &[id]), at));
+        }
+        self.parent_ok(b, parent, at)?;
+        self.hierarchy(b).set(id, parent);
+        self.parented.insert(id, at.clone());
+        Ok(())
+    }
+
+    /// The call's last check: no `Parent` it wrote closes a loop in the hierarchy it leaves.
+    fn loops(&self) -> Result<(), Problem> {
+        let Some(h) = &self.hierarchy else {
+            return Ok(());
+        };
+        for (id, at) in &self.parented {
+            if self.destroyed.contains_key(id) {
+                continue;
+            }
+            if let Some(parent) = h.parent(*id)
+                && let Some(chain) = h.loop_through(*id, parent)
+            {
+                let mut p = at_path(hierarchy::parent_cycle(*id, parent, &chain), at);
+                p.message.push_str(" Nothing was applied.");
+                return Err(p);
+            }
+        }
+        Ok(())
     }
 
     /// Refuses a project component's checked patch whose entity fields name an entity an earlier
@@ -348,6 +456,16 @@ impl Plan {
         }
         Ok(())
     }
+}
+
+/// The entity a JSON id names.
+fn parent_of(id: &Value) -> Option<EntityId> {
+    id.as_u64().and_then(EntityId::new)
+}
+
+/// The parent a `Parent`'s JSON value names.
+fn parent_in(value: &Value) -> Option<EntityId> {
+    value.get("parent").and_then(parent_of)
 }
 
 fn check_set(
@@ -387,9 +505,11 @@ fn check_set(
             .read(&e)
             .unwrap_or_else(|| amoris_script::access::defaults(&schema)),
     };
-    let v = values::patch(world, &schema, &base, value, &at.key("value"))?;
-    let canonical = values::canonical_patch(world, &schema, value, &at.key("value"))?;
-    plan.references(&schema, &canonical, &at.key("value"))?;
+    let revived = |id: EntityId| plan.revived.contains(&id);
+    let at_value = at.key("value");
+    let v = values::patch_among(world, &schema, &base, value, &at_value, &revived)?;
+    let canonical = values::canonical_patch(world, &schema, value, &at_value, &revived)?;
+    plan.references(&schema, &canonical, &at_value)?;
     plan.pending.insert(key, Pending::Project(v.clone()));
     Ok((Setter::Project(access, v), canonical))
 }
@@ -429,25 +549,33 @@ pub fn world_edit(b: &mut Boundary<'_>, params: &WorldEditParams) -> Result<Appl
                 prefab,
                 components,
             } => {
-                checked.push(Checked::Spawn(prepare(
+                let revived = |id: EntityId| plan.revived.contains(&id);
+                checked.push(Checked::Spawn(prepare_among(
                     b.world(),
                     name.as_deref(),
                     prefab.as_ref(),
                     components,
                     &at,
+                    &revived,
                 )?));
                 let mut resolved = Map::new();
                 for (cname, v) in components {
                     let v = match (project_component(b.world(), cname), v.as_object()) {
                         (Some((schema, _)), Some(patch)) => {
                             let at = at.key("components").key(cname);
-                            let c = values::canonical_patch(b.world(), &schema, patch, &at)?;
+                            let c =
+                                values::canonical_patch(b.world(), &schema, patch, &at, &revived)?;
                             plan.references(&schema, &c, &at)?;
                             Value::Object(c)
                         }
                         _ => v.clone(),
                     };
                     resolved.insert(cname.clone(), v);
+                }
+                // Its id is not known yet, so it has nothing under it and closes no loop.
+                if let Some(parent) = components.get(Parent::NAME).and_then(parent_in) {
+                    let at = at.key("components").key(Parent::NAME).key("parent");
+                    plan.parent_ok(b, parent, &at)?;
                 }
                 canonical.push(json!({"op": "spawn", "name": name, "prefab": prefab,
                                       "components": resolved}));
@@ -460,6 +588,9 @@ pub fn world_edit(b: &mut Boundary<'_>, params: &WorldEditParams) -> Result<Appl
             } => {
                 let id = r(&plan, entity)?;
                 let (setter, value) = check_set(b, &mut plan, id, component, value, *replace, &at)?;
+                if component == Parent::NAME {
+                    plan.reparent(b, id, &at.key("value").key("parent"))?;
+                }
                 checked.push(Checked::Set(id, component.clone(), setter));
                 let mut c = json!({"op": "set", "entity": id.get(), "component": component,
                                    "value": value});
@@ -477,30 +608,78 @@ pub fn world_edit(b: &mut Boundary<'_>, params: &WorldEditParams) -> Result<Appl
                 ));
                 plan.pending
                     .insert((id, component.clone()), Pending::Removed);
+                if component == Parent::NAME {
+                    plan.hierarchy(b).clear(id);
+                    plan.parented.remove(&id);
+                }
                 canonical.push(json!({"op": "remove", "entity": id.get(), "component": component}));
             }
             Edit::Destroy { entity } => {
                 let id = r(&plan, entity)?;
+                // The entities under it go with it: none of them can be named after this edit.
+                let h = plan.hierarchy(b);
+                let under = h.descendants(id);
+                h.clear(id);
+                for gone in &under {
+                    h.clear(*gone);
+                }
                 plan.destroyed.insert(id, i);
-                checked.push(Checked::Destroy(id));
+                for gone in &under {
+                    plan.destroyed.entry(*gone).or_insert(i);
+                }
+                checked.push(Checked::Destroy(id, under));
                 canonical.push(json!({"op": "destroy", "entity": id.get()}));
             }
             Edit::Revive {
                 entity,
                 name,
                 components,
+                others,
             } => {
-                let id = check_revive(b, &plan, *entity, &at_entity)?;
-                plan.revived.insert(id);
-                checked.push(Checked::Revive(
-                    id,
-                    prepare(b.world(), name.as_deref(), None, components, &at)?,
-                ));
-                canonical.push(json!({"op": "revive", "entity": id.get(), "name": name,
-                                      "components": components}));
+                // Every entity of the edit is marked revived first, then each one's components are
+                // checked, then each one's parent: an entity field or a `Parent` may name another
+                // entity of the edit, wherever that one comes in the list.
+                let first = (*entity, name, components, at.clone());
+                let rest = others.iter().enumerate().map(|(k, o)| {
+                    let at = at.key("others").index(k);
+                    (o.entity, &o.name, &o.components, at)
+                });
+                let mut members = Vec::with_capacity(others.len() + 1);
+                for (n, name, components, at) in std::iter::once(first).chain(rest) {
+                    let id = check_revive(b, &plan, n, &at.key("entity"))?;
+                    plan.revived.insert(id);
+                    members.push((id, name, components, at));
+                }
+                let revived = |id: EntityId| plan.revived.contains(&id);
+                let mut spawns = Vec::with_capacity(members.len());
+                for (id, name, components, at) in &members {
+                    let spawn =
+                        prepare_among(b.world(), name.as_deref(), None, components, at, &revived)?;
+                    spawns.push((*id, spawn));
+                }
+                for (id, _, components, _) in &members {
+                    if let Some(parent) = components.get(Parent::NAME) {
+                        let key = (*id, Parent::NAME.to_owned());
+                        plan.pending.insert(key, Pending::Engine(parent.clone()));
+                    }
+                }
+                for (id, _, components, at) in &members {
+                    if components.contains_key(Parent::NAME) {
+                        let at = at.key("components").key(Parent::NAME).key("parent");
+                        plan.reparent(b, *id, &at)?;
+                    }
+                }
+                let mut c = json!({"op": "revive", "entity": entity, "name": name,
+                                   "components": components});
+                if !others.is_empty() {
+                    c["others"] = json!(others);
+                }
+                canonical.push(c);
+                checked.push(Checked::Revive(spawns));
             }
         }
     }
+    plan.loops()?;
     let before = Before::capture(b.world(), &checked);
     let mut results = Vec::with_capacity(checked.len());
     let mut spawned = Vec::new();
@@ -567,8 +746,9 @@ pub fn components_json(
     out
 }
 
-/// What a call's inverse needs from the world before it: the entities it destroys whole, the
-/// components it sets or removes on live entities, and the ids it revives.
+/// What a call's inverse needs from the world before it: the entities it destroys whole (each
+/// destroy's own entity, then those under it), the components it sets or removes on live entities,
+/// and the ids it revives.
 struct Before {
     destroyed: Vec<(EntityId, Option<String>, Map<String, Value>)>,
     touched: BTreeMap<(EntityId, String), Option<Value>>,
@@ -583,6 +763,7 @@ impl Before {
             revived: Vec::new(),
         };
         let live = |id: EntityId| amoris_sim::entity::entity(world, id);
+        let mut recorded = BTreeSet::new();
         for c in checked {
             match c {
                 Checked::Set(id, comp, _) | Checked::Remove(id, comp, _) => {
@@ -592,63 +773,116 @@ impl Before {
                             .or_insert_with(|| component_json(world, e, comp));
                     }
                 }
-                Checked::Destroy(id) => {
-                    if let Some(e) = live(*id)
-                        && !out.destroyed.iter().any(|(d, _, _)| d == id)
-                    {
-                        let name = world
-                            .get::<amoris_sim::Name>(e)
-                            .map(|n| n.as_str().to_owned());
-                        out.destroyed.push((*id, name, components_json(world, e)));
+                Checked::Destroy(id, under) => {
+                    // Those live before the call; one an earlier edit revived is not among them.
+                    for id in std::iter::once(id).chain(under) {
+                        if let Some(e) = live(*id)
+                            && recorded.insert(*id)
+                        {
+                            let name = world
+                                .get::<amoris_sim::Name>(e)
+                                .map(|n| n.as_str().to_owned());
+                            out.destroyed.push((*id, name, components_json(world, e)));
+                        }
                     }
                 }
-                Checked::Revive(id, _) => out.revived.push(*id),
+                Checked::Revive(members) => out.revived.extend(members.iter().map(|(id, _)| *id)),
                 Checked::Spawn(_) => {}
             }
         }
         out
     }
 
-    /// The edits that undo the call, against the world it left.
+    /// The edits that undo the call, against the world it left, in the order that applies as one
+    /// call: the revive, the restores, the destroys. A restore may put an entity back under one
+    /// the revive brings back, and must take an entity out from under one a destroy removes
+    /// before that destroy, which would take it too.
     fn inverse(self, world: &bevy_ecs::prelude::World, spawned: &[EntityId]) -> Vec<Edit> {
         let live = |id: EntityId| amoris_sim::entity::entity(world, id);
         let mut inv = Vec::new();
-        for id in spawned.iter().chain(&self.revived) {
-            if live(*id).is_some() {
-                inv.push(Edit::Destroy {
-                    entity: EntityRef::Id(id.get()),
-                });
-            }
-        }
         let gone: BTreeSet<EntityId> = self.destroyed.iter().map(|(id, _, _)| *id).collect();
-        for (id, name, components) in self.destroyed {
+        let mut destroyed = self.destroyed.into_iter();
+        if let Some((id, name, components)) = destroyed.next() {
             inv.push(Edit::Revive {
                 entity: id.get(),
                 name,
                 components,
+                others: destroyed
+                    .map(|(id, name, components)| Revived {
+                        entity: id.get(),
+                        name,
+                        components,
+                    })
+                    .collect(),
             });
         }
+        // The entities the call made and left alive, and the hierarchy as the restores below
+        // leave it: what the destroys after them will find. Most calls make nothing (a drag sets
+        // one component), and then no row is read.
+        let made: BTreeSet<EntityId> = spawned
+            .iter()
+            .chain(&self.revived)
+            .copied()
+            .filter(|id| live(*id).is_some())
+            .collect();
+        let mut h = match made.is_empty() {
+            true => Hierarchy::default(),
+            false => Hierarchy::read(world),
+        };
         for ((id, component), prev) in self.touched {
             if gone.contains(&id) {
                 continue;
             }
             let Some(e) = live(id) else { continue };
             match prev {
-                Some(Value::Object(value)) => inv.push(Edit::Set {
-                    entity: EntityRef::Id(id.get()),
-                    component,
-                    value,
-                    replace: true,
-                }),
+                Some(Value::Object(value)) => {
+                    if component == Parent::NAME
+                        && let Some(parent) = value.get("parent").and_then(parent_of)
+                    {
+                        h.set(id, parent);
+                    }
+                    inv.push(Edit::Set {
+                        entity: EntityRef::Id(id.get()),
+                        component,
+                        value,
+                        replace: true,
+                    });
+                }
                 Some(_) => {}
                 None => {
                     if component_json(world, e, &component).is_some() {
+                        if component == Parent::NAME {
+                            h.clear(id);
+                        }
                         inv.push(Edit::Remove {
                             entity: EntityRef::Id(id.get()),
                             component,
                         });
                     }
                 }
+            }
+        }
+        // Of the entities the call made, the topmost alone: one under another of them goes with
+        // it, and naming it after that destroy would be refused. One that a restore moves out
+        // from under the others, with the entity it is under, is topmost again.
+        for id in &made {
+            let mut seen = BTreeSet::from([*id]);
+            let mut at = h.parent(*id);
+            let mut top = true;
+            while let Some(up) = at {
+                if made.contains(&up) {
+                    top = false;
+                    break;
+                }
+                if !seen.insert(up) {
+                    break;
+                }
+                at = h.parent(up);
+            }
+            if top {
+                inv.push(Edit::Destroy {
+                    entity: EntityRef::Id(id.get()),
+                });
             }
         }
         inv
@@ -704,13 +938,16 @@ fn apply(b: &mut Boundary<'_>, c: Checked) -> Result<Value, Problem> {
             }
             json!({"op": "removed", "entity": id.get()})
         }
-        Checked::Destroy(id) => {
-            let gone = b.despawn(id)?;
-            json!({"op": "destroyed", "count": u32::from(gone)})
+        Checked::Destroy(id, _) => {
+            let gone = b.despawn_tree(id)?;
+            json!({"op": "destroyed", "count": gone.len()})
         }
-        Checked::Revive(id, p) => {
-            p.revive(b, id)?;
-            json!({"op": "revived", "id": id.get()})
+        Checked::Revive(members) => {
+            let (first, count) = (members[0].0, members.len());
+            for (id, p) in members {
+                p.revive(b, id)?;
+            }
+            json!({"op": "revived", "id": first.get(), "count": count})
         }
     })
 }

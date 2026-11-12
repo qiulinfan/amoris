@@ -89,8 +89,28 @@ pub fn resolve(world: &World, r: &EntityRef, path: &Pointer) -> Result<EntityId,
     }
 }
 
-/// A JSON value standing for an entity: an id, a name, or `null` for none.
-pub fn resolve_json(world: &World, v: &Value, path: &Pointer) -> Result<Option<EntityId>, Problem> {
+/// Which entities a value may name besides the world's live ones: those an earlier edit of the
+/// same `world_edit` revives, which are alive by the time the edit naming them is applied.
+pub type AlsoAlive<'a> = &'a dyn Fn(EntityId) -> bool;
+
+/// No entity besides the live ones.
+pub fn none_else(_: EntityId) -> bool {
+    false
+}
+
+/// A JSON value standing for an entity: an id, a name, or `null` for none. The entity is live, or
+/// its id is one `also` accepts.
+pub fn resolve_json(
+    world: &World,
+    v: &Value,
+    path: &Pointer,
+    also: AlsoAlive<'_>,
+) -> Result<Option<EntityId>, Problem> {
+    if let Some(id) = v.as_u64().and_then(EntityId::new)
+        && also(id)
+    {
+        return Ok(Some(id));
+    }
     match v {
         Value::Null => Ok(None),
         Value::Number(n) => match n.as_u64() {
@@ -186,6 +206,18 @@ pub fn patch(
     patch: &Map<String, Value>,
     path: &Pointer,
 ) -> Result<ProjectValues, Problem> {
+    patch_among(world, schema, base, patch, path, &none_else)
+}
+
+/// [`patch`], where an entity field may also name an entity `also` accepts.
+pub fn patch_among(
+    world: &World,
+    schema: &ComponentSchema,
+    base: &ProjectValues,
+    patch: &Map<String, Value>,
+    path: &Pointer,
+    also: AlsoAlive<'_>,
+) -> Result<ProjectValues, Problem> {
     let mut nums = base.nums.to_vec();
     let mut strs = base.strs.to_vec();
     for (key, v) in patch {
@@ -222,7 +254,7 @@ pub fn patch(
                 nums[slot] = if b { 1.0 } else { 0.0 };
             }
             FieldType::Entity => {
-                nums[slot] = resolve_json(world, v, &at_field)?.map_or(0.0, EntityId::to_f64)
+                nums[slot] = resolve_json(world, v, &at_field, also)?.map_or(0.0, EntityId::to_f64)
             }
             FieldType::Str => {
                 let s = v
@@ -265,12 +297,14 @@ pub fn patch(
 }
 
 /// A checked patch in its canonical recorded form (threads.md 5.3): entity fields given by name
-/// become their ids, so a replay never resolves a name again.
+/// become their ids, so a replay never resolves a name again. An id may also be one `also`
+/// accepts, as in [`patch_among`].
 pub fn canonical_patch(
     world: &World,
     schema: &ComponentSchema,
     patch: &Map<String, Value>,
     path: &Pointer,
+    also: AlsoAlive<'_>,
 ) -> Result<Map<String, Value>, Problem> {
     let mut out = Map::new();
     for (key, v) in patch {
@@ -279,7 +313,7 @@ pub fn canonical_patch(
             .iter()
             .any(|f| &*f.name == key && f.ty == FieldType::Entity);
         let v = if entity {
-            match resolve_json(world, v, &path.key(key))? {
+            match resolve_json(world, v, &path.key(key), also)? {
                 Some(id) => json!(id.get()),
                 None => Value::Null,
             }

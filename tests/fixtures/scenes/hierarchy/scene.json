@@ -1,0 +1,15 @@
+{
+  "format": "amoris-scene",
+  "version": 1,
+  "entities": [
+    {"name": "Ledger", "components": {"Ledger": {"rig": 2}}},
+    {"name": "Rig"},
+    {"name": "Arm", "components": {"Parent": {"parent": 2}}},
+    {"name": "Hand", "components": {"Parent": {"parent": 3}}},
+    {"name": "Leg", "components": {"Parent": {"parent": 2}}},
+    {"name": "Loose"},
+    {"name": "Base"},
+    {"name": "Post", "components": {"Parent": {"parent": 7}}},
+    {"name": "Sign", "components": {"Parent": {"parent": 8}}}
+  ]
+}

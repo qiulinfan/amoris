@@ -16,7 +16,8 @@ use std::collections::BTreeMap;
 
 use amoris_contract::{CheckOptions, Problem, detail};
 use amoris_link::{SnapshotView, WorldSnapshot};
-use amoris_sim::EntityId;
+use amoris_sim::entity::hierarchy::{listing, nest};
+use amoris_sim::{EntityId, Hierarchy};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -64,7 +65,6 @@ struct GetParams {
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code)]
 struct TreeParams {
     #[serde(default)]
     root: Option<EntityRef>,
@@ -452,30 +452,50 @@ impl<'a> Shown<'a> {
         }
     }
 
+    /// `world.tree` as the runtime answers it (amoris-runtime `inspect::tree`): the same listing
+    /// over the snapshot's `Parent` rows, each node marked `paused_at`.
     fn tree(&mut self, p: &TreeParams, paused: &Value) -> Result<Value, Problem> {
         for c in &p.with {
             self.known(c)?;
         }
-        let ids = match &p.root {
-            Some(r) => vec![self.resolve(r)?],
-            None => self.ids.clone(),
+        let root = match &p.root {
+            Some(r) => EntityId::new(self.resolve(r)?),
+            None => None,
         };
-        let limit = p
-            .limit
-            .map_or(usize::MAX, |l| usize::try_from(l).unwrap_or(usize::MAX));
-        let mut out = Vec::new();
-        for id in ids {
-            if out.len() >= limit {
-                break;
-            }
-            if !self.has_all(id, &p.with)? || !self.name_matches(id, p.filter.as_deref()) {
-                continue;
-            }
-            out.push(json!({"id": id, "name": self.name_of(id),
-                            "components": self.components_of(id)?, "children": [],
-                            "paused_at": paused}));
+        let ids: Vec<EntityId> = self.ids.iter().filter_map(|n| EntityId::new(*n)).collect();
+        let links: Vec<(EntityId, EntityId)> = if self.known("Parent").is_ok() {
+            let rows = self.rows("Parent")?;
+            let link = |(child, v): (&u64, &Value)| {
+                Some((
+                    EntityId::new(*child)?,
+                    EntityId::new(v["parent"].as_u64()?)?,
+                ))
+            };
+            rows.iter().filter_map(link).collect()
+        } else {
+            Vec::new()
+        };
+        let h = Hierarchy::from_links(links);
+        let listed = listing(&ids, &h, root, p.depth, p.limit, |id| {
+            Ok::<_, Problem>(
+                self.has_all(id.get(), &p.with)?
+                    && self.name_matches(id.get(), p.filter.as_deref()),
+            )
+        })?;
+        let mut components = BTreeMap::new();
+        for l in &listed {
+            components.insert(l.id, self.components_of(l.id.get())?);
         }
-        Ok(Value::Array(out))
+        let nodes = nest(&listed, &mut |l, children: Vec<Value>| {
+            let mut node = json!({"id": l.id.get(), "name": self.name_of(l.id.get()),
+                                  "components": components.get(&l.id), "children": children,
+                                  "paused_at": paused});
+            if l.more > 0 {
+                node["more"] = json!(l.more);
+            }
+            node
+        });
+        Ok(Value::Array(nodes))
     }
 
     fn query(&mut self, p: &QueryParams, paused: &Value) -> Result<Value, Problem> {

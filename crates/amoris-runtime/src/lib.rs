@@ -27,6 +27,7 @@ mod edit;
 mod engine;
 pub mod files;
 mod game;
+mod hierarchy;
 pub mod history;
 pub mod inspect;
 pub mod kept;

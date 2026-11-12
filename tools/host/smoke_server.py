@@ -200,6 +200,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--amoris", default=str(REPO / f"target/debug/amoris{EXE}"))
     ap.add_argument("--keep", action="store_true", help="keep the project copy")
+    ap.add_argument("--port", type=int, default=0, help="the host's port (default: any free one)")
     a = ap.parse_args()
     # Absolute: the CLI runs in the project's copy.
     amoris = str(Path(a.amoris).resolve())
@@ -211,7 +212,7 @@ def main():
     errlog = open(tmp / "serve.err", "w")
     # On Windows the host gets its own process group, so Ctrl-Break reaches it alone.
     group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {}
-    server = subprocess.Popen([amoris, "serve", str(proj), "--port", "0"],
+    server = subprocess.Popen([amoris, "serve", str(proj), "--port", str(a.port)],
                               stdout=subprocess.PIPE, stderr=errlog, text=True, **group)
     try:
         line = server.stdout.readline()
@@ -240,6 +241,28 @@ def main():
         check(r.returncode == 0 and r.stdout.startswith("undone"), f"cli undo: {r.stdout.strip()}")
         r = cli("world", "get", "Crate1", "Cargo", "--json")
         check(json.loads(r.stdout)["components"]["Cargo"]["value"] == 1, "cli undo restored the value")
+        # The hierarchy: Crate1 under the Sloop, the tree indented by it, one subtree, and back.
+        r = cli("world", "set", "Crate1", "Parent", "parent=3")
+        check(r.returncode == 0 and "set Parent on Crate1" in r.stdout,
+              f"cli world set Parent: {r.stdout.strip()}")
+        lines = cli("world", "tree").stdout.splitlines()
+        at = next((i for i, l in enumerate(lines) if l.startswith("#3 Sloop")), -1)
+        check(len(lines) == n and at >= 0 and lines[at + 1].startswith("  #4 Crate1")
+              and sum(l.startswith(" ") for l in lines) == 1,
+              "cli world tree nests Crate1 under the Sloop")
+        r = cli("world", "tree", "--root", "Sloop", "--depth", "0")
+        check(r.stdout.count("\n") == 1 and r.stdout.startswith("#3 Sloop")
+              and "(+1 below: --root 3)" in r.stdout, f"cli world tree --root --depth: {r.stdout.strip()}")
+        r = cli("world", "tree", "crate1")
+        check(r.stdout.splitlines()[:1] == [lines[at]] and r.stdout.count("\n") == 2,
+              "cli world tree: a match comes with the entity it is under")
+        r = cli("world", "set", "Sloop", "Parent", "parent=4", ok=False)
+        check(r.returncode == 1 and "sim.parent_cycle" in r.stderr,
+              f"cli refusal of a loop: {r.stderr.strip()}")
+        r = cli("undo")
+        lines = cli("world", "tree").stdout.splitlines()
+        check(r.returncode == 0 and len(lines) == n and not any(l.startswith(" ") for l in lines),
+              "cli undo of the Parent: a flat tree again")
         r = cli("step", "120", "--until", "event:sail.set")
         check("stopped by" in r.stdout and "sail.set" in r.stdout, f"cli step --until: {r.stdout.strip()}")
         r = cli("step", "600", "--until", "Sloop.Boat.speed>1")

@@ -208,7 +208,7 @@ export interface World {
 	insert<C extends ComponentName>(e: Entity, component: C, value?: Patch<Components[C]>): void;
 	/** Removes a component; a no-op when the entity lacks it. */
 	remove(e: Entity, component: ComponentName): void;
-	/** Despawns the entity. */
+	/** Despawns the entity and every entity under it by `Parent`. */
 	despawn(e: Entity): void;
 	/** Spawns an entity with these components; its id is returned at once. */
 	spawn(components: Spawn): Entity;

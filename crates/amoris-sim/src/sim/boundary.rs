@@ -50,9 +50,15 @@ impl<'a> Boundary<'a> {
         entity::spawn(self.world, bundle)
     }
 
-    /// Despawns the entity holding `id`: `true`, or `false` if it already was despawned.
+    /// Despawns the entity holding `id` and every entity under it by `Parent`: `true`, or `false`
+    /// if it already was despawned.
     pub fn despawn(&mut self, id: EntityId) -> Result<bool, Problem> {
         entity::despawn(self.world, id)
+    }
+
+    /// [`Boundary::despawn`], answering the ids it despawned, `id` first (`entity::despawn_tree`).
+    pub fn despawn_tree(&mut self, id: EntityId) -> Result<Vec<EntityId>, Problem> {
+        entity::despawn_tree(self.world, id)
     }
 
     /// Spawns an entity again under a destroyed entity's id (`entity::revive`).

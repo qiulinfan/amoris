@@ -96,7 +96,7 @@ Each method is a command of the catalog (`GET /api/catalog` is authoritative). K
 | `status` | `{}` | status (section 3) with `bundle`, `writes`, `poisoned` |
 | `project.info` | `{}` | `{name, root, rate, scenes, scripts, assets}` |
 | `project.save` | `{}` | `{files, entities}` (the edit world, even during Play) |
-| `world.tree` | `{root?, depth?, filter?, with?, limit?}` | `[{id, name, components: [name], children: [...]}]` |
+| `world.tree` | `{root?, depth?, filter?, with?, limit?}` | `[{id, name, components: [name], children: [...], more?}]`: nested by `Parent`, roots and children in ascending id order; `depth` at most 48 levels, and an entity whose children it left out carries their number in `more` ([server.md](server.md) 3) |
 | `world.get` | `{entity, components?, fields?: ["C.f.path"]}` | `{id, name, components: {Name: value}, fields?: {"C.f.path": value}}` |
 | `world.query` | `{with: [component], fields?: ["C.f"], name?, limit?}` | rows `{id, name, "C.f": value}` |
 | `world.schema` | `{component?}` | component JSON Schemas with docs, from the registry |
@@ -238,4 +238,6 @@ live and undoes at once), `set` of `Name` takes a string, the hierarchy is a `Pa
 the editor changes with this file. Adopted 2026-10-15: `group` and the history's sources (server.md
 3.1); entries carry their source instead of an `agent:` label prefix, which the editor still reads
 from a host without sources. The order stays this draft's (each stack most recent last): the editor
-reverses the redo stack itself.
+reverses the redo stack itself. Adopted 2026-11-12: the hierarchy is the `Parent {parent}`
+component, set and removed with `world.edit`, and `world.tree` nests by it; a destroy takes the
+entities under the destroyed one, and an undo revives them all (server.md 3.1).
