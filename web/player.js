@@ -1,9 +1,10 @@
-// The game player (docs/spec/web-export.md): a first-person game's `player` seat in a page, as the
-// native window plays it (`amoris play <project> --walk`, crates/amoris-app/src/window.rs). The game
-// runs in a module Web Worker (amoris.js, game.js) at real time; the engine's renderer
+// The game player (docs/spec/web-export.md): a first- or third-person game's `player` seat in a page,
+// as the native window plays it (`amoris play <project> --walk`, crates/amoris-app/src/window.rs).
+// The game runs in a module Web Worker (amoris.js, game.js) at real time; the engine's renderer
 // (viewport/viewport.js) draws its render feed with WebGPU; the keys, the mouse and the wheel become
-// `player.act` controls and pulses of the seat, sent as the local human player. The camera is the
-// walker's, turned at once by the page's own look (the viewport's `first_person`).
+// `player.act` controls and pulses of the seat, sent as the local human player. A first-person
+// camera is the walker's, turned at once by the page's own look (the viewport's `first_person`); a
+// third-person seat's (docs/spec/player.md 5.1) is its rig's, drawn with the viewport's camera lag.
 //
 // The page plays the game's sound with WebAudio as the native window plays it with amoris-audio:
 // the world's sound sources, the sound events (`sound`, or those the project's `[sounds]` names)
@@ -189,6 +190,19 @@ class Input {
 /** Mouse buttons by `MouseEvent.button`, as a game's buttons name them. */
 const MOUSE = ["MouseLeft", "MouseMiddle", "MouseRight"];
 
+/** The keyboard and mouse defaults of the `third_person` catalog's pulses (docs/spec/player.md
+ *  5.1), as the native window's `THIRD_PERSON_KEYS`; Space and the left button are `jump` and
+ *  `primary`, the right button held is `guard`, the wheel zooms. */
+const THIRD_PERSON_KEYS = [
+  ["secondary", ["KeyE"]],
+  ["dodge", ["KeyC"]],
+  ["interact", ["KeyF"]],
+  ["lock", ["KeyQ", "MouseMiddle"]],
+];
+
+/** A third-person seat's camera lag, seconds (the window's `THIRD_PERSON_CAMERA_LAG_S`). */
+const THIRD_PERSON_CAMERA_LAG_S = 0.08;
+
 /** The mask of the game's buttons (each a list of key names) any of whose keys are in `names`. */
 function buttonMask(buttons, names) {
   let m = 0;
@@ -200,19 +214,54 @@ function buttonMask(buttons, names) {
 
 /** The seat: each frame's input as `player.act` actions, sent when something changed. */
 class Seat {
-  constructor(amoris, buttons = []) {
+  constructor(amoris, buttons = [], thirdPerson = false) {
     this.amoris = amoris;
     this.buttons = buttons;
+    this.thirdPerson = thirdPerson;
     this.held = 0;
     this.sent = null;
     this.slot = 0;
+    this.zoom = 1;
+    this.guard = false;
     this.acts = 0;
     this.refused = 0;
+  }
+
+  /** A third-person seat's frame: the move, the orbit, sprint, the wheel's zoom, the right
+   *  button's guard and the verbs' pulses. */
+  thirdPersonFrame(input, yaw, pitch, actions) {
+    const now = [input.motion[1], input.motion[0], input.fast, yaw, pitch];
+    if (!this.sent || now.some((v, i) => v !== this.sent[i])) {
+      actions.push({ do: "set", controls: { forward: now[0], strafe: now[1], run: now[2], yaw, pitch } });
+      this.sent = now;
+    }
+    if (input.captured && input.slotSteps) {
+      // A notch toward the player draws the camera 10% farther.
+      const zoom = Math.min(2, Math.max(0.5, this.zoom * Math.pow(1.1, input.slotSteps)));
+      if (zoom !== this.zoom) {
+        this.zoom = zoom;
+        actions.push({ do: "set", controls: { zoom } });
+      }
+    }
+    const guard = input.captured && input.held.includes("MouseRight");
+    if (guard !== this.guard) {
+      this.guard = guard;
+      actions.push({ do: "set", controls: { guard } });
+    }
+    if (!input.captured) return;
+    const pulses = [[input.jump, "jump"], [input.primary, "primary"],
+      ...THIRD_PERSON_KEYS.map(([control, keys]) => [keys.some((k) => input.pressed.includes(k)), control])];
+    for (const [on, control] of pulses) if (on) actions.push({ do: "pulse", control });
   }
 
   frame(input, look) {
     const [yaw, pitch] = look;
     const actions = [];
+    if (this.thirdPerson) {
+      this.thirdPersonFrame(input, yaw, pitch, actions);
+      this.send(input, actions);
+      return;
+    }
     const now = [input.motion[1], input.motion[0], input.fast, yaw, pitch, input.rise];
     if (!this.sent || now.some((v, i) => v !== this.sent[i])) {
       actions.push({ do: "set", controls: { forward: now[0], strafe: now[1], run: now[2], yaw, pitch, rise: now[5] } });
@@ -230,6 +279,11 @@ class Seat {
         if (on) actions.push({ do: "pulse", control });
       }
     }
+    this.send(input, actions);
+  }
+
+  /** The game's own buttons (animation.md 6), then the frame's actions in one call. */
+  send(input, actions) {
     if (this.buttons.length) {
       const held = buttonMask(this.buttons, input.held);
       if (held !== this.held) {
@@ -427,9 +481,11 @@ export async function main() {
     loadModule(),
     fetchBytes(packageUrl, (n) => { if (total) progress(n / total); }),
   ]);
-  const { name, player_camera: camera, player_controls: controls, player_buttons: buttons, sounds } =
+  const { name, player, player_camera: camera, player_controls: controls, player_buttons: buttons, sounds } =
     JSON.parse(new TextDecoder().decode(pkg));
-  const gameCamera = camera === "game";
+  // A third-person seat always draws its rig's camera.
+  const thirdPerson = player?.actions === "third_person";
+  const gameCamera = camera === "game" || thirdPerson;
   if (controls) $("help").textContent = controls;
   document.title = name;
   $("name").textContent = name;
@@ -437,12 +493,12 @@ export async function main() {
   const amoris = start(module, pkg, { pacing: gameCamera ? "stepped" : { real_time: { speed: 1 } } });
   const canvas = $("view");
   const input = new Input(canvas);
-  const seat = new Seat(amoris, buttons || []);
+  const seat = new Seat(amoris, buttons || [], thirdPerson);
   const sound = new Sound(new URL(".", packageUrl), sounds);
   amoris.onEvents((records) => sound.events(records));
   const state = (window.amorisPlayer = {
     loaded_ms: 0, ready_ms: 0, frames: 0, look: null, stats: null, samples: [],
-    amoris, input, seat, gameCamera, sound,
+    amoris, input, seat, gameCamera, thirdPerson, sound,
     /** Captures without pointer lock (the check page, where headless Chrome has no lock). */
     forceCapture(on = true) {
       input.forced = on;
@@ -517,6 +573,7 @@ export async function main() {
     assetsUrl: new URL(".", packageUrl).href,
     gpuMinimal: params.get("gpu_minimal") || undefined,
     beforeFrame(api) {
+      api.raw.set_camera_smoothing(thirdPerson ? THIRD_PERSON_CAMERA_LAG_S : 0);
       const frame = input.take();
       const look = api.raw.first_person(frame.dx, frame.dy, frame.captured, gameCamera);
       state.look = look.length ? Array.from(look) : null;

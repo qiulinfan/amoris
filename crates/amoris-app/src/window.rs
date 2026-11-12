@@ -53,7 +53,8 @@ struct Play {
     capture: Option<(PathBuf, u32)>,
     frames: u32,
     walk: Option<WalkSession>,
-    /// `--walk` on a game whose catalog is `first_person`: the window is seat `player`.
+    /// `--walk` on a game whose catalog is `first_person` or `third_person`: the window is seat
+    /// `player`.
     seat: Option<SeatWalk>,
 }
 
@@ -193,14 +194,12 @@ fn play_inner(raw: &[String]) -> Result<Outcome, Problem> {
         )
     })?;
     let project = Project::load(&dir)?;
-    // A first-person game is walked as its player seat (voxels.md 8); any other through the
-    // presenter's own collision camera.
-    let first_person = project
-        .manifest
-        .player
-        .as_ref()
-        .is_some_and(|p| p.actions == "first_person");
-    let walk = if args.has("walk") && !first_person {
+    // A first- or third-person game is walked as its player seat (voxels.md 8, player.md 5.1);
+    // any other through the presenter's own collision camera.
+    let catalog = project.manifest.player.as_ref().map(|p| p.actions.as_str());
+    let third_person = catalog == Some("third_person");
+    let walker_seat = third_person || catalog == Some("first_person");
+    let walk = if args.has("walk") && !walker_seat {
         Some(WalkSession::new(project.clone())?)
     } else {
         None
@@ -220,12 +219,14 @@ fn play_inner(raw: &[String]) -> Result<Outcome, Problem> {
         move || crate::water_compute::builder(setup, seed).build(),
         options,
     )?;
-    let seat = if args.has("walk") && first_person {
-        let game_camera = project
-            .manifest
-            .player
-            .as_ref()
-            .is_some_and(|p| p.camera == amoris_runtime::player::PlayerCamera::Game);
+    let seat = if args.has("walk") && walker_seat {
+        // A third-person seat always draws its rig's camera.
+        let game_camera = third_person
+            || project
+                .manifest
+                .player
+                .as_ref()
+                .is_some_and(|p| p.camera == amoris_runtime::player::PlayerCamera::Game);
         let buttons = project
             .manifest
             .player
@@ -235,6 +236,7 @@ fn play_inner(raw: &[String]) -> Result<Outcome, Problem> {
         Some(SeatWalk::new(
             game.client(amoris_link::Source::Player(0))?,
             game_camera,
+            third_person,
             buttons,
         ))
     } else {
@@ -288,9 +290,29 @@ fn play_inner(raw: &[String]) -> Result<Outcome, Problem> {
     })
 }
 
-/// The window as a first-person game's seat `player` (voxels.md 8): keys, the mouse and the wheel
-/// become `player.act` controls and pulses of the walker in the world; the camera is the walker's,
-/// turned at once by the window's own latest look so looking never waits on a tick.
+/// The keyboard and mouse defaults of the `third_person` catalog's pulses (player.md 5.1), by the
+/// names `WalkInput::pressed` gives keys and buttons; the page's `THIRD_PERSON_KEYS` (web/player.js)
+/// are the same. Space and the left button are `jump` and `primary`, as for a first-person seat.
+const THIRD_PERSON_KEYS: [(&str, &[&str]); 4] = [
+    ("secondary", &["KeyE"]),
+    ("dodge", &["KeyC"]),
+    ("interact", &["KeyF"]),
+    ("lock", &["KeyQ", "MouseMiddle"]),
+];
+
+/// Frames the mouse must be still before the seat takes a game camera's look as its own: the
+/// world's camera follows a look sent a tick or two later, drawn between ticks, and taking it
+/// sooner turned a mouse's orbit back. amoris-viewport's `GAME_LOOK_STILL_FRAMES` is the same.
+const GAME_LOOK_STILL_FRAMES: u32 = 8;
+
+/// The time constant of a third-person seat's camera lag, seconds (player.md 5.1).
+const THIRD_PERSON_CAMERA_LAG_S: f32 = 0.08;
+
+/// The window as a first- or third-person game's seat `player` (voxels.md 8, player.md 5.1):
+/// keys, the mouse and the wheel become `player.act` controls and pulses of the walker in the
+/// world. A first-person camera is the walker's, turned at once by the window's own latest look so
+/// looking never waits on a tick; a game's camera (a third-person seat's rig) is drawn as the
+/// world poses it, its position smoothed for a third-person seat.
 struct SeatWalk {
     client: amoris_link::GameClient,
     input: WalkInput,
@@ -302,6 +324,14 @@ struct SeatWalk {
     status: String,
     /// The game's rules pose the scene's active camera; the mouse still steers the seat.
     game_camera: bool,
+    /// The seat is the `third_person` catalog's: the wheel zooms, the right button guards, and
+    /// the verbs of [`THIRD_PERSON_KEYS`] are pulses.
+    third_person: bool,
+    /// Frames since the mouse last moved the look.
+    still_frames: u32,
+    /// A third-person seat's zoom and guard as last sent.
+    zoom: f32,
+    guard: bool,
     /// The keys of each of the game's buttons (`[player] buttons`), and the held mask last sent.
     buttons: Vec<Vec<String>>,
     held: u32,
@@ -321,6 +351,7 @@ impl SeatWalk {
     fn new(
         client: amoris_link::GameClient,
         game_camera: bool,
+        third_person: bool,
         buttons: Vec<Vec<String>>,
     ) -> SeatWalk {
         SeatWalk {
@@ -332,6 +363,10 @@ impl SeatWalk {
             sent: None,
             status: "Click to play — Esc exits".into(),
             game_camera,
+            third_person,
+            still_frames: 0,
+            zoom: 1.0,
+            guard: false,
             buttons,
             held: 0,
         }
@@ -356,21 +391,28 @@ impl SeatWalk {
         // The walker's camera, drawn between ticks with the world it sees, turned by the look.
         r.set_camera_override(None);
         r.set_look_override(None);
+        r.set_camera_smoothing(self.third_person.then_some(THIRD_PERSON_CAMERA_LAG_S));
         // Before the first tick the camera has its body's pose from the scene file, not yet the
         // walker's look (`first_person` in amoris-viewport's web.rs).
         if !r.scene.cameras.iter().any(|c| c.active) || (self.look.is_none() && r.scene.tick == 0) {
             self.status = "Waiting for the player's camera…".into();
             return;
         }
-        let mut camera = r.camera();
+        let camera = r.camera();
         let seen = {
             let f = camera.rotation * Vec3::NEG_Z;
             ((-f.x).atan2(-f.z), f.y.clamp(-1.0, 1.0).asin())
         };
         let (mut yaw, mut pitch) = self.look.unwrap_or(seen);
-        // A game that poses the camera may turn it (a lock-on, animation.md 6): while the mouse is
-        // still, the seat takes the camera's look as its own (web.rs `first_person` does the same).
-        if self.game_camera && input.look == [0.0; 2] {
+        // A game that poses the camera may turn it (a lock-on, animation.md 6): once the mouse has
+        // been still a while, the seat takes the camera's look as its own (web.rs `first_person`
+        // does the same).
+        self.still_frames = if input.look == [0.0; 2] {
+            self.still_frames.saturating_add(1)
+        } else {
+            0
+        };
+        if self.game_camera && self.still_frames >= GAME_LOOK_STILL_FRAMES {
             let dyaw = (seen.0 - yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
                 - std::f32::consts::PI;
             if dyaw.abs() > 0.02 || (seen.1 - pitch).abs() > 0.02 {
@@ -392,30 +434,10 @@ impl SeatWalk {
         let run = captured && self.input.fast;
         let rise = captured && self.input.rise;
         let mut actions = Vec::new();
-        let now = (motion[1], motion[0], run, yaw, pitch, rise);
-        if self.sent != Some(now) {
-            actions.push(serde_json::json!({"do": "set", "controls": {
-                "forward": motion[1], "strafe": motion[0], "run": run,
-                "yaw": yaw, "pitch": pitch, "rise": rise}}));
-            self.sent = Some(now);
-        }
-        let slot = match (input.slot, input.slot_steps) {
-            (Some(s), _) => s,
-            (None, 0) => self.slot,
-            (None, n) => u8::try_from((i32::from(self.slot) + n).rem_euclid(9)).unwrap_or(0),
-        };
-        if slot != self.slot {
-            self.slot = slot;
-            actions.push(serde_json::json!({"do": "set", "controls": {"slot": slot.to_string()}}));
-        }
-        for (on, control) in [
-            (input.jump, "jump"),
-            (input.primary, "primary"),
-            (input.secondary, "secondary"),
-        ] {
-            if on && captured {
-                actions.push(serde_json::json!({"do": "pulse", "control": control}));
-            }
+        if self.third_person {
+            self.third_person_actions(&input, (motion, run, yaw, pitch), &mut actions);
+        } else {
+            self.first_person_actions(&input, (motion, run, rise, yaw, pitch), &mut actions);
         }
         // The game's own buttons (animation.md 6).
         if !self.buttons.is_empty() {
@@ -452,6 +474,102 @@ impl SeatWalk {
                 eprintln!("player.act not sent: {}", p.message);
             }
         }
+        self.draw_overlays(r, camera, yaw, pitch, captured);
+    }
+
+    /// A third-person seat's actions for the frame (player.md 5.1): the move, the orbit's look,
+    /// sprint, zoom by the wheel, guard by the right button, and the verbs' pulses.
+    fn third_person_actions(
+        &mut self,
+        input: &WalkInput,
+        (motion, run, yaw, pitch): ([f32; 2], bool, f32, f32),
+        actions: &mut Vec<serde_json::Value>,
+    ) {
+        let captured = self.input.captured;
+        let now = (motion[1], motion[0], run, yaw, pitch, false);
+        if self.sent != Some(now) {
+            actions.push(serde_json::json!({"do": "set", "controls": {
+                "forward": motion[1], "strafe": motion[0], "run": run,
+                "yaw": yaw, "pitch": pitch}}));
+            self.sent = Some(now);
+        }
+        // The wheel: a notch toward the player draws the camera 10% farther.
+        if captured && input.slot_steps != 0 {
+            let zoom = (self.zoom * 1.1f32.powi(input.slot_steps)).clamp(0.5, 2.0);
+            if zoom != self.zoom {
+                self.zoom = zoom;
+                actions.push(serde_json::json!({"do": "set", "controls": {"zoom": zoom}}));
+            }
+        }
+        let guard = captured && self.input.held.iter().any(|k| k == "MouseRight");
+        if guard != self.guard {
+            self.guard = guard;
+            actions.push(serde_json::json!({"do": "set", "controls": {"guard": guard}}));
+        }
+        if !captured {
+            return;
+        }
+        let pressed = |keys: &[&str]| input.pressed.iter().any(|k| keys.contains(&k.as_str()));
+        for (on, control) in [(input.jump, "jump"), (input.primary, "primary")]
+            .into_iter()
+            .chain(
+                THIRD_PERSON_KEYS
+                    .iter()
+                    .map(|(c, keys)| (pressed(keys), *c)),
+            )
+        {
+            if on {
+                actions.push(serde_json::json!({"do": "pulse", "control": control}));
+            }
+        }
+    }
+
+    /// A first-person seat's actions for the frame (voxels.md 8): the walk, the look, the hotbar
+    /// and the hands' pulses.
+    fn first_person_actions(
+        &mut self,
+        input: &WalkInput,
+        (motion, run, rise, yaw, pitch): ([f32; 2], bool, bool, f32, f32),
+        actions: &mut Vec<serde_json::Value>,
+    ) {
+        let captured = self.input.captured;
+        let now = (motion[1], motion[0], run, yaw, pitch, rise);
+        if self.sent != Some(now) {
+            actions.push(serde_json::json!({"do": "set", "controls": {
+                "forward": motion[1], "strafe": motion[0], "run": run,
+                "yaw": yaw, "pitch": pitch, "rise": rise}}));
+            self.sent = Some(now);
+        }
+        let slot = match (input.slot, input.slot_steps) {
+            (Some(s), _) => s,
+            (None, 0) => self.slot,
+            (None, n) => u8::try_from((i32::from(self.slot) + n).rem_euclid(9)).unwrap_or(0),
+        };
+        if slot != self.slot {
+            self.slot = slot;
+            actions.push(serde_json::json!({"do": "set", "controls": {"slot": slot.to_string()}}));
+        }
+        for (on, control) in [
+            (input.jump, "jump"),
+            (input.primary, "primary"),
+            (input.secondary, "secondary"),
+        ] {
+            if on && captured {
+                actions.push(serde_json::json!({"do": "pulse", "control": control}));
+            }
+        }
+    }
+
+    /// The first-person look on the camera, the targeted block's outline, the status and the
+    /// crosshair.
+    fn draw_overlays(
+        &mut self,
+        r: &mut Renderer,
+        mut camera: CameraState,
+        yaw: f32,
+        pitch: f32,
+        captured: bool,
+    ) {
         if !self.game_camera {
             camera.rotation = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
             r.set_look_override(Some(camera.rotation));

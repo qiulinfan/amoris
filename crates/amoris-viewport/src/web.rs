@@ -34,6 +34,13 @@ pub fn start() {
     }));
 }
 
+/// Frames the mouse must be still before a seat takes a game camera's look as its own (about a
+/// tenth of a second at 60 frames a second): the world's camera follows a look sent a tick or two
+/// later, drawn between ticks, and taking it sooner turned a mouse's orbit back (the
+/// `third_person` browser check, 2026-11-12). The native window's `GAME_LOOK_STILL_FRAMES` is the
+/// same.
+const GAME_LOOK_STILL_FRAMES: u32 = 8;
+
 /// The renderer drawing into a canvas.
 #[wasm_bindgen]
 pub struct Viewport {
@@ -51,6 +58,8 @@ pub struct Viewport {
     last_stats: String,
     /// The first-person look (yaw, pitch) of `first_person`, once the walker's camera is known.
     look: Option<(f32, f32)>,
+    /// Frames since the mouse last moved the look (`first_person` with a game camera).
+    still_frames: u32,
     /// Controlled compute/readback QA, separate from the browser game worker.
     water_probe: Option<amoris_render::water_samples::WaterSamples>,
     /// The water's sound for the page's WebAudio (`water_sound`), once asked for.
@@ -104,6 +113,7 @@ impl Viewport {
             max_in_flight: 2,
             last_stats: "{}".into(),
             look: None,
+            still_frames: 0,
             water_probe: None,
             water_sound: None,
         })
@@ -289,7 +299,7 @@ impl Viewport {
             .collect();
     }
 
-    /// A first-person game's seat in the page (web/player; the native window's `SeatWalk`,
+    /// A first- or third-person game's seat in the page (web/player; the native window's `SeatWalk`,
     /// voxels.md 8): draws from the walker's camera as the world last published it, turned at once
     /// by the page's own look so looking never waits on a tick. `dx`, `dy` are the mouse's movement
     /// since the last call (CSS pixels, used while `captured`); while captured the targeted block is
@@ -326,9 +336,16 @@ impl Viewport {
             ((-f.x).atan2(-f.z), f.y.clamp(-1.0, 1.0).asin())
         };
         let (mut yaw, mut pitch) = self.look.unwrap_or(seen);
-        // A game that poses the camera may turn it (a lock-on, animation.md 6): while the mouse is
-        // still, the seat takes the camera's look as its own, so the next movement starts there.
-        if game_camera && dx == 0.0 && dy == 0.0 {
+        // A game that poses the camera may turn it (a lock-on, animation.md 6): once the mouse has
+        // been still for `GAME_LOOK_STILL_FRAMES`, the seat takes the camera's look as its own, so
+        // the next movement starts there. Sooner, the camera, a tick or two behind the look just
+        // sent, would turn the look back.
+        self.still_frames = if dx == 0.0 && dy == 0.0 {
+            self.still_frames.saturating_add(1)
+        } else {
+            0
+        };
+        if game_camera && self.still_frames >= GAME_LOOK_STILL_FRAMES {
             let dyaw = (seen.0 - yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
                 - std::f32::consts::PI;
             if dyaw.abs() > 0.02 || (seen.1 - pitch).abs() > 0.02 {
@@ -398,6 +415,14 @@ impl Viewport {
             world: [0.0; 3],
         });
         vec![yaw, pitch]
+    }
+
+    /// Smooths the drawn scene camera's position with time constant `tau_s` seconds, or not at all
+    /// for 0 (a third-person seat's camera lag, player.md 5.1; `Renderer::set_camera_smoothing`).
+    /// Presentation only: the world's camera is unchanged.
+    pub fn set_camera_smoothing(&mut self, tau_s: f32) {
+        self.renderer
+            .set_camera_smoothing((tau_s > 0.0).then_some(tau_s));
     }
 
     /// The block cell the view's centre ray meets within `max_m`: `[x, y, z, edge]` of its world
