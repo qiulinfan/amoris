@@ -205,7 +205,11 @@ const world = async () => evaluate(`(async () => {
 let ready = null;
 for (let i = 0; i < Number(process.env.READY_S || 120) * 2 && !ready; i++) {
   await sleep(500);
-  ready = await evaluate("window.amorisPlayer && window.amorisPlayer.ready_ms ? window.amorisPlayer.ready_ms : null").catch(() => null);
+  // A game without a walker seat is never ready to play (its veil stays up, ui.md 6): for --ui it
+  // is ready once the game ticks and the view draws.
+  ready = await evaluate(uiPresses
+    ? "(() => { const p = window.amorisPlayer; return p && p.viewport && p.frames > 30 && (p.amoris.latest()?.tick ?? 0) > 30 ? performance.now() : null; })()"
+    : "window.amorisPlayer && window.amorisPlayer.ready_ms ? window.amorisPlayer.ready_ms : null").catch(() => null);
   const stopped = await evaluate("window.amorisPlayer && window.amorisPlayer.amoris.stopped && window.amorisPlayer.amoris.stopped.message").catch(() => null);
   if (stopped) { note("[stopped] " + stopped); break; }
   // A poisoned world halts without stopping the worker (GPU water that failed or timed out).
@@ -259,9 +263,14 @@ if (ready) {
       await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
       await sleep(600);
     };
+    // The UI takes the touch as a pointer event and cancels it, so the browser makes no mouse
+    // events of it: on the game, the look's would have it otherwise (input.md 5).
+    await evaluate("window.__mouse = 0, addEventListener('mousedown', () => window.__mouse++, true)");
     await tap(centre(tapped));
-    check("a tap on a button presses it once", await presses(tapped) === tapped.presses + 1 && await free(),
-      { button: tapped.label, presses: await presses(tapped), touch: await evaluate("window.amorisPlayer.touch") });
+    check("a tap on a button presses it once, as the UI's touch", await presses(tapped) === tapped.presses + 1
+      && await free() && await evaluate("window.__mouse") === 0,
+      { button: tapped.label, presses: await presses(tapped), touch: await evaluate("window.amorisPlayer.touch"),
+        mouse_events: await evaluate("window.__mouse") });
     if (disabled.length) {
       // The disabled button's place: below the last enabled one in the column.
       const last = boxes[enabled[enabled.length - 1].entity];
