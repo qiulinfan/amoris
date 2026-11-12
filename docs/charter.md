@@ -326,11 +326,18 @@ beta 功能，测试已移除（4.4）。
 | 性能分析 | 内建分析器：每个系统的 CPU 区段 + 每个渲染通道的 GPU 时间戳，推送到编辑器；Tracy 为可选特性 | tracy-client 0.19 | 测量为依据 |
 | 离线工具 | **Python 3.14 + uv**：神经资源训练（PyTorch，Apple MPS；神经纹理例外，2026-10-09 Pioneer 起在引擎的 wgpu 计算着色器里训练，见 4.4）、评测 harness、分析脚本 | — | 只在工具层，不嵌入运行时 |
 
-2026-10-25 状态注记（上表的决策不变）：表中四项还没有接入代码，是计划项。gilrs 不是依赖，窗口只接键
-盘与鼠标，没有手柄输入；`ts-rs` 不是依赖，脚本的 `.d.ts` 由组件注册表（`scripts.types`）与 prelude
+2026-10-25 状态注记（上表的决策不变）：表中三项还没有接入代码，是计划项（gilrs 已于 2026-11-12 接
+入，见下一条注记）。`ts-rs` 不是依赖，脚本的 `.d.ts` 由组件注册表（`scripts.types`）与 prelude
 生成，事件、意图与错误记录的 `ts-rs` 派生还没有做（[script-host.md](spec/script-host.md) 14 第 17
 项）；`tracy-client` 不是依赖，性能分析由内建分析器承担（游戏线程的 `profile` 与编辑器的 Profiler，
 渲染器的 GPU 时间戳与 `AMORIS_TRACE` 写出的 Chrome Trace）；kira 只在原生构建的 `amoris-audio` 里。
+
+2026-11-12 注记（手柄与触屏）：gilrs 0.11 接入 `amoris-render` 的 `window` 特性，原生窗口用它读手
+柄；浏览器播放页用 Gamepad API 读手柄，并在触屏上给出虚拟摇杆与按钮。设备只停在 presenter 一侧：每帧
+的设备状态经项目的输入映射（`[player] buttons`、`bindings`、`touch`）变成第一或第三人称座位的
+`player.act`，录像只记控制，不记设备，所以手柄与触屏的会话照样逐位回放；agent 仍经动作层行动，看不到
+设备。标准手柄布局、死区与映射的解析只有一份（`amoris_assets::input`，可构建为 `wasm32`），原生窗口
+与视口共用（[input.md](spec/input.md)）。
 
 2026-10-29 注记（Wellspring 的浏览器版需要声音）：浏览器的声音由播放页自己的 WebAudio 播放
 （`web/player.js`），不经 kira；`amoris-audio` 的 kira 播放成为 `playback` 特性（原生窗口启用），

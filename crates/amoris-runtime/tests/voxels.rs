@@ -470,6 +470,160 @@ fn a_player_breaks_and_places_blocks_and_the_run_replays() {
     });
 }
 
+/// A gamepad session (docs/spec/input.md 1): the standard pad's sticks and buttons go through the
+/// project's input map and the seat to `player.act`, as the native window and the page send them.
+/// The press that starts play does not jump; the left stick walks, the right stick turns, South
+/// jumps and R1 steps the hotbar. The recording names only controls, so it replays identically,
+/// and the same session played twice ends in the same world.
+#[test]
+fn a_gamepad_session_moves_the_walker_and_replays() {
+    use amoris_assets::input::{DeviceFrame, LOOK_RAD_PER_COUNT, Pad, Seat};
+    use amoris_persist::replay::{MemorySink, RecordOptions, Replay};
+    common::big_stack(|| {
+        let root = player_project_in("gamepad");
+        let p = Project::load(&root).unwrap_or_else(|e| panic!("{e:#?}"));
+        let setup = Arc::new(p.setup(false).unwrap_or_else(|e| panic!("{e:#?}")));
+        let map = p.manifest.player.as_ref().unwrap().input_map().unwrap();
+        // The pad at frame `n`: South held while play starts, then the left stick up, the right
+        // stick part right, South pressed again, R1 pressed.
+        let pad = |n: u32| {
+            let mut buttons = vec![0.0f32; 17];
+            let mut axes = vec![0.0f32; 4];
+            if n < 3 || (45..48).contains(&n) {
+                buttons[0] = 1.0;
+            }
+            if (55..58).contains(&n) {
+                buttons[5] = 1.0;
+            }
+            if (3..40).contains(&n) {
+                axes[1] = -1.0;
+            }
+            if (10..20).contains(&n) {
+                axes[2] = 0.6;
+            }
+            Pad { buttons, axes }
+        };
+        let play = |sink: Option<MemorySink>| {
+            let mut g = Game::new(setup.clone(), 1).unwrap_or_else(|e| panic!("{e:#?}"));
+            if let Some(s) = &sink {
+                g.record(Box::new(s.clone()), RecordOptions::default())
+                    .unwrap();
+            }
+            for _ in 0..30 {
+                g.step().unwrap();
+            }
+            let start = get(&mut g, "Steve", &["Transform.position"])["Transform.position"].clone();
+            let mut seat = Seat::new(map.clone());
+            let (mut yaw, mut pitch) = (0.0f32, 0.0f32);
+            let (mut seq, mut top) = (0, f64::MIN);
+            for n in 0..90 {
+                let frame = DeviceFrame {
+                    pad: Some(pad(n)),
+                    dt_s: 1.0 / 60.0,
+                    ..Default::default()
+                };
+                let input = seat.frame(&frame, n >= 2);
+                yaw -= input.look[0] * LOOK_RAD_PER_COUNT;
+                pitch = (pitch - input.look[1] * LOOK_RAD_PER_COUNT).clamp(-1.55, 1.55);
+                let actions = seat.acts(&input, yaw, pitch);
+                if !actions.is_empty() {
+                    seq += 1;
+                    g.apply(&Command::new(
+                        Source::Player(0),
+                        seq,
+                        "player.act",
+                        json!({ "actions": actions }),
+                    ))
+                    .unwrap_or_else(|e| panic!("{e:#?}"));
+                }
+                g.step().unwrap();
+                let y = get(&mut g, "Steve", &["Transform.position"])["Transform.position"][1]
+                    .as_f64()
+                    .unwrap();
+                if n < 45 {
+                    // On flat ground: the press that started play did not jump.
+                    let ground = start[1].as_f64().unwrap();
+                    assert!((y - ground).abs() < 0.01, "frame {n}: {y} against {ground}");
+                } else {
+                    top = amoris_sim::math::max(top, y);
+                }
+            }
+            (g, start, top)
+        };
+        let sink = MemorySink::new();
+        let (mut g, start, top) = play(Some(sink.clone()));
+        let w = get(
+            &mut g,
+            "Steve",
+            &[
+                "Transform.position",
+                "Walker.yaw",
+                "Walker.slot",
+                "Walker.forward",
+            ],
+        );
+        let at = &w["Transform.position"];
+        let walked = amoris_sim::math::hypot(
+            at[0].as_f64().unwrap() - start[0].as_f64().unwrap(),
+            at[2].as_f64().unwrap() - start[2].as_f64().unwrap(),
+        );
+        assert!(walked > 1.0, "walked {walked} m");
+        let yaw = w["Walker.yaw"].as_f64().unwrap();
+        assert!(yaw < -0.1, "turned right: {yaw}");
+        assert!(top > start[1].as_f64().unwrap() + 0.1, "jumped: {top}");
+        assert_eq!(w["Walker.slot"], 1, "R1 stepped the hotbar");
+        assert_eq!(w["Walker.forward"], 0.0, "the stick let go");
+        g.finish_recording().unwrap();
+        let replay = Replay::read(&sink.bytes()).unwrap();
+        let mut fresh = Game::for_replay(&replay).unwrap();
+        let v = amoris_persist::replay::verify(
+            &replay,
+            &mut fresh,
+            amoris_persist::replay::VerifyOptions::mode(amoris_persist::replay::ReplayMode::Verify),
+        );
+        assert_eq!(
+            v.outcome,
+            amoris_persist::replay::ReplayOutcome::Identical,
+            "{v:#?}"
+        );
+        let (again, _, _) = play(None);
+        assert_eq!(g.world_hash().unwrap(), again.world_hash().unwrap());
+        std::fs::remove_dir_all(root).unwrap();
+    });
+}
+
+/// A project's `[player.bindings]` and `[player.touch]` (docs/spec/input.md 4) load with the
+/// project, and a wrong name refuses the project at its pointer.
+#[test]
+fn a_projects_input_map_loads_and_is_checked() {
+    let root = player_project_in("bindings");
+    let manifest = |extra: &str| {
+        std::fs::write(
+            root.join("project.toml"),
+            format!(
+                "name = 'hands'\nrate = 60\nseed = 1\n[player]\nactions = 'first_person'\n\
+                 buttons = [{{ name = 'dodge', keys = ['KeyQ', 'PadEast'] }}]\n{extra}"
+            ),
+        )
+        .unwrap();
+        Project::load(&root)
+    };
+    let p = manifest(
+        "[player.bindings]\njump = ['PadNorth']\n[player.touch]\nbuttons = [{ label = 'Roll', input = 'dodge' }]\n",
+    )
+    .unwrap_or_else(|e| panic!("{e:#?}"));
+    let map = p.manifest.player.unwrap().input_map().unwrap();
+    assert_eq!(map.bindings["jump"], ["PadNorth"]);
+    assert_eq!(map.buttons[0].keys, ["KeyQ", "PadEast"]);
+    assert_eq!(map.touch.buttons[0].label, "Roll");
+    let e = manifest("[player.bindings]\njump = ['PadA']\n").unwrap_err();
+    assert_eq!(e.code, "request.invalid_value");
+    assert_eq!(e.detail["path"], "/player/bindings/jump/0");
+    let e = manifest("[player.touch]\nbuttons = [{ label = 'x', input = 'dash' }]\n").unwrap_err();
+    assert_eq!(e.detail["path"], "/player/touch/buttons/0/input");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 /// `player.blocks` (voxels.md 11.1): the seat sees the surface cells its rays reach over its field
 /// of view and within range, each once, nearest first within the budget, never a cell behind
 /// another; the cell it looks at is the one its hands would break. A developer naming the seat

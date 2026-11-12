@@ -1,10 +1,13 @@
 //! A native window that draws a [`Renderer`] (winit): the `amoris` binary's game window, the
 //! examples and the benchmarks. A [`Host`] feeds the renderer each frame. Optional fly camera
-//! (right mouse to look, WASD/QE to move, wheel for speed) and a benchmark mode that measures a
+//! (right mouse to look, WASD/QE to move, wheel for speed), first-person devices for a host that
+//! walks (keys, the mouse and gamepads, docs/spec/input.md 6) and a benchmark mode that measures a
 //! fixed number of frames and reports.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
+
+use amoris_assets::input::{DeviceFrame, Pad};
 
 use glam::{Quat, Vec3};
 use winit::application::ApplicationHandler;
@@ -17,6 +20,7 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 
 use crate::camera::CameraState;
 use crate::gpu::{BackendChoice, Gpu, instance};
+use crate::pad::{PadEvent, Pads};
 use crate::renderer::{FrameStats, Renderer, web_time};
 
 /// What drives the window's renderer.
@@ -45,32 +49,21 @@ pub trait Host {
     }
 }
 
-/// One frame of native first-person controls. Motion is a unit-length horizontal input;
-/// look deltas are relative mouse pixels and jump is a press edge, never a held key.
+/// One frame of native first-person devices (docs/spec/input.md 2), which the host resolves
+/// through its input map (`amoris_assets::input::Seat`), with the window's own keys.
 #[derive(Clone, Debug, Default)]
 pub struct WalkInput {
-    pub motion: [f32; 2],
-    pub look: [f32; 2],
-    pub fast: bool,
-    pub jump: bool,
+    /// Every key and mouse button held while captured, by name (`KeyQ`, `Space`, `MouseRight`),
+    /// their presses and the wheel's notches since the last input, the mouse's raw movement, the
+    /// active gamepad while the window is focused (captured or not, so the press that captured is
+    /// not also an action) and the frame's seconds (at most 0.1).
+    pub devices: DeviceFrame,
+    pub captured: bool,
+    /// `R` pressed while captured: the collision camera's respawn.
     pub reset: bool,
     pub gi_toggle: bool,
-    pub captured: bool,
-    pub dt_s: f32,
-    /// Press edges of the left and right buttons while the mouse is captured.
-    pub primary: bool,
-    pub secondary: bool,
-    /// A hotbar slot chosen by a number key (0 for `1`), or none.
-    pub slot: Option<u8>,
-    /// Hotbar steps from the wheel while captured: positive moves right.
-    pub slot_steps: i32,
-    /// Space held while captured (swimming up).
-    pub rise: bool,
-    /// Every key and mouse button held while captured, by name (`KeyQ`, `Space`, `MouseRight`):
-    /// what a game's own buttons are bound to (animation.md 6).
-    pub held: Vec<String>,
-    /// Those pressed since the last input, by name.
-    pub pressed: Vec<String>,
+    /// The active gamepad's name.
+    pub pad: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -103,22 +96,36 @@ impl Default for RunOptions {
     }
 }
 
-#[derive(Default)]
 struct WalkControls {
     keys: HashSet<KeyCode>,
     look: [f32; 2],
-    jump: bool,
     reset: bool,
     gi_toggle: bool,
     captured: bool,
-    primary: bool,
-    secondary: bool,
-    slot: Option<u8>,
-    slot_steps: i32,
     wheel: f32,
     /// Mouse buttons held while captured, and presses since the last input, by name.
     mouse: HashSet<&'static str>,
     pressed: Vec<String>,
+    /// The gamepads (none where gilrs has no backend), read only while the window has focus.
+    pads: Option<Pads>,
+    focused: bool,
+}
+
+impl Default for WalkControls {
+    fn default() -> WalkControls {
+        WalkControls {
+            keys: HashSet::new(),
+            look: [0.0; 2],
+            reset: false,
+            gi_toggle: false,
+            captured: false,
+            wheel: 0.0,
+            mouse: HashSet::new(),
+            pressed: Vec::new(),
+            pads: None,
+            focused: true,
+        }
+    }
 }
 
 /// A mouse button's name for a game's buttons.
@@ -139,14 +146,9 @@ impl WalkControls {
         self.mouse.clear();
         self.pressed.clear();
         self.look = [0.0; 2];
-        self.jump = false;
         self.reset = false;
         self.gi_toggle = false;
         self.captured = false;
-        self.primary = false;
-        self.secondary = false;
-        self.slot = None;
-        self.slot_steps = 0;
         self.wheel = 0.0;
     }
 
@@ -163,34 +165,54 @@ impl WalkControls {
         }
     }
 
-    fn input(&mut self, dt_s: f32) -> WalkInput {
-        let key = |code| self.keys.contains(&code);
-        let x = u8::from(key(KeyCode::KeyD)) as f32 - u8::from(key(KeyCode::KeyA)) as f32;
-        let z = u8::from(key(KeyCode::KeyW)) as f32 - u8::from(key(KeyCode::KeyS)) as f32;
-        let length = (x * x + z * z).sqrt().max(1.0);
+    /// Drains the gamepads' events: while the window has focus, `PadStart` releases a captured
+    /// mouse as Escape does, and any button captures a released one as a click does. Returns the
+    /// active pad's state while focused.
+    fn poll_pads(&mut self, window: &Window) -> Option<Pad> {
+        let events = self.pads.as_mut()?.poll();
+        for e in events {
+            match e {
+                PadEvent::Connected(name) => eprintln!("gamepad: {name} connected"),
+                PadEvent::Disconnected(name) => eprintln!("gamepad: {name} disconnected"),
+                PadEvent::Pressed(button) if self.focused => {
+                    if button == "PadStart" && self.captured {
+                        self.release(window);
+                    } else if !self.captured {
+                        self.capture(window);
+                    }
+                }
+                PadEvent::Pressed(_) => {}
+            }
+        }
+        if self.focused {
+            self.pads.as_ref()?.state()
+        } else {
+            None
+        }
+    }
+
+    fn input(&mut self, dt_s: f32, pad: Option<Pad>) -> WalkInput {
+        let mut held = BTreeMap::new();
+        if self.captured {
+            for k in &self.keys {
+                held.insert(format!("{k:?}"), 1.0);
+            }
+            for m in &self.mouse {
+                held.insert((*m).to_owned(), 1.0);
+            }
+        }
         WalkInput {
-            motion: [x / length, z / length],
-            look: std::mem::take(&mut self.look),
-            fast: key(KeyCode::ShiftLeft) || key(KeyCode::ShiftRight),
-            jump: std::mem::take(&mut self.jump),
+            devices: DeviceFrame {
+                held,
+                pressed: std::mem::take(&mut self.pressed),
+                look: std::mem::take(&mut self.look),
+                pad,
+                dt_s: dt_s.clamp(0.0, 0.1),
+            },
+            captured: self.captured,
             reset: std::mem::take(&mut self.reset),
             gi_toggle: std::mem::take(&mut self.gi_toggle),
-            captured: self.captured,
-            dt_s: dt_s.clamp(0.0, 0.1),
-            primary: std::mem::take(&mut self.primary),
-            secondary: std::mem::take(&mut self.secondary),
-            slot: self.slot.take(),
-            slot_steps: std::mem::take(&mut self.slot_steps),
-            rise: self.captured && key(KeyCode::Space),
-            held: if self.captured {
-                let mut h: Vec<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
-                h.extend(self.mouse.iter().map(|m| (*m).to_owned()));
-                h.sort();
-                h
-            } else {
-                Vec::new()
-            },
-            pressed: std::mem::take(&mut self.pressed),
+            pad: self.pads.as_ref().and_then(Pads::name),
         }
     }
 }
@@ -371,7 +393,10 @@ impl<H: Host> App<H> {
             config,
             renderer,
             fly: self.options.fly_camera.map(Fly::new),
-            walk: self.options.walk.then(WalkControls::default),
+            walk: self.options.walk.then(|| WalkControls {
+                pads: Pads::new(),
+                ..WalkControls::default()
+            }),
             last_frame: web_time(),
             frame_times: Vec::new(),
             gpu_times: Vec::new(),
@@ -401,7 +426,8 @@ impl<H: Host> App<H> {
             st.renderer.set_camera_override(Some(fly.cam));
         }
         if let Some(walk) = st.walk.as_mut() {
-            self.host.walk_input(walk.input(dt));
+            let pad = walk.poll_pads(&st.window);
+            self.host.walk_input(walk.input(dt, pad));
         }
         self.host.update(&mut st.renderer, now);
         let pointer = if st.captured() { None } else { st.cursor };
@@ -484,8 +510,15 @@ impl<H: Host> App<H> {
         if now - st.title_at > 0.5 {
             st.title_at = now;
             if self.options.walk {
+                let pad = st
+                    .walk
+                    .as_ref()
+                    .and_then(|w| w.pads.as_ref())
+                    .and_then(Pads::name)
+                    .map(|n| format!(" — gamepad: {n}"))
+                    .unwrap_or_default();
                 st.window.set_title(&format!(
-                    "{} — {}",
+                    "{} — {}{pad}",
                     self.options.title,
                     self.host.status().unwrap_or("Walk")
                 ));
@@ -555,25 +588,8 @@ impl<H: Host> ApplicationHandler for App<H> {
                                 walk.pressed.push(format!("{code:?}"));
                             }
                             walk.keys.insert(code);
-                            if code == KeyCode::Space && !event.repeat {
-                                walk.jump = true;
-                            }
                             if code == KeyCode::KeyR && !event.repeat {
                                 walk.reset = true;
-                            }
-                            let digits = [
-                                KeyCode::Digit1,
-                                KeyCode::Digit2,
-                                KeyCode::Digit3,
-                                KeyCode::Digit4,
-                                KeyCode::Digit5,
-                                KeyCode::Digit6,
-                                KeyCode::Digit7,
-                                KeyCode::Digit8,
-                                KeyCode::Digit9,
-                            ];
-                            if let Some(i) = digits.iter().position(|&d| d == code) {
-                                walk.slot = u8::try_from(i).ok();
                             }
                         } else {
                             walk.keys.remove(&code);
@@ -616,12 +632,9 @@ impl<H: Host> ApplicationHandler for App<H> {
                     && let Some(walk) = st.walk.as_mut()
                 {
                     let was = walk.captured;
-                    match button {
-                        // The first click captures the mouse; later ones act.
-                        MouseButton::Left if !walk.captured => walk.capture(&st.window),
-                        MouseButton::Left => walk.primary = true,
-                        MouseButton::Right if walk.captured => walk.secondary = true,
-                        _ => {}
+                    // The first click captures the mouse; later ones act.
+                    if button == MouseButton::Left && !walk.captured {
+                        walk.capture(&st.window);
                     }
                     if was && let Some(name) = mouse_name(button) {
                         walk.mouse.insert(name);
@@ -641,10 +654,16 @@ impl<H: Host> ApplicationHandler for App<H> {
                     fly.last_cursor = None;
                 }
             }
+            WindowEvent::Focused(true) => {
+                if let Some(walk) = self.state.as_mut().and_then(|s| s.walk.as_mut()) {
+                    walk.focused = true;
+                }
+            }
             WindowEvent::Focused(false) => {
                 if let Some(st) = self.state.as_mut() {
                     if let Some(walk) = st.walk.as_mut() {
                         walk.release(&st.window);
+                        walk.focused = false;
                     }
                     if let Some(fly) = st.fly.as_mut() {
                         fly.keys.clear();
@@ -683,11 +702,11 @@ impl<H: Host> ApplicationHandler for App<H> {
                     };
                     while walk.wheel >= 1.0 {
                         walk.wheel -= 1.0;
-                        walk.slot_steps += 1;
+                        walk.pressed.push("WheelDown".into());
                     }
                     while walk.wheel <= -1.0 {
                         walk.wheel += 1.0;
-                        walk.slot_steps -= 1;
+                        walk.pressed.push("WheelUp".into());
                     }
                 }
                 if let Some(fly) = self.state.as_mut().and_then(|s| s.fly.as_mut()) {
@@ -750,39 +769,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn walk_input_normalizes_diagonal_motion_and_consumes_press_edges() {
+    fn walk_input_names_held_keys_and_buttons_and_consumes_presses() {
         let mut controls = WalkControls {
-            keys: [KeyCode::KeyW, KeyCode::KeyD, KeyCode::ShiftRight].into(),
+            keys: [KeyCode::KeyW, KeyCode::ShiftRight].into(),
             look: [10.0, -3.0],
-            jump: true,
             reset: true,
             gi_toggle: true,
             captured: true,
-            primary: true,
-            secondary: false,
-            slot: Some(3),
-            slot_steps: -1,
-            wheel: 0.0,
-            mouse: HashSet::new(),
-            pressed: vec!["KeyE".to_owned()],
+            mouse: ["MouseRight"].into(),
+            pressed: vec!["KeyE".to_owned(), "WheelDown".to_owned()],
+            ..WalkControls::default()
         };
-        let input = controls.input(1.0);
-        assert!(input.primary && !input.secondary);
-        assert_eq!((input.slot, input.slot_steps), (Some(3), -1));
-        assert!((input.motion[0].hypot(input.motion[1]) - 1.0).abs() < 1e-6);
-        assert!(input.fast && input.captured && input.jump && input.reset);
-        assert!(input.gi_toggle);
-        assert_eq!(input.look, [10.0, -3.0]);
-        assert_eq!(input.dt_s, 0.1);
-        assert_eq!(input.pressed, ["KeyE"]);
-        let next = controls.input(1.0 / 60.0);
-        assert!(!next.primary && next.slot.is_none() && next.slot_steps == 0);
-        assert!(next.pressed.is_empty());
-        assert!(!next.jump && !next.reset);
-        assert!(!next.gi_toggle);
-        assert_eq!(next.look, [0.0; 2]);
-        controls.keys.insert(KeyCode::KeyA);
-        controls.keys.insert(KeyCode::KeyS);
-        assert_eq!(controls.input(0.0).motion, [0.0; 2]);
+        let pad = Pad {
+            buttons: vec![1.0],
+            axes: vec![0.0; 4],
+        };
+        let input = controls.input(1.0, Some(pad.clone()));
+        let d = &input.devices;
+        assert_eq!(
+            d.held.keys().collect::<Vec<_>>(),
+            ["KeyW", "MouseRight", "ShiftRight"]
+        );
+        assert_eq!(d.pressed, ["KeyE", "WheelDown"]);
+        assert_eq!((d.look, d.dt_s), ([10.0, -3.0], 0.1));
+        assert_eq!(d.pad.as_ref(), Some(&pad));
+        assert!(input.captured && input.reset && input.gi_toggle);
+        let next = controls.input(1.0 / 60.0, None);
+        assert!(next.devices.pressed.is_empty() && next.devices.look == [0.0; 2]);
+        assert!(!next.reset && !next.gi_toggle);
+        controls.captured = false;
+        assert!(
+            controls.input(0.0, None).devices.held.is_empty(),
+            "nothing held while released"
+        );
     }
 }

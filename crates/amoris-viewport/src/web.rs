@@ -58,12 +58,15 @@ pub struct Viewport {
     last_stats: String,
     /// The first-person look (yaw, pitch) of `first_person`, once the walker's camera is known.
     look: Option<(f32, f32)>,
-    /// Frames since the mouse last moved the look (`first_person` with a game camera).
+    /// Frames since the pointer or the look stick last moved the look (`first_person` with a game
+    /// camera).
     still_frames: u32,
     /// Controlled compute/readback QA, separate from the browser game worker.
     water_probe: Option<amoris_render::water_samples::WaterSamples>,
     /// The water's sound for the page's WebAudio (`water_sound`), once asked for.
     water_sound: Option<amoris_audio::water::WaterSynth>,
+    /// The player page's seat (`seat_frame`), with the package's input map.
+    seat: amoris_assets::input::Seat,
 }
 
 #[wasm_bindgen]
@@ -116,6 +119,7 @@ impl Viewport {
             still_frames: 0,
             water_probe: None,
             water_sound: None,
+            seat: amoris_assets::input::Seat::new(Default::default()),
         })
     }
 
@@ -299,10 +303,50 @@ impl Viewport {
             .collect();
     }
 
+    /// The player page's input map (the web package's `player_input`, docs/spec/input.md 4) as
+    /// JSON; the default map until it is set.
+    pub fn set_input_map(&mut self, map: &str) -> Result<(), JsValue> {
+        let map: amoris_assets::input::InputMap = serde_json::from_str(map)
+            .map_err(|e| JsValue::from_str(&format!("the input map does not decode: {e}")))?;
+        self.seat = amoris_assets::input::Seat::new(map);
+        Ok(())
+    }
+
+    /// The input map in use, as JSON (the page draws its touch controls from its `touch`).
+    pub fn input_map(&self) -> String {
+        serde_json::to_string(self.seat.map()).unwrap_or_default()
+    }
+
+    /// The player page's seat for one frame (docs/spec/input.md 1): the page's devices (an
+    /// `amoris_assets::input::DeviceFrame` as JSON) through the input map, the look turned by
+    /// them as `first_person` turns it, and the `player.act` actions that say what changed.
+    /// Returns `{"look": [yaw, pitch] | null, "actions": [...]}`; no actions until the look is
+    /// known. Called once a drawn frame, captured or not, so a gamepad's presses are taken while
+    /// the veil is up and the press that starts play does not also act.
+    pub fn seat_frame(
+        &mut self,
+        frame: &str,
+        captured: bool,
+        game_camera: bool,
+    ) -> Result<String, JsValue> {
+        let frame: amoris_assets::input::DeviceFrame = serde_json::from_str(frame)
+            .map_err(|e| JsValue::from_str(&format!("the device frame does not decode: {e}")))?;
+        let input = self.seat.frame(&frame, captured);
+        let look = self.first_person(input.look[0], input.look[1], captured, game_camera);
+        let reply = match look.as_slice() {
+            [yaw, pitch] => {
+                let actions = self.seat.acts(&input, *yaw, *pitch);
+                serde_json::json!({"look": [yaw, pitch], "actions": actions})
+            }
+            _ => serde_json::json!({"look": null, "actions": []}),
+        };
+        Ok(reply.to_string())
+    }
+
     /// A first- or third-person game's seat in the page (web/player; the native window's `SeatWalk`,
     /// voxels.md 8): draws from the walker's camera as the world last published it, turned at once
-    /// by the page's own look so looking never waits on a tick. `dx`, `dy` are the mouse's movement
-    /// since the last call (CSS pixels, used while `captured`); while captured the targeted block is
+    /// by the page's own look so looking never waits on a tick. `dx`, `dy` are the look since the
+    /// last call (pointer counts, used while `captured`); while captured the targeted block is
     /// outlined and a crosshair drawn. Returns `[yaw, pitch]` for the page's `player.act` controls,
     /// or nothing until the world has published an active camera that a tick has placed.
     /// `game_camera` preserves that camera's pose and suppresses the voxel overlay; mouse deltas

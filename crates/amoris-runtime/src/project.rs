@@ -149,6 +149,7 @@ impl Project {
         let player = match &manifest.player {
             Some(m) => {
                 let text = read_file(&root.join(&m.perception))?;
+                m.input_map()?;
                 Some(crate::player::PlayerSpec::new(m, text)?)
             }
             None => None,

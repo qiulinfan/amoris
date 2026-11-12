@@ -11,6 +11,7 @@ pub mod frame;
 pub mod gi;
 #[cfg(feature = "import")]
 pub mod import;
+pub mod input;
 #[cfg(feature = "lod")]
 pub mod lod;
 pub mod mesh;

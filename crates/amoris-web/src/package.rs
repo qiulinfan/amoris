@@ -14,8 +14,8 @@ use serde_json::{Value, json};
 /// The value of [`Package::format`].
 pub const PACKAGE_FORMAT: &str = "amoris-web-package";
 
-/// The version of the layout below.
-pub const PACKAGE_VERSION: u32 = 1;
+/// The version of the layout below (2: `player_input` replaced `player_buttons`).
+pub const PACKAGE_VERSION: u32 = 2;
 
 /// A project for the browser.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -42,9 +42,10 @@ pub struct Package {
     /// The project's control legend, shown before a human captures the mouse.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub player_controls: Option<String>,
-    /// The keys of each of the game's own buttons (`[player] buttons`, animation.md 6), in order.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub player_buttons: Vec<Vec<String>>,
+    /// Presentation only: the project's input map (docs/spec/input.md 4): the first-person seat's
+    /// bindings, the game's buttons and the touch layout, which the page hands its viewport.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub player_input: Option<amoris_assets::input::InputMap>,
     /// Presentation only: the project's `[sounds]`, event name (or `prefix.*`) to clip, which the
     /// player page plays as the native window does.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -81,7 +82,7 @@ impl Package {
             player: setup.player.clone(),
             player_camera: Default::default(),
             player_controls: None,
-            player_buttons: Vec::new(),
+            player_input: None,
             sounds: Default::default(),
             animation: (*setup.animation).clone(),
         }

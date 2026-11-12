@@ -80,6 +80,8 @@ meshopt = "=0.6.2"
 # `static-dxc`), WebGPU in the browser; no GL (charter 4.1).
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl", "metal", "vulkan", "vulkan-portability", "dx12", "webgpu"] }
 winit = "0.30"
+# The native window's gamepads (charter 4.1; docs/spec/input.md 6): amoris-render's `window` feature.
+gilrs = "0.11"
 # amoris-render's entity map (scene.rs; architecture.md 6, docs/bench/dynamic-scenes.md).
 foldhash = "=0.2.0"
 glam = { version = "=0.33.12", features = ["bytemuck"] }

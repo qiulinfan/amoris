@@ -332,7 +332,21 @@ rules read `Board.standing`, `speed` and `wipeouts`. Examples: `samples/pool-par
 A first-person game declares `actions = "first_person"` under `[player]`: its seat `player` drives
 the `Walker` (`forward`, `strafe`, `yaw`, `pitch`, `run`, `slot`, and the one-tick pulses `jump`,
 `primary`, `secondary`), which rules read like any component; `amoris play <project> --walk` plays
-it from the keyboard and mouse. Example: `samples/blockcraft`.
+it from the keyboard, the mouse and a gamepad, and the exported web page also from touch controls.
+Scripts never read devices: a project maps devices to these controls and to its own `[player]
+buttons` (the walker's `Buttons`) in `project.toml` ([spec/input.md](spec/input.md)):
+
+```toml
+[player]
+actions = "first_person"
+buttons = [{ name = "dodge", keys = ["Space", "PadEast"] }]
+[player.bindings]                 # replaces a logical input's default keys, buttons and sticks
+primary = ["MouseLeft", "PadR2", "PadWest"]
+[player.touch]                    # the browser's on-screen controls
+buttons = [{ label = "Roll", input = "dodge" }, { label = "Swing", input = "primary" }]
+```
+
+Example: `samples/blockcraft`.
 
 A third-person game declares `actions = "third_person"` ([spec/player.md](spec/player.md) 5.1): its
 seat `player` is a walker with a `ThirdPerson` component, seen as an `Avatar` and followed by a
@@ -358,7 +372,10 @@ Its controls are `forward`, `strafe`, `frame`, `yaw`, `pitch`, `zoom`, `run`, `g
 `[player] buttons`. Perception derives `third_person.heading_deg`, `look_deg` and `locked` for the
 seat's instruments. `amoris play <project> --walk` plays it: WASD, the mouse orbits, the wheel
 zooms, Shift sprints, Space jumps, C dodges, the left button and E act, the right button guards, F
-interacts, Q or the middle button locks on. Example: `samples/thornkeep`.
+interacts, Q or the middle button locks on; a gamepad and the web page's touch controls have
+defaults of their own, and `[player.bindings]` and `[player.touch]` name this seat's logical inputs
+(`guard`, `dodge`, `interact`, `lock`, `zoom_in`, `zoom_out`, ...; [spec/input.md](spec/input.md)
+3.1). Example: `samples/thornkeep`.
 
 ## The game UI
 

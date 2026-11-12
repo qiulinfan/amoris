@@ -148,8 +148,8 @@ project component, and nothing let an agent move relative to anything but the ca
 
 `actions = "third_person"` in `[player]` declares one seat, `player`, whose body is the entity with
 `Observer {seat: "player"}`, a `Walker` and a `ThirdPerson`. Its controls, with the keyboard and
-mouse defaults the native window and the browser player send (the gaps/input line owns other
-devices and rebinding):
+mouse defaults the native window and the browser player send (the gamepad's, the touch controls
+and a project's own bindings are input.md 3.1's):
 
 | Control | Kind | Binding | Default |
 |---|---|---|---|
@@ -209,6 +209,12 @@ devices and rebinding):
   perception. No intents and no codes: what `primary`, `guard` or `interact` do is the game's.
 
 Example: `samples/thornkeep`.
+
+A person reaches the same controls through devices: the native window and the browser player
+gather the keyboard, the mouse, gamepads and touch, map them through the project's input map and
+send `player.act` as the local human player (input.md). Agents are unaffected: they act through
+this layer, never see devices or bindings, and a recording names only the acts, whichever device
+made them.
 
 ## 6. Time
 

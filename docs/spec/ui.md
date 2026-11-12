@@ -135,9 +135,11 @@ receives presses alone.
 - **The browser player.** While the pointer is not locked, a click whose point is over a button
   (through the page's translucent veil too) presses it and does not ask for the lock; in the
   keyboard mode that embedded browsers fall back to (the pointer free, drag to look), a stationary
-  click on a button presses it instead of being the primary action. The viewport answers
-  `ui_hit(x, y)` (the entity under a canvas pixel, 0 for none) and takes `ui_pointer(x, y, over,
-  down)`.
+  click on a button presses it instead of being the primary action. On a touch screen a touch that
+  lands on a button (on the game or the veil; not on the touch controls, input.md 5) is the UI's
+  before the look's: it neither looks nor clicks, and lifted over the same button it presses it.
+  The viewport answers `ui_hit(x, y)` (the entity under a canvas pixel, 0 for none) and takes
+  `ui_pointer(x, y, over, down)`.
 - **Agents.** A seat reads the screen's UI with `ui.list` and presses with `ui.press`; the `player`
   tool's actions `ui` and `press` and `amoris player ui` and `amoris player press <entity>` route to
   them. A game with players lets its seats send these two besides the `player.*` tools: what is on

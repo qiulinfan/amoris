@@ -23,6 +23,16 @@
 // the camera to it; the drawn camera stays near the world's (its lag is the page's alone).
 // --no-pointer-lock reproduces embedded browsers that refuse capture; the real click must still
 // start a game-camera game with keyboard controls and drag-to-look, without forceCapture.
+// --gamepad plays a first-person game with a synthetic standard gamepad (navigator.getGamepads
+// replaced before the page loads; docs/spec/input.md 7): a button starts play without the lock and
+// without jumping, the left stick walks, the right stick turns the look, South jumps and Start
+// pauses. --touch plays it with touch events (CDP's touch emulation): a tap on the veil starts play
+// and shows the touch controls, the touch stick walks, a drag on the game turns the look, the jump
+// button jumps and the pause button pauses (input.md 5).
+// --ui presses the game UI's buttons (docs/spec/ui.md 6, tests/fixtures/scenes/ui-hud): the viewport
+// finds every enabled button and no disabled one, a mouse click and a touch tap on a button through
+// the veil each send one `ui.press` that the world counts, a tap on the disabled one presses
+// nothing, and none of it captures the pointer.
 import { spawn } from "node:child_process";
 import { createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -42,6 +52,9 @@ const windward = args.includes("--windward");
 const emberlight = args.includes("--emberlight");
 const thirdPerson = args.includes("--third-person");
 const noPointerLock = args.includes("--no-pointer-lock");
+const gamepad = args.includes("--gamepad");
+const touchscreen = args.includes("--touch");
+const uiPresses = args.includes("--ui");
 if (!existsSync(join(folder, "index.html"))) {
   console.error("usage: node tools/host/web_play_check.mjs <exported folder> [--shots DIR] [--seconds S]");
   process.exit(2);
@@ -149,6 +162,20 @@ await send("Runtime.enable");
 if (noPointerLock) await send("Page.addScriptToEvaluateOnNewDocument", { source:
   'HTMLCanvasElement.prototype.requestPointerLock = function () { return Promise.reject(new DOMException("Unavailable in this embedded browser", "NotSupportedError")); };'
 });
+// A standard gamepad the check holds: window.__pad.set({0: 1}, [0, -1, 0, 0]).
+if (gamepad) await send("Page.addScriptToEvaluateOnNewDocument", { source: `(() => {
+  const pad = { id: "Amoris check pad (STANDARD GAMEPAD)", index: 0, connected: true, mapping: "standard",
+    timestamp: 0, axes: [0, 0, 0, 0], vibrationActuator: null,
+    buttons: Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 })) };
+  Object.defineProperty(navigator, "getGamepads", { value: () => [pad, null, null, null] });
+  window.__pad = { pad, set(buttons = {}, axes = [0, 0, 0, 0]) {
+    pad.buttons.forEach((b, i) => { const v = buttons[i] || 0; b.value = v; b.pressed = b.touched = v > 0; });
+    pad.axes = axes.slice();
+    pad.timestamp = performance.now();
+  } };
+  addEventListener("load", () => dispatchEvent(Object.assign(new Event("gamepadconnected"), { gamepad: pad })));
+})();` });
+if (touchscreen || uiPresses) await send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
 await send("Emulation.setDeviceMetricsOverride", { width: vw, height: vh, deviceScaleFactor: Number(process.env.DPR || 1), mobile: false });
 const started = Date.now();
 await send("Page.navigate", { url });
@@ -193,8 +220,58 @@ if (ready) {
   await sleep(settle * 1000);
   await shot("1-ready");
   const veil = await evaluate("!document.getElementById('veil').hidden && document.getElementById('status').textContent");
-  check("click to play shown", veil === "Click to play", { status: veil });
-  if (thirdPerson) {
+  if (!uiPresses) check("click to play shown", veil === "Click to play", { status: veil });
+  if (uiPresses) {
+    // The buttons as the world lists them, and where the viewport draws each: the bounds of the
+    // page points its hit test gives the button's id.
+    const listed = async () => (await evaluate(`window.amorisPlayer.amoris.command("ui.list", {})`))
+      .elements.filter((e) => e.kind === "button");
+    const buttons = await listed();
+    const boxes = await evaluate(`(() => { const v = window.amorisPlayer.viewport, b = {};
+      for (let y = 2; y < innerHeight; y += 4) for (let x = 2; x < innerWidth; x += 4) {
+        const id = v.uiHit(x, y); if (!id) continue;
+        const r = b[id] || (b[id] = [x, y, x, y]);
+        r[0] = Math.min(r[0], x); r[1] = Math.min(r[1], y); r[2] = Math.max(r[2], x); r[3] = Math.max(r[3], y);
+      }
+      return b; })()`);
+    const centre = (b) => { const r = boxes[b.entity]; return [(r[0] + r[2]) / 2, (r[1] + r[3]) / 2]; };
+    const enabled = buttons.filter((b) => b.enabled);
+    const disabled = buttons.filter((b) => !b.enabled);
+    check("the viewport hits every enabled button and no disabled one", enabled.length >= 2
+      && enabled.every((b) => boxes[b.entity]) && disabled.every((b) => !boxes[b.entity]),
+      { buttons: buttons.map((b) => [b.entity, b.label, b.enabled]), hit: Object.keys(boxes) });
+    const presses = async (b) => (await listed()).find((x) => x.entity === b.entity).presses;
+    const free = () => evaluate(`!document.pointerLockElement && !window.amorisPlayer.input.captured()`);
+    const [clicked, tapped] = enabled;
+    const [cx, cy] = centre(clicked);
+    await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: cx, y: cy });
+    await send("Input.dispatchMouseEvent", { type: "mousePressed", x: cx, y: cy, button: "left", clickCount: 1 });
+    await sleep(60);
+    await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: cx, y: cy, button: "left", clickCount: 1 });
+    await sleep(600);
+    check("a click on a button presses it once", await presses(clicked) === clicked.presses + 1 && await free(),
+      { button: clicked.label, presses: await presses(clicked) });
+    await shot("2-clicked");
+    const tap = async ([x, y]) => {
+      const at = { x: Math.round(x), y: Math.round(y), id: 0, radiusX: 4, radiusY: 4, force: 1 };
+      await send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [at] });
+      await sleep(60);
+      await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await sleep(600);
+    };
+    await tap(centre(tapped));
+    check("a tap on a button presses it once", await presses(tapped) === tapped.presses + 1 && await free(),
+      { button: tapped.label, presses: await presses(tapped), touch: await evaluate("window.amorisPlayer.touch") });
+    if (disabled.length) {
+      // The disabled button's place: below the last enabled one in the column.
+      const last = boxes[enabled[enabled.length - 1].entity];
+      await tap([(last[0] + last[2]) / 2, last[3] + (last[3] - last[1]) / 2 + 12]);
+      check("a tap on the disabled button presses nothing", await presses(disabled[0]) === disabled[0].presses,
+        { presses: await presses(disabled[0]) });
+    }
+    const ui = await evaluate("({ presses: window.amorisPlayer.ui.presses, refused: window.amorisPlayer.ui.refused })");
+    check("the page sent two presses, none refused", ui.presses === 2 && ui.refused === 0, ui);
+  } else if (thirdPerson) {
     // The seat's walker as the world has it, and the camera as the page draws it.
     const seat = () => evaluate(`(async () => {
       const p = window.amorisPlayer, a = p.amoris;
@@ -362,6 +439,108 @@ if (ready) {
       { gates: complete["Course.gates"], medal: complete["Course.medal"] });
     await sleep(200);
     await shot("3-finish");
+  } else if (gamepad || touchscreen) {
+    // The seat's state as the page and the world see it.
+    const seen = async () => {
+      const w = await world();
+      return { ...w, look: await evaluate("window.amorisPlayer.look"), state: await evaluate(`(() => {
+        const p = window.amorisPlayer; return { captured: p.input.captured(), forced: p.input.forced,
+        lock: !!document.pointerLockElement, veil: !document.getElementById("veil").hidden, pad: p.pad, touch: p.touch,
+        controls: !document.getElementById("touch").hidden, acts: p.seat.acts, refused: p.seat.refused }; })()`) };
+    };
+    // The highest the walker's eye gets over `ms`, sampled as fast as the world answers.
+    const highest = async (ms) => {
+      let top = -Infinity;
+      for (const end = Date.now() + ms; Date.now() < end;) top = Math.max(top, (await world()).walker[1]);
+      return top;
+    };
+    const pad = (buttons, axes) => evaluate(`window.__pad.set(${JSON.stringify(buttons)}, ${JSON.stringify(axes)})`);
+    const touch = (type, points) => send("Input.dispatchTouchEvent", { type,
+      touchPoints: points.map(([x, y], id) => ({ x: Math.round(x), y: Math.round(y), id, radiusX: 4, radiusY: 4, force: 1 })) });
+    // A finger from one point to another in `steps`, held there `hold` ms, then lifted.
+    const swipe = async (from, to, steps, hold) => {
+      await touch("touchStart", [from]);
+      for (let i = 1; i <= steps; i++) {
+        await sleep(30);
+        await touch("touchMove", [[from[0] + (to[0] - from[0]) * i / steps, from[1] + (to[1] - from[1]) * i / steps]]);
+      }
+      await sleep(hold);
+      await touch("touchEnd", []);
+    };
+    const tap = async (at) => { await touch("touchStart", [at]); await sleep(60); await touch("touchEnd", []); };
+    const start = await seen();
+    if (gamepad) {
+      check("the page sees the gamepad", start.state.pad && start.state.pad.includes("STANDARD GAMEPAD"), { pad: start.state.pad });
+      await pad({ 0: 1 }, [0, 0, 0, 0]);
+      await sleep(200);
+      await pad({}, [0, 0, 0, 0]);
+    } else {
+      await tap([vw / 2, vh / 2]);
+    }
+    await sleep(500);
+    const playing = await seen();
+    check(gamepad ? "a gamepad button starts play" : "a tap starts play", playing.state.captured && !playing.state.forced
+      && !playing.state.lock && !playing.state.veil, playing.state);
+    check("the starting press does not jump", Math.abs(playing.walker[1] - start.walker[1]) < 0.05,
+      { from: start.walker, to: playing.walker });
+    if (touchscreen) check("the touch controls show", playing.state.touch && playing.state.controls, playing.state);
+    await shot("2-playing");
+    if (gamepad) {
+      await pad({}, [0, -1, 0, 0]);
+      await sleep(1500);
+      await pad({}, [0, 0, 0, 0]);
+    } else {
+      const at = [150, vh - 160];
+      await swipe(at, [at[0], at[1] - 70], 6, 1500);
+    }
+    await sleep(400);
+    const walked = await seen();
+    const moved = Math.hypot(walked.walker[0] - playing.walker[0], walked.walker[2] - playing.walker[2]);
+    check(gamepad ? "the left stick walks" : "the touch stick walks", moved > 1,
+      { moved_m: Number(moved.toFixed(2)), from: playing.walker, to: walked.walker });
+    await shot("3-walked");
+    await sleep(300);
+    const still = (await world()).walker;
+    const drift = Math.hypot(still[0] - walked.walker[0], still[2] - walked.walker[2]);
+    check("letting go stops the walker", drift < 0.05, { drift_m: Number(drift.toFixed(3)) });
+    if (gamepad) {
+      await pad({}, [0, 0, 1, 0]);
+      await sleep(500);
+      await pad({}, [0, 0, 0, 0]);
+    } else {
+      await swipe([vw * 0.7, vh * 0.3], [vw * 0.7 + 150, vh * 0.3], 8, 50);
+    }
+    await sleep(300);
+    const turned = await seen();
+    const turn = Math.abs(turned.look[0] - walked.look[0]);
+    check(gamepad ? "the right stick turns the look" : "a drag turns the look", turn > 0.3,
+      { yaw_before: walked.look[0], yaw_after: turned.look[0] });
+    const ground = (await world()).walker[1];
+    if (gamepad) {
+      await pad({ 0: 1 }, [0, 0, 0, 0]);
+      await sleep(80);
+      await pad({}, [0, 0, 0, 0]);
+    } else {
+      const b = await evaluate(`(() => { const r = document.querySelector('.touch-button[data-input="jump"]').getBoundingClientRect();
+        return [r.x + r.width / 2, r.y + r.height / 2]; })()`);
+      await tap(b);
+    }
+    const top = await highest(800);
+    check(gamepad ? "South jumps" : "the jump button jumps", top > ground + 0.2, { ground, top });
+    if (gamepad) {
+      await pad({ 9: 1 }, [0, 0, 0, 0]);
+      await sleep(100);
+      await pad({}, [0, 0, 0, 0]);
+    } else {
+      const b = await evaluate(`(() => { const r = document.getElementById("touch-pause").getBoundingClientRect();
+        return [r.x + r.width / 2, r.y + r.height / 2]; })()`);
+      await tap(b);
+    }
+    await sleep(300);
+    const paused = await seen();
+    check(gamepad ? "Start pauses" : "the pause button pauses", !paused.state.captured && paused.state.veil, paused.state);
+    check("every act accepted", paused.state.acts > 0 && paused.state.refused === 0, paused.state);
+    await shot("4-paused");
   } else {
   await evaluate("window.amorisPlayer.forceCapture(true)");
   await sleep(300);

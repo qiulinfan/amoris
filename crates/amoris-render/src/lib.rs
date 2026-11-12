@@ -25,6 +25,8 @@ pub mod occlusion;
 mod ocean;
 mod ocean_waves;
 pub mod overlay;
+#[cfg(all(feature = "window", not(target_arch = "wasm32")))]
+pub mod pad;
 mod par;
 mod particles;
 pub mod picking;

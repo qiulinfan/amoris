@@ -73,19 +73,36 @@ pub struct PlayerManifest {
     /// A plain-text control legend for the browser player's loading and pause veil.
     #[serde(default)]
     pub controls: Option<String>,
-    /// The game's own buttons and their keys (animation.md 6): bit i of the seat's `held` and
-    /// `pressed` controls is the i-th; at most 16. Keys are the page's `KeyboardEvent.code` names
-    /// (`KeyQ`, `Space`, `Digit1`, `ShiftLeft`) or `MouseLeft`, `MouseRight`, `MouseMiddle`.
+    /// The game's own buttons and their inputs (animation.md 6): bit i of the seat's `held` and
+    /// `pressed` controls is the i-th; at most 16. Inputs are named as docs/spec/input.md 2 names
+    /// them: the page's `KeyboardEvent.code` (`KeyQ`, `Space`, `Digit1`, `ShiftLeft`), `MouseLeft`,
+    /// `MouseRight`, `MouseMiddle`, `WheelUp`, `WheelDown`, and the gamepad's `Pad…`.
     #[serde(default)]
     pub buttons: Vec<ButtonDef>,
+    /// The seat's logical inputs whose default inputs the game replaces (docs/spec/input.md 3,
+    /// 3.1, 4): `jump = ["Space", "PadEast"]`.
+    #[serde(default)]
+    pub bindings: BTreeMap<String, Vec<String>>,
+    /// The browser player's on-screen touch controls (docs/spec/input.md 5); the default layout
+    /// when absent.
+    #[serde(default)]
+    pub touch: Option<TouchLayout>,
 }
 
-/// One of the game's buttons.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ButtonDef {
-    pub name: String,
-    pub keys: Vec<String>,
+pub use amoris_assets::input::{ButtonDef, InputMap, SeatKind, TouchButton, TouchLayout};
+
+impl PlayerManifest {
+    /// The project's input map: its catalog's seat's default bindings with its own, its buttons
+    /// and its touch layout, every name checked (docs/spec/input.md 4). Presentation only: not in
+    /// [`PlayerSpec`].
+    pub fn input_map(&self) -> Result<InputMap, Problem> {
+        InputMap::new(
+            SeatKind::of_catalog(&self.actions),
+            &self.bindings,
+            &self.buttons,
+            self.touch.as_ref(),
+        )
+    }
 }
 
 /// How a first-person seat's native window and browser player aim their camera.

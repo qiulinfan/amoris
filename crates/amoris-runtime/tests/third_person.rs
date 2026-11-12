@@ -374,3 +374,35 @@ fn a_seat_moves_acts_and_locks_on_and_the_run_replays() {
         std::fs::remove_dir_all(root).unwrap();
     });
 }
+
+/// A third-person project's input map is the third-person seat's (docs/spec/input.md 3.1):
+/// Thornkeep's loads with its own `interact` and touch buttons over the seat's defaults, and a
+/// first-person input is refused at its pointer.
+#[test]
+fn a_third_person_projects_input_map_is_its_seats() {
+    use amoris_runtime::player::SeatKind;
+    let thornkeep = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../samples/thornkeep");
+    let p = Project::load(&thornkeep).unwrap_or_else(|e| panic!("{e:#?}"));
+    let map = p.manifest.player.unwrap().input_map().unwrap();
+    assert_eq!(map.seat, SeatKind::ThirdPerson);
+    assert_eq!(map.bindings["interact"], ["KeyF"]);
+    assert_eq!(map.bindings["dodge"], ["KeyC", "PadEast"]);
+    assert!(!map.bindings.contains_key("rise") && !map.bindings.contains_key("slot_1"));
+    let touch: Vec<&str> = map.touch.buttons.iter().map(|b| b.input.as_str()).collect();
+    assert_eq!(
+        touch,
+        ["primary", "dodge", "guard", "secondary", "lock", "flask"]
+    );
+
+    let root = project("bindings");
+    std::fs::write(
+        root.join("project.toml"),
+        "name = 'third'\nrate = 60\nseed = 1\n[player]\nactions = 'third_person'\n\
+         [player.bindings]\nslot_1 = ['Digit1']\n",
+    )
+    .unwrap();
+    let e = Project::load(&root).unwrap_err();
+    assert_eq!(e.code, "request.invalid_value");
+    assert_eq!(e.detail["path"], "/player/bindings/slot_1");
+    std::fs::remove_dir_all(root).unwrap();
+}

@@ -42,7 +42,22 @@ done_event = "keep.freed"
 controls = "WASD move · Mouse orbit · Wheel zoom · Shift sprint · LMB swing · E heavy · Space/C roll · RMB guard (parry on time) · Q lock · 1 bolt · 2 knives · 3 flask · Esc menu"
 # The third_person catalog's verbs carry the fight (player.md 5.1); these are the game's own.
 buttons = [
-  { name = "bolt", keys = ["Digit1"] },
-  { name = "knives", keys = ["Digit2"] },
-  { name = "flask", keys = ["Digit3"] },
+  { name = "bolt", keys = ["Digit1", "PadLeft"] },
+  { name = "knives", keys = ["Digit2", "PadRight"] },
+  { name = "flask", keys = ["Digit3", "PadWest"] },
+]
+
+# The seat's defaults (docs/spec/input.md 3.1) but for interact, whose gamepad button drinks a flask.
+[player.bindings]
+interact = ["KeyF"]
+
+# The browser's on-screen controls (docs/spec/input.md 5).
+[player.touch]
+buttons = [
+  { label = "Swing", input = "primary" },
+  { label = "Roll", input = "dodge" },
+  { label = "Guard", input = "guard" },
+  { label = "Heavy", input = "secondary" },
+  { label = "Lock", input = "lock" },
+  { label = "Flask", input = "flask" },
 ]

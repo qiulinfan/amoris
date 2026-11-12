@@ -170,10 +170,11 @@ before. An attached entity is an ordinary instance whose `Transform` the simulat
   attack's committed direction). It measures its speed and that motion in its own frame (`speed`,
   `local`), which a graph's locomotion parameters read. With `root_motion`, the graph's root motion
   moves the walker, through its collision, in place of its controls while it has any.
-- A game's own buttons (Unreal's input actions, Godot's input map): `[player] buttons` names them
-  in order with their keys (`{name = "dodge", keys = ["Space"]}`; key names are the page's
-  `KeyboardEvent.code`, and `MouseLeft`, `MouseRight`, `MouseMiddle`). The window and the page set
-  the seat's `held` control (the mask of buttons down) when it changes and or the `pressed`
+- A game's own buttons (Unreal's input actions, Godot's input map): `[player] buttons` names them in
+  order with their keys (`{name = "dodge", keys = ["Space", "PadEast"]}`; any input name of input.md
+  2: the page's `KeyboardEvent.code`, `MouseLeft`, `MouseRight`, `MouseMiddle`, the wheel and the
+  gamepad's `Pad…`; a touch button of `[player.touch]` names a button too). The window and the page
+  set the seat's `held` control (the mask of buttons down) when it changes and or the `pressed`
   control with the buttons pressed since the last frame; both land in the body's `Buttons`, whose
   `pressed` the engine clears after each tick. Bit i is the i-th button.
 - `CameraRig` on a camera entity (Unreal's spring arm, Godot's `SpringArm3D`): `target` (an entity),

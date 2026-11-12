@@ -26,7 +26,7 @@ grows, `__wbindgen_externrefs`, with a maximum, as binaryen 108 does) and Python
 | Path | From | What |
 |---|---|---|
 | `index.html` | `web/play.html` | The player page, titled with the game's name, with the package's size for its progress bar |
-| `player.js` | `web/player.js` | The seat's input, the frame loop's hook, the loading and pause veil |
+| `player.js` | `web/player.js` | The seat's devices (keys, mouse, gamepad, touch controls), the frame loop's hook, the loading and pause veil |
 | `amoris.js`, `game.js` | `web/` | The page's handle on the game and the module worker running its loop (threads.md 7.4) |
 | `pkg/` | `amoris-web`, built with the `web` profile | The game module (both roles, threads.md 7.1) and its glue |
 | `viewport/` | `web/viewport/` (committed) | The WebGPU renderer (`amoris-viewport`) and its glue |
@@ -43,13 +43,15 @@ renderer is exported once `tools/build_viewport.sh` has rebuilt `web/viewport/pk
 
 The page runs the game at real time in a module worker and draws its render feed with the engine's
 renderer, as the native window does (`amoris play <project> --walk`). A game whose `[player]`
-declares `actions = "first_person"` is played as seat `player` (voxels.md 8): `player.js` turns the
-input into the same `player.act` actions as `SeatWalk` in `crates/amoris-app/src/window.rs`, sent as
-the local human player, and the viewport's `first_person` draws from the walker's camera as the
-world last published it, turned at once by the page's own look, with the targeted block's outline
-and the crosshair. A game whose catalog is `third_person` (player.md 5.1) is played the same way
-with that catalog's keys (the wheel zooms, the right button guards, C, E, F and Q pulse `dodge`,
-`secondary`, `interact` and `lock`), always with the game's camera, its rig's, whose drawn
+declares `actions = "first_person"` is played as seat `player` (voxels.md 8): `player.js` gathers
+the devices each frame and the viewport's `seat_frame` turns them, through the package's input map
+(`player_input`, input.md 4), into the same `player.act` actions as `SeatWalk` in
+`crates/amoris-app/src/window.rs`, sent as the local human player, and the viewport's `first_person`
+draws from the walker's camera as the world last published it, turned at once by the page's own
+look, with the targeted block's outline and the crosshair. A game whose catalog is `third_person`
+(player.md 5.1) is played the same way through that seat's map (input.md 3.1: the wheel zooms, the
+right button guards, C, E, F and Q pulse `dodge`, `secondary`, `interact` and `lock`, and the
+gamepad and touch controls their own), always with the game's camera, its rig's, whose drawn
 position the viewport smooths (`set_camera_smoothing`, 0.08 s).
 
 | Input | Native window | Page |
@@ -61,6 +63,8 @@ position the viewport smooths (`set_camera_smoothing`, 0.08 s).
 | Break, place | Left, right button | Left, right button |
 | Hotbar | 1 to 9, wheel | 1 to 9, wheel (a notch, or 100 pixels, a slot) |
 | Look | Mouse, 0.003 rad per device count | Mouse, 0.003 rad per movement unit |
+| Gamepad (input.md 2.1, 3) | gilrs: left stick move, right stick look, South jump and swim up, R2 / L2 primary and secondary, R1 / L1 hotbar, L3 run; any button captures, Start releases | The Gamepad API's standard-mapped pads, the same; any button starts play without the lock, Start pauses |
+| Touch (input.md 5) | — | A tap starts play; the move stick, the layout's buttons (default jump, primary, secondary) and pause; a drag elsewhere looks, a tap there clicks |
 
 The veil shows the name, the package's download, and once the player is ready, "Click to play" and
 the controls (`[player] controls` when provided). `camera = "game"` preserves the game's active
@@ -109,7 +113,8 @@ it. The renderer draws on WebGPU's defaults (webgpu-baseline.md: the baseline dr
   not checked here. Firefox and Safari have no raw pointer movement, so the page falls back to the
   plain lock.
 - Chrome on Linux and Android: WebGPU depends on the driver and release; not checked here. Touch
-  has no controls.
+  screens play with the page's touch controls (input.md 5), checked with Chrome's touch emulation,
+  not on a phone.
 
 On itch.io the zip is uploaded as an HTML5 game ("This file will be played in the browser"). It
 needs no "SharedArrayBuffer support". Its limits are 1000 files and 500 MB unpacked; Blockcraft's
@@ -130,6 +135,13 @@ tick timings and the transferred bytes. `QUERY=gpu_minimal=features,limits,times
 WebGPU's baseline device, `DPR=2` at a Retina display's scale. The measurements of the Blockcraft
 build are in [../bench/web-export.md](../bench/web-export.md); its ready time is the view's,
 measured before the player waited for the game's 60 ticks.
+
+`--gamepad` plays the folder with a synthetic standard gamepad and `--touch` with touch events
+instead of the mouse and keyboard (input.md 8): a button or a tap starts play without the lock and
+without jumping, the left stick or the touch stick walks, the right stick or a drag turns the look,
+South or the jump button jumps, and Start or the pause button pauses. `--ui` presses a game's UI
+buttons (ui.md 6; `tests/fixtures/scenes/ui-hud` exported): a click and a touch tap each press one
+button once, a tap on a disabled one presses nothing, and neither captures the pointer.
 
 For Windward, add `--windward`: the check verifies the game camera, the initial hold, a real click
 to play without `forceCapture`, actual bank and dive keys, right-click restart and pause on mouse
