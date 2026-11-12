@@ -29,6 +29,7 @@
 | Players' waits on a loop, decision points after every tick, pace from the players' session: one core the game thread and the browser worker share | `amoris-runtime/src/boundary.rs` (`PlayerWaits`), `thread.rs`, `amoris-web/src/worker.rs` |
 | The reference skipper (a decision model outside the tick) | `amoris-runtime/src/skipper.rs` |
 | Fork lookahead for the skipper, the course's seeded variants, `Game::fork_into` | `amoris-runtime/src/lookahead.rs`, `game.rs` |
+| Branches for an agent outside the process: `player.fork`, `.discard`, `.branches`, `world` (7.1) | `amoris-runtime/src/branches.rs`, `thread.rs` |
 | The `player` MCP tool, seat-bound MCP sessions | `amoris-mcp`, `amoris-server/src/mcp.rs` |
 | Calls made as a seat over HTTP, `amoris player`, `amoris mcp --seat` | `amoris-server`, `amoris-app` |
 | The sailing course | `samples/sailing-course/` |
@@ -244,7 +245,7 @@ no perception to keep it to. The web form plays a game with players through `pla
 The commands are projected like every catalog command:
 
 - **MCP**: the `player` tool,
-  `{action: session|describe|observe|nearby|events|affordances|intents|act|wait|continue|pacing, ...}`.
+  `{action: session|describe|observe|nearby|events|affordances|intents|act|wait|continue|pacing|fork|discard|branches, ...}`.
   Reads an LLM reads (observe, nearby, events, an entity described) come as the text projection
   unless the call asks for JSON, sent as the text itself. A session made with
   `amoris mcp <project> --seat skipper` (against a running host or in process) calls as the seat's
@@ -270,10 +271,63 @@ The commands are projected like every catalog command:
   CLI, `amoris mcp` against a host) waits for a `wait` at least 10 s past its wall limit,
   `max_wall_ms` or the default 30 s, whatever `--timeout` says (`client::timeout_for`).
 
-Not built from mcp.md: branches (`fork`, `discard`), snapshots and `replay` for players, `world` in
-answers, statistics across sessions (section 10); of its grants, `policy`, `profile`, `decision`,
-`clock` and `max_wall_ms` (tokens that bind a client to a role are built since 2026-11-12,
-server.md 3.6). A decision model in process forks a game directly instead (section 8.1).
+### 7.1 Branches for lookahead
+
+An agent outside the process looks ahead as the in-process model does (8.1), through three more
+player commands (2026-11-12; mcp.md 5.5), which the game thread answers itself
+(`amoris_runtime::branches`; a game driven directly answers `command.thread_only`, and forks with
+`Game::fork` instead):
+
+| Command | Kind | Answers |
+|---|---|---|
+| `player.fork {world?, label?}` | Control | `{tick, world, parent, label?}`: a branch `b1`, `b2`, ... (never reused in the thread's life) of main or of one of the caller's branches; a developer's answer also carries the branch's `world_hash`, equal to its parent's |
+| `player.discard {branch}` | Control | `{tick, world: "main", discarded}` |
+| `player.branches` | Read | the caller's branches `{world, parent, forked_at, tick, label?}`, its `limits`, the branch ticks `left` for main's tick, and its `stats` (`forks`, `branch_ticks`, `branch_acts`) |
+
+Every other player command takes `world` (default `main`): the game thread takes it out of the
+parameters and applies the command to that branch, whose answer names it (`world` in a JSON answer,
+a first line `world b1` before a text projection; mcp.md 4.1). Main's answers do not change.
+
+- **A branch is the caller's.** It belongs to the command's source: a seat's player (every client
+  of the seat, as the seat's decision state is shared, section 7), or one developer client. Another
+  source naming it gets `session.unknown_world` with the worlds it has. A branch ends with
+  `player.discard`, at the next fork after its source has no live client (the session that made it
+  went away), or when the game thread stops.
+- **What a branch is.** `Game::fork_branch`: main's snapshot restored into a new game with main's
+  scripts and the players' session copied, its pacing stepped whatever main's is. It records
+  nothing, publishes nothing, feeds no presenter and pushes no event: nothing it does reaches
+  main's world, history, recording or streams. A branch runs the true world, hidden state included,
+  and a player reads it only through its seat's perception (8.1, Perception stays honest); a
+  player's answers there carry no hash, as on main.
+- **Determinism.** A fork's world hash is its parent's, and a branch is stepped by the same tick
+  code as main: the same calls on a branch and then on main give the same ticks and the same hashes
+  (`crates/amoris-runtime/tests/thread_branches.rs`). The bounds below never stop a run partway, so
+  they never change what a run computes.
+- **When it runs.** A branch's `wait` runs inline on the game thread between two of main's
+  boundaries, while main is stepped, paused or held for a seat's decision (real time with pause on
+  decision); while main runs in real time it is refused with `time.wrong_mode`, since no branch
+  tick may hold main's (threads.md 3.6's worker slices are not built). Forks and reads are
+  answered in any pacing. `player.pacing` on a branch is `request.invalid_value`.
+- **The bounds** (the runtime's, `branches::{PER_SOURCE, LIVE, PER_DECISION}`, the defaults of
+  mcp.md 3.1's `Policy` and the benchmark's fork condition): at most 4 live branches a source and
+  16 on the thread (`session.limit_reached {what: "branches"}`), and at most 600 branch ticks a
+  source simulates, over all its branches, while main stays at one tick; the count starts again
+  when main's tick moves. A `wait` on a branch whose `ticks` exceed what is left is refused before
+  anything runs with `session.limit_reached {what: "branch_ticks", limit, value, asked, left}`; one
+  that names no `ticks` runs at most what is left.
+- **Who may fork.** On a host without grants every client may (such a host trusts its local
+  clients, server.md 3.6); a checker never does (the fork is a Control); a developer always does. On
+  a locked host a player grant forks only when its policy says so, `"policy": {"fork": true}` in
+  the grants file (server.md 3.6), and is refused `session.policy_denies {request: "fork", policy:
+  "fork"}` otherwise, as mcp.md 3.1's default for a player is.
+- **Projections.** MCP: the `player` tool's actions `fork`, `discard` and `branches`, and `world`
+  on every action; CLI: `amoris player fork|discard|branches` and `'{"world": "b1", ...}'`; HTTP:
+  `/api/call` with the method.
+
+Not built from mcp.md: snapshots and `replay` for players, `world` in main's answers, statistics
+across sessions (section 10), branch ticks off the game thread (threads.md 3.6); of its grants,
+`profile`, `decision`, `clock`, `max_wall_ms` and of `policy` all but `fork` (its bounds are the
+runtime's, above). A decision model in process forks a game directly instead (section 8.1).
 
 ## 8. The sailing course
 
@@ -384,14 +438,10 @@ every tick, and its player scenario passes the four checks.
   of tests) against a script host this line has since changed (the debugger, types, the prelude);
   porting them is the next step. A game's own intents are therefore engine catalogs in Rust for now.
 - **Lockstep for players, branches, snapshots and `replay` for players, a grant's policy**:
-  amoris-interface has lockstep's `commit`; nothing carries it, nor mcp.md's fork tools (token
-  grants that bind a client to a role are built since 2026-11-12, server.md 3.6; their `policy`,
-  which would allow and bound a player's forks, is not). The fork
-  lookahead (8.1) forks a game in process (`Game::fork`, `Game::fork_into`); an agent outside the
-  process still has no `fork` or `discard` (mcp.md 5.5), no `world` in answers to address a branch
-  by, and the game thread runs no branch beside main (threads.md 3.6, `branch.main_lateness`).
-  Those are the next step for an LLM's lookahead, with the session counting `branch_ticks` against
-  the policy as the lookahead's own statistics do now.
+  amoris-interface has lockstep's `commit`; nothing carries it. An agent outside the process
+  forks, steps and discards branches since 2026-11-12 (7.1), inline on the game thread with the
+  runtime's bounds; a grant's policy says only whether a player may fork, and the game thread runs
+  no branch beside main in real time (threads.md 3.6, `branch.main_lateness`).
 - **A grounded boat decides every other tick.** `sail_to` does not steer round land; once the
   Sloop runs aground on the Isle every `sail_to` fails at once (`sail.aground`), the failure is a
   decision point, and the reference skipper starts its mark again two ticks later until the boat

@@ -819,12 +819,22 @@ request (decision 1 above). The player-facing requests arrived on that design
   session bound to a grant. Requests, answers and the contract's codes are unchanged; the refusals
   of the lock itself are the host's (`host.unauthorized`, `host.grants_invalid`,
   `host.not_locked`).
-- **Not built**: of 3.1's `Grant`, `profile`, `decision`, `clock`, `max_wall_ms` and `policy` (a
-  grants file that names one is refused, never accepted and ignored), `--grant <json>` for a stdio
-  session that runs its own game, and `session.seat_taken` between sessions opened at run time (two
-  player grants on one seat are refused in the file); of 3.3, a tool list of the checker's own (a
-  checker lists the developer's tools and the host refuses what is no Read, so "a tool the session
-  may not call is not listed" holds for players only); `fork`, `discard`, `snapshot`, `restore`
-  and `replay` for players (5.5 to 5.7), `world` and `hash` in answers (4.1; a developer's
-  `player.wait` carries `world_hash`), statistics across sessions, the M1 to M11 checks as named
-  checks.
+- **Branches as built** (2026-11-12; `docs/spec/player.md` 7.1). 5.5's `fork` and `discard` are
+  the runtime's `player.fork {world?, label?}` and `player.discard {branch}`, with
+  `player.branches` for 5.1's `branches` and the fork statistics; every other player command takes
+  `world`. The game thread holds the branches, by source (a seat's player or one developer client),
+  runs them stepped and inline between main's boundaries, and refuses a branch's `wait` while main
+  runs in real time (`time.wrong_mode`). The bounds are 3.1's defaults and the benchmark's fork
+  condition, fixed by the runtime: 4 live branches a source, 16 in all, 600 branch ticks a source
+  while main stays at one tick (`session.limit_reached`, refused up front). Of `policy`, a grants
+  file takes `fork` alone, on a player grant (default false: `session.policy_denies`). A branch's
+  answers carry `world` (4.1); main's do not. Codes and their templates are 7.1's.
+- **Not built**: of 3.1's `Grant`, `profile`, `decision`, `clock`, `max_wall_ms` and of `policy`
+  all but `fork` (a grants file that names one is refused, never accepted and ignored), `--grant
+  <json>` for a stdio session that runs its own game, and `session.seat_taken` between sessions
+  opened at run time (two player grants on one seat are refused in the file); of 3.3, a tool list
+  of the checker's own (a checker lists the developer's tools and the host refuses what is no
+  Read, so "a tool the session may not call is not listed" holds for players only); `snapshot`,
+  `restore` and `replay` for players (5.6, 5.7), `world` and `hash` in main's answers (4.1; a
+  developer's `player.wait` carries `world_hash`), statistics across sessions, the M1 to M11 checks
+  as named checks.

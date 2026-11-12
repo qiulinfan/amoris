@@ -447,9 +447,13 @@ shared/contract/mcp.md 3.1 and 14).
 `token` is 32 hex digits in either case: 128 bits the process owner draws (the editor, a benchmark
 harness; `openssl rand -hex 16`). The engine draws none. `role` is `player`, `checker` or
 `developer`; `seat` is required for a player and refused for the others; `label` is the session's
-label in the list (default: the role's name; at most 80 characters). The file is strict: a field it
-does not take, mcp.md 3.1's `policy`, `profile`, `clock`, `decision` and `max_wall_ms` included
-(nothing enforces them yet), is refused, never accepted and ignored. Each of these ends the process
+label in the list (default: the role's name; at most 80 characters). A player grant may have
+`"policy": {"fork": true}`, which lets it look ahead with `player.fork` (player.md 7.1; default
+false, refused `session.policy_denies` before it reaches the game); a policy on a checker or a
+developer is refused, since a developer always forks and a checker never does. The file is strict:
+a field it does not take, mcp.md 3.1's `profile`, `clock`, `decision`, `max_wall_ms` and the
+policy's fields but `fork` included (nothing enforces them yet; the bounds of a branch are the
+runtime's), is refused, never accepted and ignored. Each of these ends the process
 with exit 1 and `host.grants_invalid {file, grant?, label?, field?, reason, problem?}`, no readiness
 line and no host file: a file that cannot be read or is not JSON; a field the file does not take
 (`problem` is the decoder's `request.unknown_field` with its suggestions); an empty list; a token
@@ -525,7 +529,8 @@ line). Keeping an agent from those is its sandbox's job. The host still serves l
 token is a role among local clients, not a remote identity. A token cannot be added, revoked or
 expired while the host runs.
 
-Not built: mcp.md 3.1's `policy`, `profile`, `decision`, `clock` and `max_wall_ms`; `--grant
+Not built: mcp.md 3.1's `profile`, `decision`, `clock`, `max_wall_ms` and of `policy` all but
+`fork`; `--grant
 <json>` for a stdio session that runs its own game; `session.seat_taken` between sessions opened
 at run time; a tool list of the checker's own (it lists the developer's eleven tools, so mcp.md
 3.3's "a tool the session may not call is not listed" holds for players only); the browser editor

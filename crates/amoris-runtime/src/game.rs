@@ -1441,6 +1441,21 @@ impl Game {
         Ok(g)
     }
 
+    /// A branch of this game for an agent's lookahead (docs/spec/player.md 7.1): [`Game::fork`],
+    /// with the players' session stepped whatever this game's pacing is, since a branch always
+    /// runs stepped (shared/contract/mcp.md 3.2).
+    pub fn fork_branch(&self) -> Result<Game, Problem> {
+        let mut g = self.fork()?;
+        g.player.set_pacing(PlayPacing::Stepped);
+        Ok(g)
+    }
+
+    /// Whether the players' session holds the world for a seat's decision now (real time with
+    /// pause on decision).
+    pub fn players_held(&self, now_ms: f64) -> bool {
+        !self.player.paused_for(now_ms).is_empty()
+    }
+
     /// Makes `branch`, a game forked from this one before, a fork of this game's state again:
     /// this world restored into it and the players' session copied, as [`Game::fork`] does, with
     /// the branch's script host kept rather than a new one instantiated (threads.md 3.6: a branch

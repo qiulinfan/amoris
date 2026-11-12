@@ -879,7 +879,7 @@ fn request(cmd: &str, args: &Args) -> Result<(String, Value), Problem> {
 }
 
 /// The `player` tool's actions (`amoris-mcp`'s, the `player.*` catalog methods).
-const PLAYER_ACTIONS: [&str; 11] = amoris_mcp::tools::PLAYER_ACTIONS;
+const PLAYER_ACTIONS: [&str; 14] = amoris_mcp::tools::PLAYER_ACTIONS;
 
 /// `amoris player <action> ['<json params>'] [--seat s]` (docs/spec/player.md): a `player.*`
 /// method. Observations, nearby percepts, events and a described entity come as their text

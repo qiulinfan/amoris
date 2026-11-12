@@ -141,6 +141,8 @@ struct Entry {
     shared: Option<(Option<String>, String)>,
     /// Closed for good: its calls are refused. A row that was never live is not closed.
     closed: bool,
+    /// A player grant whose policy has no `fork`: `player.fork` is refused.
+    no_fork: bool,
 }
 
 /// The sessions and their stream. It holds no host and reads no clock: the caller passes the
@@ -243,6 +245,7 @@ impl Registry {
                 in_ring: 0,
                 shared: spec.shared.then_some((spec.seat, label)),
                 closed: false,
+                no_fork: false,
             },
         );
         let event = self.record(&id, "opened", json!({}), ts);
@@ -371,6 +374,17 @@ impl Registry {
     fn caller(&self, id: &str) -> Option<(Option<String>, Option<Client>, Role)> {
         let e = self.entry(id).filter(|e| !e.closed)?;
         Some((e.row.seat.clone(), e.client.clone(), e.row.role))
+    }
+
+    /// The session `id` may not fork (a player grant whose policy has no `fork`).
+    pub(crate) fn forbid_fork(&mut self, id: &str) {
+        if let Some(e) = self.entry_mut(id) {
+            e.no_fork = true;
+        }
+    }
+
+    fn may_fork(&self, id: &str) -> bool {
+        self.entry(id).is_none_or(|e| !e.no_fork)
     }
 
     fn set_client(&mut self, id: &str, client: Client) {
@@ -519,7 +533,7 @@ pub(crate) fn registry() -> Mutex<Registry> {
 impl Host {
     /// The registry. Its lock is never held across an await, and never taken while `names` is
     /// held; events are pushed while it is held, so they leave in the order of their numbers.
-    fn sessions(&self) -> MutexGuard<'_, Registry> {
+    pub(crate) fn sessions(&self) -> MutexGuard<'_, Registry> {
         self.0
             .sessions
             .lock()
@@ -684,6 +698,14 @@ impl Host {
             return self.call(&via, method, params).await;
         };
         if let Err(p) = seat_permits(method) {
+            return Err(self.agent_refused(id, method, &params, p));
+        }
+        if method == "player.fork" && !self.sessions().may_fork(id) {
+            let p = Problem::new(
+                "session.policy_denies",
+                "This session may not fork: its policy has fork off.",
+                detail([("request", json!("fork")), ("policy", json!("fork"))]),
+            );
             return Err(self.agent_refused(id, method, &params, p));
         }
         let client = match client {

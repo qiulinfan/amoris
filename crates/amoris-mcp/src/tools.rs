@@ -258,7 +258,10 @@ pub fn tools() -> Vec<ToolDef> {
                 events {since}; affordances; intents; act {actions: [{do: start, intent, target, \
                 params} | {do: use, entity, verb} | {do: set, controls} | {do: cancel, \
                 intent_id}], resume}; wait: time runs until your next decision point {until, \
-                ticks, observe}; continue; session. A developer names the seat.",
+                ticks, observe}; continue; session. Lookahead: fork {label} gives you a branch \
+                b1, b2, ... of main that only you reach; every action takes world to act on a \
+                branch (wait on a branch runs at most 600 ticks while main stays at one tick); \
+                branches lists yours; discard {branch}. A developer names the seat.",
             schema: obj(
                 json!({
                     "action": action(&PLAYER_ACTIONS),
@@ -285,6 +288,9 @@ pub fn tools() -> Vec<ToolDef> {
                     "observe": {"type": "object"},
                     "pacing": {"type": "object"},
                     "omniscient": {"type": "boolean"},
+                    "world": {"type": "string", "description": "\"main\" (default) or one of your branches"},
+                    "label": {"type": "string"},
+                    "branch": {"type": "string"},
                 }),
                 &["action"],
             ),
@@ -293,7 +299,7 @@ pub fn tools() -> Vec<ToolDef> {
 }
 
 /// The `player` tool's actions: the `player.*` catalog methods.
-pub const PLAYER_ACTIONS: [&str; 11] = [
+pub const PLAYER_ACTIONS: [&str; 14] = [
     "session",
     "describe",
     "observe",
@@ -305,6 +311,9 @@ pub const PLAYER_ACTIONS: [&str; 11] = [
     "wait",
     "continue",
     "pacing",
+    "fork",
+    "discard",
+    "branches",
 ];
 
 /// The player's reads an LLM reads as text unless it asks for JSON (mcp.md 4.3: text by default

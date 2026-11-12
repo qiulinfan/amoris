@@ -106,6 +106,14 @@ refusals are the host's own `host.*` codes (`host.unauthorized`, `host.grants_in
 stays 0.2. The grants file's form is the host's, not the contract's: it carries four of mcp.md
 3.1's `Grant` fields and refuses the others until they are built.
 
+The same day the player's branches were built (mcp.md 14, Branches as built;
+`docs/spec/player.md` 7.1): mcp.md 5.5's `fork` and `discard` as the commands `player.fork` and
+`player.discard`, `player.branches` for the session's list of branches, and `world` on the player
+commands, with the `session.*` codes and templates of mcp.md 7.1 and a player grant's
+`policy.fork`. They build what mcp.md already specified: main's requests and answers, the text
+projection and the codes are unchanged, a branch's answer adds `world` as 4.1 says, and the
+bounds are 3.1's defaults. So the contract stays 0.2.
+
 ## Contract record
 
 The contract and benchmark live in this repository under `shared/contract/` and

@@ -119,10 +119,16 @@ struct Served {
 
 impl Served {
     fn start(locked: bool) -> Served {
+        Served::with(locked.then(grants_file))
+    }
+
+    /// A host locked with the grants file `grants`, or not locked.
+    fn with(grants: Option<String>) -> Served {
         let (handle, host) = start();
         let rt = runtime();
-        if locked {
-            rt.block_on(host.lock(Grants::parse(&grants_file()).unwrap()))
+        let locked = grants.is_some();
+        if let Some(file) = grants {
+            rt.block_on(host.lock(Grants::parse(&file).unwrap()))
                 .unwrap();
         }
         assert_eq!(host.locked(), locked);
@@ -904,6 +910,60 @@ fn a_player_token_is_its_seat_whatever_the_body_says() {
     );
     assert!(row["calls"].as_u64().unwrap() > 40, "{row:#}");
     assert!(row["failed_calls"].as_u64().unwrap() > 30, "{row:#}");
+    assert_eq!(served.world(), before);
+}
+
+/// A player looks ahead only when its grant's policy has `fork` (shared/contract/mcp.md 3.1,
+/// 5.5; docs/spec/player.md 7.1): its branches are its own, played by `world` through the player
+/// tool over HTTP and MCP, and main does not move while they run.
+#[test]
+fn a_player_forks_when_its_grant_allows_and_main_stays() {
+    let served = Served::start(true);
+    let url = served.url.clone();
+    let e = error(&url, PLAYER, &request("player.fork", json!({})));
+    assert_eq!(e["code"], json!("session.policy_denies"), "{e:#}");
+    assert_eq!(e["detail"]["policy"], json!("fork"), "{e:#}");
+    drop(served);
+
+    let mut file: Value = serde_json::from_str(&grants_file()).unwrap();
+    file["grants"][0]["policy"] = json!({"fork": true});
+    let served = Served::with(Some(file.to_string()));
+    let url = served.url.clone();
+    let before = served.world();
+    let f = result(&url, PLAYER, "player.fork", json!({"label": "try"}));
+    assert_eq!(f["world"], json!("b1"), "{f:#}");
+    assert!(f.get("world_hash").is_none(), "{f:#}");
+    let w = result(
+        &url,
+        PLAYER,
+        "player.wait",
+        json!({"world": "b1", "ticks": 120}),
+    );
+    assert_eq!(w["world"], json!("b1"), "{w:#}");
+    assert!(w["tick"].as_u64().unwrap() > 0, "{w:#}");
+    // The checker and the developer have their own sources: the player's branch is none of theirs.
+    let e = error(
+        &url,
+        DEVELOPER,
+        &request("player.observe", json!({"world": "b1", "seat": "skipper"})),
+    );
+    assert_eq!(e["code"], json!("session.unknown_world"), "{e:#}");
+    let e = error(&url, CHECKER, &request("player.fork", json!({})));
+    assert_eq!(e["code"], json!("permission.denied"), "{e:#}");
+
+    // The player tool carries the same over MCP.
+    let mut mcp = McpHttp::by_path(&url, PLAYER);
+    mcp.initialize("agent");
+    let (failed, text) = mcp.tool("player", json!({"action": "branches"}));
+    assert!(!failed, "{text}");
+    assert!(text.contains("\"b1\""), "{text}");
+    let (failed, text) = mcp.tool("player", json!({"action": "observe", "world": "b1"}));
+    assert!(!failed, "{text}");
+    assert!(text.starts_with("world b1\n"), "{text}");
+    let (failed, text) = mcp.tool("player", json!({"action": "discard", "branch": "b1"}));
+    assert!(!failed, "{text}");
+    let (failed, text) = mcp.tool("player", json!({"action": "wait", "world": "b1"}));
+    assert!(failed && text.contains("session.unknown_world"), "{text}");
     assert_eq!(served.world(), before);
 }
 
@@ -2284,7 +2344,7 @@ fn amoris_serve_refuses_a_bad_grants_file() {
     // A field no grant takes yet is refused, never accepted and ignored.
     std::fs::write(
         &outside,
-        json!({"grants": [{"token": DEVELOPER, "role": "developer", "policy": {"fork": true}}]})
+        json!({"grants": [{"token": DEVELOPER, "role": "developer", "profile": "omniscient_player"}]})
             .to_string(),
     )
     .unwrap();
@@ -2296,9 +2356,18 @@ fn amoris_serve_refuses_a_bad_grants_file() {
     );
     assert_eq!(
         p["detail"]["problem"]["detail"]["path"],
-        json!("/grants/0/policy"),
+        json!("/grants/0/profile"),
         "{p:#}"
     );
+    // A policy is a player grant's alone (a developer always forks, a checker never does).
+    std::fs::write(
+        &outside,
+        json!({"grants": [{"token": DEVELOPER, "role": "developer", "policy": {"fork": true}}]})
+            .to_string(),
+    )
+    .unwrap();
+    let p = serve_refuses(&project, &outside);
+    assert_eq!(p["detail"]["field"], json!("policy"), "{p:#}");
 
     // A seat the game does not declare: found when the host locks, before it serves.
     std::fs::write(

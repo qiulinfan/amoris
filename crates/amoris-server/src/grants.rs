@@ -83,6 +83,9 @@ struct Grant {
     seat: Option<String>,
     /// What the grant's session is called in the list (`agent.session.list`).
     label: String,
+    /// A player grant whose policy has `fork` (shared/contract/mcp.md 3.1): its session may
+    /// look ahead with `player.fork`.
+    fork: bool,
 }
 
 /// The grants a host is locked with, as the grants file gives them.
@@ -93,9 +96,10 @@ pub struct Grants {
     file: Option<String>,
 }
 
-/// The grants file: `{"grants": [{"token", "role", "seat"?, "label"?}]}`. Strict: a field it does
-/// not take (shared/contract/mcp.md 3.1's `policy`, `profile`, `clock`, `decision`,
-/// `max_wall_ms`, which nothing enforces yet) is refused, never accepted and ignored.
+/// The grants file: `{"grants": [{"token", "role", "seat"?, "label"?, "policy"?}]}`. Strict: a
+/// field it does not take (shared/contract/mcp.md 3.1's `profile`, `clock`, `decision`,
+/// `max_wall_ms` and the policy's fields but `fork`, which nothing enforces yet) is refused, never
+/// accepted and ignored.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct File {
@@ -115,6 +119,19 @@ struct Entry {
     /// The session's label in `agent.session.list`; default: the role's name.
     #[serde(default)]
     label: Option<String>,
+    /// A player grant's policy; default: no lookahead.
+    #[serde(default)]
+    policy: Option<Policy>,
+}
+
+/// Of mcp.md 3.1's `Policy`, what a host enforces: whether a player may fork branches for
+/// lookahead (docs/spec/player.md 7.1). Its bounds are the runtime's own.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct Policy {
+    /// May fork branches of main (`player.fork`); default false.
+    #[serde(default)]
+    fork: bool,
 }
 
 /// Why a grants file, or one of its grants, is refused. Never holds a token.
@@ -269,11 +286,29 @@ fn parse(text: &str) -> Result<Vec<Grant>, Refusal> {
             }
             (_, None) => {}
         }
+        if entry.policy.is_some() && role != Role::Player {
+            return Err(Refusal::grant(
+                i,
+                &label,
+                "policy",
+                format!(
+                    "only a player grant has a policy; a {} {}",
+                    role.name(),
+                    if role == Role::Developer {
+                        "may always fork"
+                    } else {
+                        "never forks"
+                    }
+                ),
+            ));
+        }
+        let fork = entry.policy.is_some_and(|p| p.fork);
         list.push(Grant {
             token,
             role,
             seat,
             label,
+            fork,
         });
     }
     Ok(list)
@@ -450,6 +485,9 @@ impl Host {
         let mut bound = Vec::with_capacity(grants.list.len());
         for (grant, client) in grants.list.into_iter().zip(seats) {
             let session = self.grant_row(grant.role, grant.seat.as_deref(), &grant.label);
+            if grant.role == Role::Player && !grant.fork {
+                self.sessions().forbid_fork(&session);
+            }
             if let Some(client) = client {
                 self.grant_client(&session, client);
             }
@@ -643,8 +681,37 @@ mod tests {
             json!("skipper"),
             "{p:#?}"
         );
+        // A policy is a player's, and of it only `fork` is taken.
+        for role in ["checker", "developer"] {
+            let p = refused(
+                &file(json!([{"token": PLAYER, "role": role, "policy": {"fork": true}}])),
+                &[PLAYER],
+            );
+            assert_eq!(p.detail["field"], json!("policy"), "{p:#?}");
+        }
+        let p = refused(
+            &file(
+                json!([{"token": PLAYER, "role": "player", "seat": "skipper",
+                          "policy": {"fork": true, "max_branches": 2}}]),
+            ),
+            &[PLAYER],
+        );
+        assert_eq!(
+            p.detail["problem"]["code"],
+            json!("request.unknown_field"),
+            "{p:#?}"
+        );
+        let g = Grants::parse(&file(json!([
+            {"token": PLAYER, "role": "player", "seat": "skipper", "policy": {"fork": true}},
+            {"token": CHECKER, "role": "player", "seat": "crew"},
+        ])))
+        .unwrap();
+        assert_eq!(
+            g.list.iter().map(|g| g.fork).collect::<Vec<_>>(),
+            [true, false]
+        );
         // A field the file does not take, which a later grant form may: refused, never ignored.
-        for field in ["policy", "profile", "clock", "decision", "max_wall_ms"] {
+        for field in ["profile", "clock", "decision", "max_wall_ms"] {
             let mut grant = json!({"token": PLAYER, "role": "developer"});
             grant[field] = json!({});
             let p = refused(&file(json!([grant])), &[PLAYER]);

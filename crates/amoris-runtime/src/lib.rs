@@ -21,6 +21,7 @@
 )]
 
 pub mod boundary;
+pub mod branches;
 mod catalog;
 pub mod control;
 mod edit;
