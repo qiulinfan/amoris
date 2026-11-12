@@ -80,7 +80,7 @@ impl Harness {
             .write_buffer(&field, 0, bytemuck::cast_slice(columns));
         let view = g.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("spray test view"),
-            size: 1024,
+            size: 2048,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -283,7 +283,7 @@ fn global_birth_budget_is_shared_across_water_regions() {
     // Both pools share the same global allocator, exactly as different renderer water regions do.
     let view = g.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("budget view"),
-        size: 1024,
+        size: 2048,
         usage: wgpu::BufferUsages::UNIFORM,
         mapped_at_creation: false,
     });

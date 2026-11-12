@@ -38,17 +38,16 @@ decides where the base travels, native multi-draw decides how many calls the CPU
 ### 2.1 Batches
 
 The culling pass (`cull.wgsl`) tests every instance against five views (the camera and four shadow
-cascades) and one more per local shadow view in use (a spot light's shadow map,
-[shadows.md](shadows.md) 2; at most four). A batch is one (view, pipeline variant, mesh); the
-variants are opaque, alpha-masked, double-sided and both (`scene.rs`, `VARIANTS`). The culling pass
-counts a batch's visible instances into its indexed indirect arguments and writes each one to the
-batch's region of the view's list: the camera view's interpolated poses to `drawn`, the cascades'
-and the local views' instance indices to `visible`.
-With occlusion culling the camera view has a sixth set of arguments, the late one, whose batches
-use the camera's bases on every path ([occlusion.md](occlusion.md) 6). The late set stays the
-sixth whether it is used or not; local view `k`'s set follows it (set `6 + k`), drawing list
-`5 + k`.
-Instance `k` of a batch is entry `base + k`, with
+cascades) and one more per local shadow view in use (a spot light's shadow map or a face of a point
+light's, [shadows.md](shadows.md) 2; at most twelve). A batch is one (view, pipeline variant, mesh);
+the variants are opaque, alpha-masked, double-sided and both (`scene.rs`, `VARIANTS`). The culling
+pass counts a batch's visible instances into its indexed indirect arguments and writes each one to
+the batch's region of the view's list: the camera view's interpolated poses to `drawn`, the
+cascades' and the local views' instance indices to `visible`. With occlusion culling the camera view
+has a sixth set of arguments, the late one, whose batches use the camera's bases on every path
+([occlusion.md](occlusion.md) 6). The late set stays the sixth whether it is used or not; local view
+`k`'s set follows it (set `6 + k`), drawing list `5 + k`. Instance `k` of a batch is entry
+`base + k`, with
 
     base = view * stride + offsets[variant * meshes + mesh]
 
@@ -85,13 +84,13 @@ JavaScript.
 
 ### 2.3 The base uniform
 
-Group 3, binding 1 of the forward, shadow and id pipelines is `var<uniform> batch: vec4u`, a
-16-byte binding with a dynamic offset into one uniform buffer (binding 0 of group 3 is the ocean's,
-in its own pipeline layout, so the two never collide). Entry 0 is zero; on the baseline path
-entry `1 + view * L + j` holds the base of live batch `j` of view `view`, where `L` is the number of
-live batches. Entries are `minUniformBufferOffsetAlignment` apart (256 bytes on WebGPU's defaults),
-so the buffer is `(1 + (5 + K) L) * 256` bytes, `K` the local shadow views in use (0 without a
-shadowed spot light), rewritten whenever the counts change. The id pass's pipeline layout is
+Group 3, binding 1 of the forward, shadow and id pipelines is `var<uniform> batch: vec4u`, a 16-byte
+binding with a dynamic offset into one uniform buffer (binding 0 of group 3 is the ocean's, in its
+own pipeline layout, so the two never collide). Entry 0 is zero; on the baseline path entry
+`1 + view * L + j` holds the base of live batch `j` of view `view`, where `L` is the number of live
+batches. Entries are `minUniformBufferOffsetAlignment` apart (256 bytes on WebGPU's defaults), so
+the buffer is `(1 + (5 + K) L) * 256` bytes, `K` the local shadow views in use (0 without a shadowed
+spot or point light), rewritten whenever the counts change. The id pass's pipeline layout is
 `[frame, empty, empty, batch]`; it binds the empty groups itself.
 
 ### 2.4 What does not need this
@@ -112,8 +111,9 @@ The renderer's pipelines fit WebGPU's default limits (checked natively by
   defaults;
 - bind groups: 4 of 4 in the forward, shadow, id and ocean pipelines.
 
-  Spot lights' shadow maps ([shadows.md](shadows.md) 7) therefore add neither: they are more layers
-  of the shadow array the lighting group already binds, four matrices at the end of the `View`
+  Spot and point lights' shadow maps ([shadows.md](shadows.md) 7) therefore add neither: they are
+  more layers of the shadow array the lighting group already binds, twelve matrices at the end of
+  the `View`
   uniform and two words of the lights' padding.
 - the culling passes bind 7 storage buffers each (with occlusion culling's per-instance state;
   the late pass also its counters), within the 8 a compute stage may use

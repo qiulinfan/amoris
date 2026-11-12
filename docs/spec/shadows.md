@@ -1,6 +1,7 @@
 # Shadows
 
-Status: Draft. Spot lights' shadow maps implemented 2026-11-12 (charter 4.4's note of that date).
+Status: Draft. Spot lights' and point lights' shadow maps implemented 2026-11-12 (charter 4.4's
+notes of that date).
 The sun's cascades and their ray-traced alternative are older and are specified where they were
 built; this file says who casts shadows in the interactive renderer and specifies the local shadow
 views.
@@ -8,27 +9,30 @@ views.
 Charter: 4.4 (光照与画质: cascaded shadows, and the note of 2026-11-12 on spot lights), 3 item 7
 (GPU-driven; no silent limit), 4.1 (one renderer for Metal, Vulkan, Direct3D 12 and WebGPU).
 
-This specification says which lights cast shadows and on what, how a spot light's shadow map is
-laid out among the views of the GPU-driven culling, how a frame chooses the spot lights it shadows
-and reports the ones it does not, how the map is drawn and sampled, what it costs, how it is
-switched off and how it is checked. The code is `crates/amoris-render/src/shadows.rs` (the views
-and the choice), `batches.rs` (the argument sets), `renderer.rs` (`sync`, `render`),
+This specification says which lights cast shadows and on what, how a spot light's shadow map and a
+point light's six are laid out among the views of the GPU-driven culling, how a frame chooses the
+lights it shadows and reports the ones it does not, how the map is drawn and sampled, what it costs,
+how it is switched off and how it is checked. The code is `crates/amoris-render/src/shadows.rs` (the
+views and the choice), `batches.rs` (the argument sets), `renderer.rs` (`sync`, `render`),
 `shaders/cull.wgsl` (the views' culling), `shaders/forward.wgsl` (`local_shadow`, the two light
 loops, `vs_shadow`) and `shaders/common.wgsl` (`View`, `Light`).
 
 Why: `Light.shadows` reached the renderer for every kind of light and the path tracer honoured it
 ([path-tracing-nrc.md](path-tracing-nrc.md)), but the interactive renderer shadowed the sun only: a
-spot light shone through walls and floors.
+spot or point light shone through walls and floors.
 
 ## 1. Who casts and who receives
 
 | Light | With `shadows` set | Specified in |
 |---|---|---|
 | Directional (the sun: the directional light of lowest id) | four cascaded shadow maps, or with `AMORIS_RT_SHADOWS=1` one ray per fragment | [occlusion.md](occlusion.md) 11 (which casters a cascade draws), [lod.md](lod.md) 4 (their levels), [transparency.md](transparency.md) 5 (transparent casters), [rt-shadows.md](rt-shadows.md) |
-| Spot | a shadow map of its own, a local shadow view; at most four in view at once | this file |
-| Point | nothing yet: point lights are unshadowed (11) | |
+| Spot | a shadow map of its own, a local shadow view | this file |
+| Point | six local shadow views, the faces of a cube around it | this file |
 
-`Light.shadows` defaults to true, so a spot light casts unless its scene says otherwise.
+A frame has 12 local views (2): twelve shadowed spots, two point lights, or one point light and six
+spots.
+
+`Light.shadows` defaults to true, so a spot or point light casts unless its scene says otherwise.
 
 **Casters** are the instances the cascades draw: alive, visible, with `Model.cast_shadows`
 (`FLAG_SHADOW`), by their material's opacity (an alpha-masked material casts its cut-out, a
@@ -40,9 +44,10 @@ surface, particles and splats sum no punctual light, so no spot light lights or 
 
 ## 2. Local views
 
-A local view is one spot light's shadow map for one frame: a perspective view from the light along
-its cone (4), handled as a cascade is. A frame has up to `LOCAL_VIEWS = 4`, in slots 0 to 3. Slot
-`k` is
+A local view is one shadow map for one frame: a perspective view from a spot light along its cone
+(4), or one of the six faces of a point light's cube (4.1), handled as a cascade is. A frame has up
+to `LOCAL_VIEWS = 12`, in slots 0 to 11. A spot light takes one slot, a point light six consecutive
+ones (its **cost**). Slot `k` is
 
 - view `5 + k` of the culling pass (`cull.wgsl`: 0 the camera, 1 to 4 the cascades) and region
   `5 + k` of the `visible` list;
@@ -52,16 +57,18 @@ its cone (4), handled as a cascade is. A frame has up to `LOCAL_VIEWS = 4`, in s
 - `View.local_views[k]`, its view-projection.
 
 **Capacity.** The lists, the argument sets, the baseline path's bases and the shadow array are laid
-out for `capacity = min(4, lights with kind spot and shadows set)`, and for 0 with the switch off
-(8). Only the kind and the flag count (`shadows::casts_locally`): a light that changes its
+out for `capacity = min(12, the costs of the spot and point lights with shadows set)`, and for 0
+with the switch off (8). Only the kind and the flag count (`shadows::casts_locally`,
+`shadows::cost`): a light that changes its
 intensity, pose or cone, a flashlight switched by its intensity, lays nothing out again. When the
 capacity changes (such a light added or removed, its flag or the switch changed), `sync` lays the
 regions out again, re-creates the shadow array with exactly `4 + capacity` layers and rebuilds the
 lighting group; when it falls, `visible` goes back to the size a renderer would hold for the views
 left.
 
-**Without a shadowed spot** the capacity is 0 and every buffer, list, argument set, base and draw
-is what it was before local views existed: no memory, no pass, and no pixel changes (10).
+**Without a shadowed spot or point light** the capacity is 0 and every buffer, list, argument set,
+base and draw is what it was before local views existed: no memory, no pass, and no pixel changes
+(10).
 
 ## 3. The choice each frame
 
@@ -71,11 +78,13 @@ the lights in.
 
 A light is a **candidate** when
 
-- it is a spot with `shadows` set;
-- it can be placed and lights something (`shadows::spot_view`): every field finite, a direction of
-  some length, and a range, an outer angle and an intensity above 0;
-- the sphere around its lit sector (`shadows::cone_sphere`: the points within the range and within
-  the outer angle of the axis) meets the camera's frustum. The sphere is the one through the apex
+- it is a spot or a point light with `shadows` set;
+- it can be placed and lights something (`shadows::spot_view`, `shadows::point_views`): every field
+  finite, a range and an intensity above 0, and for a spot a direction of some length and an outer
+  angle above 0;
+- the sphere around what it lights meets the camera's frustum: a point light's is the sphere of its
+  range, a spot's the sphere around its lit sector (`shadows::cone_sphere`: the points within the
+  range and within the outer angle of the axis). The sphere is the one through the apex
   and the cap's rim up to 45 degrees of half angle (`range / (2 cos half)` along the axis, the same
   radius), the rim's own sphere up to 90 degrees (`range cos half` along the axis, radius
   `range sin half`), and the range's sphere around the light past that.
@@ -86,18 +95,23 @@ does not flip with the jitter's phase.
 
 The candidates are ranked by their **size on screen**, the sphere's radius over the distance from
 the eye to its centre (the radius alone under an orthographic camera), largest first, equal ones by
-the lower entity id. The first `capacity` get a view; their slots follow their ids. A scene with at
-most four shadowed spots therefore shadows every one in view; with more, the smallest on screen go
-without, and since the choice has no memory a shadow can appear or vanish as the camera moves past
-the point where two lights are equal (11).
+the lower entity id. In that order each takes its cost in slots while `capacity` has them left, and
+a light whose cost no longer fits goes without (a point light with five slots left), while a
+smaller spot after it may still take one. The lights taken get their slots in the order of their
+ids, a point light's faces in the order of 4.1. A scene whose shadowed lights cost at most 12
+therefore shadows every one in view; with more, the smallest on screen go without, and since the
+choice has no memory a shadow can appear or vanish as the camera moves past the point where two
+lights are equal (11).
 
 **No silent limit** (charter 3 item 7). The candidates left without a view are counted:
-`FrameStats::local_shadows` is the views drawn, `FrameStats::local_shadows_dropped` the shadowed
-spots in view that got none, and the renderer logs one warning when the latter becomes nonzero (and
-again after it has returned to 0). The viewport's stats carry both
-(`local_shadows`, `local_shadows_dropped`); its page's HUD shows them when either is nonzero.
+`FrameStats::local_shadows` is the lights shadowed (a point light counts once),
+`FrameStats::local_shadows_dropped` the shadowed lights in view that got no view, and the renderer
+logs one warning when the latter becomes nonzero (and again after it has returned to 0). The
+viewport's stats carry both (`local_shadows`, `local_shadows_dropped`); its page's HUD shows them
+when either is nonzero.
 
-A chosen light's row of the lights buffer carries `shadow = 1 + slot` for the frame (0: no map);
+A chosen light's row of the lights buffer carries `shadow = 1 + slot` for the frame, its first slot
+for a point light (0: no map);
 the buffer is written only when the lights or the choice changed.
 
 ## 4. The view
@@ -120,14 +134,31 @@ degrees of vertical).
 - **Texel**: `2 tan(half) / 2048` metres wide per metre of depth from the light (0.7 mm per metre
   for a 35 degree cone: 3.5 mm at 5 m). It travels in `Light.shadow_texel`.
 
+### 4.1 A point light's faces
+
+`shadows::point_views` gives a point light's six view-projections, the faces of a cube around its
+position, in the order +x, -x, +y, -y, +z, -z (face `f` is slot `first + f`): perspective,
+right-handed, standard depth, square, each looking along its axis with +y up (+z up for the +y face,
+-z for the -y face).
+
+- **Half angle**: `atan(1 + 8 / 2048)`, a little over 45 degrees, so that neighbouring faces
+  overlap by four texels at each edge. The point a receiver reads chooses its face (6), so its
+  projection lies at least four texels inside that face's map, which holds the filter's taps.
+- **Near plane**: 5 cm from the light along the face's axis, or half the range when that is less;
+  **far plane**: the range (at least 1 cm). A caster within 5 cm of the light along every axis is
+  clipped out of every face.
+- **Size**: 2048 x 2048, a layer of the shadow array each.
+- **Texel**: `2 (1 + 8 / 2048) / 2048` metres wide per metre of depth along the face's axis (about
+  1 mm a metre), in `Light.shadow_texel`.
+
 ## 5. Culling and drawing
 
-**Culling.** `Cull.planes[5 + k]` holds the six planes of the view's clip volume
-(`shadows::planes`, as a cascade's box). The culling pass keeps a caster in a local view when its
-bounding sphere passes them. That test alone is exact: a caster writes only the texels whose
-centres its triangles cover, all inside the frustum, so a caster outside it writes nothing. A local
-view has no slice and no bound of its own: `Cull.slices` and `Cull.lod_cascades` hold the cascades'
-terms and are never indexed with a local view.
+**Culling.** `Cull.planes[5 + k]` holds the six planes of the view's clip volume (`shadows::planes`,
+as a cascade's box); a point light's faces are six views like any other. The culling pass keeps a
+caster in a local view when its bounding sphere passes them. That test alone is exact: a caster
+writes only the texels whose centres its triangles cover, all inside the frustum, so a caster
+outside it writes nothing. A local view has no slice and no bound of its own: `Cull.slices` and
+`Cull.lod_cascades` hold the cascades' terms and are never indexed with a local view.
 
 `Cull.view_mask` has a bit per view culled this frame. Without a sun's shadows, and with ray-traced
 sun shadows (9), the cascades are not drawn: their bits are clear, their lists and arguments stay
@@ -148,7 +179,8 @@ never does. A transparent receiver's level is picked on the CPU without the cull
 hysteresis ([transparency.md](transparency.md) 3), so within the hysteresis band it can differ by
 one level from the copy that casts.
 
-The workgroup counters of the two-level counting are per view and level: 72 (9 views of 8 levels).
+The workgroup counters of the two-level counting are per view and level: 136 (17 views of 8
+levels).
 
 **Drawing.** After the cascades' passes, and whether they are drawn or not, one pass per local view
 draws into layer `4 + k`, cleared to 1, with the cascades' two caster pipelines (opaque and
@@ -163,15 +195,19 @@ the passes `local shadows`; `Renderer::draw_counts` reads back what each drew
 
 Both loops over a pixel's punctual lights (`shade` and `transparent` in forward.wgsl) multiply a
 light's attenuation by `local_shadow` when its `shadow` word is set and the attenuation is not 0
-(the point is in range and in the cone):
+(the point is in range and, for a spot, in the cone):
 
-1. `t`, the map's texel at the receiver: its depth from the light along the axis (the clip `w` of
-   its position) times `Light.shadow_texel`.
+1. `t`, the map's texel at the receiver: its depth from the light times `Light.shadow_texel`; for a
+   spot the depth along the axis (the clip `w` of its position in the map), for a point light the
+   largest of the three coordinates of the receiver's offset from the light (its depth along the
+   face whose axis that is).
 2. The point read is the receiver moved by `(1.5 n + l) t`: 1.5 texels along its normal `n` and
    1 toward the light `l`.
-3. It is projected into the map. A point behind the light's plane, outside the map's square or
-   past the far plane is lit.
-4. Nine comparison taps one texel apart (`textureSampleCompareLevel`, the cascades' comparison
+3. A point light's face is the one whose axis is the largest coordinate of the moved point's offset
+   from the light (`cube_face`; ties go to x, then y, the positive side at 0).
+4. The point is projected into the map. A point behind the light's plane, outside the map's square
+   or past the far plane is lit.
+5. Nine comparison taps one texel apart (`textureSampleCompareLevel`, the cascades' comparison
    sampler: `LessEqual`, linear) are averaged.
 
 There is no constant depth bias: perspective depth is `f / (f - n) * (1 - n / w)`, so a constant
@@ -191,21 +227,25 @@ Nothing is bound that was not: the forward fragment stage still holds 8 of 8 sto
 its layout 4 of 4 groups on WebGPU's defaults ([webgpu-baseline.md](webgpu-baseline.md) 3). Local
 views live in
 
-- the `View` uniform: `local_views`, four matrices at its end (752 to 1,008 bytes; the view
-  buffers some tests build by hand are 1,024 bytes);
+- the `View` uniform: `local_views`, twelve matrices at its end (752 to 1,520 bytes; the view
+  buffers some tests build by hand are 2,048 bytes);
 - the lights' padding: `Light.shadow` and `Light.shadow_texel` (a light stays 64 bytes);
-- the `Cull` uniform: nine views' planes and `view_mask` in a padding word (1,216 to 1,600 bytes);
-- more layers of the shadow array: 16 MiB a local view in use;
-- the `visible` list: 4 bytes per entry and view in use, 36 at nine views against `drawn`'s 48, so
-  the size at which levels of detail fall back ([lod.md](lod.md) 5) does not move;
+- the `Cull` uniform: seventeen views' planes and `view_mask` in a padding word (1,216 to 2,368
+  bytes);
+- more layers of the shadow array: 16 MiB a local view in use, 96 MiB a shadowed point light, 192
+  MiB at the twelve views' capacity;
+- the `visible` list: 4 bytes per entry and view in use. Up to seven local views (48 bytes at
+  twelve views) it does not outgrow `drawn`'s 48, so the size at which levels of detail fall back
+  ([lod.md](lod.md) 5) does not move; past seven (a point light and two spots or more) `visible` is
+  the larger list and levels fall back at fewer entries;
 - an argument set per local view in use, and on the baseline path its bases;
-- up to four depth passes a frame.
+- up to twelve depth passes a frame.
 
 ## 8. The switch
 
 | Setting | Natively | In the browser | Effect |
 |---|---|---|---|
-| local shadows | `AMORIS_LOCAL_SHADOWS=off` / `on` (default on) | `?local_shadows=off` (viewport page) | off: capacity 0, spot lights unshadowed: the frame, the lists and the shadow array of a scene whose spots have `shadows` off |
+| local shadows | `AMORIS_LOCAL_SHADOWS=off` / `on` (default on) | `?local_shadows=off` (viewport page) | off: capacity 0, spot and point lights unshadowed: the frame, the lists and the shadow array of a scene whose spot and point lights have `shadows` off |
 
 `Renderer::set_local_shadows` changes it at any time (from the next frame). One light is switched
 by its own `Light.shadows`.
@@ -213,7 +253,8 @@ by its own `Light.shadows`.
 ## 9. Interactions
 
 - **Ray-traced sun shadows** (`AMORIS_RT_SHADOWS=1`, [rt-shadows.md](rt-shadows.md)): the cascades
-  are neither culled nor drawn, the local views still are; spot lights stay shadow-mapped. Levels of
+  are neither culled nor drawn, the local views still are; spot and point lights stay
+  shadow-mapped. Levels of
   detail are off there, so both the camera and the local views draw full meshes.
 - **Water**: the spray, the liquid surface and the water's medium sample the cascades' layers only
   (0 to 3) and take the array's view per call, so a re-created array reaches them.
@@ -224,7 +265,8 @@ by its own `Light.shadows`.
 - **Time**: lights are drawn at their latest tick's pose, casters between the last two ticks: a
   spot carried by a moving body can lead its mesh's shadow by up to a tick.
 - **A lamp around its light**: a shadow-casting mesh that encloses the light (beyond the near
-  plane's 5 cm) shadows the whole cone; such a mesh needs `cast_shadows` off.
+  plane's 5 cm) shadows the whole cone, or for a point light everything; such a mesh needs
+  `cast_shadows` off.
 - **Orthographic cameras**: the light clusters assume a perspective camera (cluster.wgsl,
   `cluster_of`), so punctual lights, and with them their shadows, are not reliable under an
   orthographic one. Not changed here.
@@ -234,11 +276,16 @@ by its own `Light.shadows`.
 - `cargo test -p amoris-render --lib shadows`: `a_spot_view_holds_its_cone` (random spots, vertical
   and nearly vertical axes: every lit point from the near plane to the range, for outer angles up
   to 79 degrees, is in the map with two texels to spare, and a sphere holding it passes the view's
-  planes), `the_cone_sphere_holds_the_sector`, `local_views_pick_by_size_on_screen_then_id` (the
-  largest win, equal ones by the lower id, any order of the lights gives the same views and slots,
-  what is out of view or cannot cast is neither drawn nor counted),
+  planes), `a_point_lights_faces_hold_its_sphere` (random point lights: every lit point from the
+  near plane to the range, on the faces' seams and corners too, lies in the face `cube_face` picks
+  at the depth the shader takes, four texels inside its edges, and a sphere holding it passes that
+  face's planes), `the_cone_sphere_holds_the_sector`, `local_views_pick_by_size_on_screen_then_id`
+  (the largest win, equal ones by the lower id, any order of the lights gives the same views and
+  slots, what is out of view or cannot cast is neither drawn nor counted),
+  `local_views_count_a_point_light_six_times` (a point light that no longer fits is counted while a
+  smaller spot after it takes a view; a point light's faces are consecutive slots in face order),
   `the_shaders_hold_the_same_constants` (the WGSL's literal sizes follow the Rust constants; both
-  of the culling pass's guards over its 72 counters, the first of which zeroes them: compute
+  of the culling pass's guards over its 136 counters, the first of which zeroes them: compute
   pipelines run without automatic workgroup zeroing). `batches::` checks that each argument set
   draws its own view's list, and renderer.rs checks the three uniform sizes at compile time.
 - `cargo test -p amoris-render --test local_shadows`, on Metal, on MoltenVK and with
@@ -248,14 +295,20 @@ by its own `Light.shadows`.
     frame of `shadows: false`, the cube's lit faces are not shadowed by the cube; without the cube
     the shadowed spot changes no pixel (the floor a caster of its own map, light meeting it from
     straight down to 68 degrees); one local view drawn, no cascade drawn without a sun;
+  - a point light in the spot's place, the same (the floor lit from straight down to 73 degrees,
+    across the cube map's seams), and a point light 2 m up with a cube on each side and a slab below
+    it: each face that looks at the floor holds its cube's shadow, the floor outside the shadows is
+    the frame of `shadows: false`, and the switch off draws that frame to the bit (with the point
+    light always reading its -y face, the second fails);
   - `shadows: false`, and `shadows: true` with the switch off, draw the same frame to the bit with
     the lists of the scene without the light; each view in use adds 4 bytes per list entry; the
-    switch turned back and forth returns each frame to the bit;
+    switch turned back and forth returns each frame to the bit; a point light's six views add 24
+    bytes per entry;
   - casters by opacity (an opaque cube and a blend of alpha 0.6 cast, clear glass and a blend of
     alpha 0.35 do not, an alpha-masked quad casts its checker), and a blended pane is shadowed;
-  - five shadowed spots in view: four are drawn and one counted, the smallest on screen from two
-    cameras, the higher id of two equal ones, the same frame to the bit with the lights listed in
-    reverse; a spot behind the camera takes no view and is not counted;
+  - thirteen shadowed spots in view: twelve are drawn and one counted, the smallest on screen from
+    two cameras, the higher id of two equal ones, the same frame to the bit with the lights listed
+    in reverse; a spot behind the camera takes no view and is not counted;
   - a ball drawn as its full mesh does not shadow its lit side (without `local_shadow`'s offsets it
     does);
   - the three draw paths draw the same local view, also with occlusion culling and the depth
@@ -274,20 +327,26 @@ by its own `Light.shadows`.
   coverage changes; pt-lab's one-level difference under occlusion culling is the same with
   `AMORIS_LOCAL_SHADOWS=off`).
 - A host drawn by the viewport page in headless Chrome (`render=ws://HOST/render`), also with
-  `gpu_minimal=features,limits,timestamps` and with `local_shadows=off`.
+  `gpu_minimal=features,limits,timestamps` and with `local_shadows=off`: a spot over a cube, and a
+  point light among four cubes (the shadows in the -y, +x and -x faces; the baseline path draws the
+  same frame). There a point light's six passes took 1.5 to 3 ms of GPU time a frame on the M5, an
+  interval sum dominated by clearing and drawing six 2048 x 2048 layers.
+- `tools/render/build_compare.py` against the spot lights' build: every case identical but
+  `pt-lab`, whose point light has `shadows` set; with that light's `shadows` off, and with
+  `AMORIS_LOCAL_SHADOWS=off`, pt-lab is identical too on Metal and MoltenVK (the spot's sampling
+  did not move a bit).
 
 Not run: Direct3D 12 and Windows (deferred by the owner, 2026-10-25).
 
 ## 11. Open
 
-- **Point lights**: six local views each. The slots, the argument sets, the layers, the switch and
-  the counts are built for more views; their matrices need room (`View` is 16 bytes short of the
-  1,024-byte view buffers tests build by hand, which must grow with it), and the limit of four
-  views a frame would have to rise.
 - **Cached maps**: a still light with still casters redraws its map every frame.
 - **Soft penumbrae**: the nine taps are a fixed filter; a light has no size.
-- **Resolution**: every local view is 2048 x 2048 whatever its size on screen; an atlas or
-  per-light sizes would let more than four cast.
+- **Resolution**: every local view is 2048 x 2048 whatever its size on screen, a point light's
+  faces too (96 MiB a light); an atlas or per-light sizes would cost less and let more lights
+  cast.
+- **Point lights' faces** are culled and drawn whether the camera sees what they shadow or not; a
+  face whose frustum misses the camera's could be left out.
 - **Hysteresis in the choice** past the limit (3).
 - **Culling by the receivers**: a local view draws every caster in its frustum, not only those
   that can shadow what the camera sees (as the cascades' slices do).

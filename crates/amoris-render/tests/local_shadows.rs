@@ -1,4 +1,4 @@
-//! Spot lights' shadow maps: the local shadow views (docs/spec/shadows.md; charter 4.4,
+//! Spot and point lights' shadow maps: the local shadow views (docs/spec/shadows.md; charter 4.4,
 //! 2026-11-12). Under a perspective camera (the light clusters assume one), a flat sky's ambient
 //! light and no sun unless said, read from the HDR image:
 //!
@@ -7,6 +7,9 @@
 //!   frame is the one drawn with `shadows` off, the cube's lit faces are not shadowed, and with
 //!   no cube at all the shadowed spot changes no pixel (no acne anywhere in the cone, the floor a
 //!   caster too); with one sample and with 4x MSAA;
+//! - a point light in the spot's place does the same, the floor lit from straight down to 73
+//!   degrees across its cube map's seams; a point light with a cube on each side and one below
+//!   shadows the floor in five faces, and local shadows off draws its `shadows: false` frame;
 //! - `shadows: false`, and `shadows: true` with local shadows off, draw the same frame to the bit,
 //!   with the lists of a scene without the light; each view in use adds 4 bytes per list entry;
 //! - casters cast by their opacity into a local view as into the cascades (an opaque cube and a
@@ -308,6 +311,22 @@ fn eye() -> CameraState {
     CameraState::look_at(Vec3::new(-6.0, 7.0, 8.0), Vec3::new(0.0, 0.5, 0.0))
 }
 
+/// A shadowed point light at `pos`, as bright and as far-reaching as the spot.
+fn point_light(pos: Vec3) -> LightView {
+    LightView {
+        id: 10,
+        kind: LightKindView::Point,
+        position: pos.to_array(),
+        direction: [0.0; 3],
+        color: [1.0; 3],
+        intensity: 200.0,
+        range: 20.0,
+        inner_deg: 0.0,
+        outer_deg: 0.0,
+        shadows: true,
+    }
+}
+
 fn the_spot() -> LightView {
     spot(10, LIGHT, AIM, 35.0, 20.0, 200.0)
 }
@@ -374,24 +393,43 @@ fn shows(cam: &CameraState, x: u32, y: u32) -> Shows {
     if same { centre } else { Shows::Other }
 }
 
-fn check_spot(gpu: &Gpu, aa: Antialiasing) {
+/// The spot's scene with `light` at the spot's place: a spot (one local view) or a point light
+/// (six).
+fn check_spot(gpu: &Gpu, aa: Antialiasing, light: LightView) {
     let cam = eye();
     let mut r = renderer(gpu, aa, &cam);
-    let light = the_spot();
+    let views = if light.kind == LightKindView::Point {
+        6
+    } else {
+        1
+    };
     let shadowed = shot(&mut r, spot_scene(light.clone(), true));
     assert_eq!(
         (r.last.local_shadows, r.last.local_shadows_dropped),
         (1, 0),
-        "{aa:?}: the spot's local view"
+        "{aa:?}: the light's local views"
     );
     let counts = r.draw_counts();
-    assert_eq!(
-        counts.local[0].instances(),
-        2,
-        "{aa:?}: the floor and the cube cast into the local view ({counts:?})"
-    );
+    if views == 1 {
+        assert_eq!(
+            counts.local[0].instances(),
+            2,
+            "{aa:?}: the floor and the cube cast into the local view ({counts:?})"
+        );
+    } else {
+        // The floor reaches every face but the one looking up; the cube lies below the light.
+        assert!(
+            counts.local[3].instances() == 2
+                && counts.local[..views]
+                    .iter()
+                    .filter(|c| c.instances() > 0)
+                    .count()
+                    >= 5,
+            "{aa:?}: the faces' casters ({counts:?})"
+        );
+    }
     assert!(
-        counts.local[1..].iter().all(|c| c.instances() == 0),
+        counts.local[views..].iter().all(|c| c.instances() == 0),
         "{aa:?}: the other local views draw nothing ({counts:?})"
     );
     assert!(
@@ -401,7 +439,7 @@ fn check_spot(gpu: &Gpu, aa: Antialiasing) {
     let plain = shot(&mut r, spot_scene(unshadowed(&light), true));
     assert_eq!(r.last.local_shadows, 0, "{aa:?}: `shadows` off");
     let ambient = shot(&mut r, spot_scene(dark(&light), true));
-    assert_eq!(r.last.local_shadows, 0, "{aa:?}: a spot of intensity 0");
+    assert_eq!(r.last.local_shadows, 0, "{aa:?}: a light of intensity 0");
     let mut seen = [0usize; 4];
     for y in 0..H {
         for x in 0..W {
@@ -457,7 +495,9 @@ fn check_spot(gpu: &Gpu, aa: Antialiasing) {
     // of its own map) from under the spot to the cone's grazing far edge.
     let alone = shot(&mut r, spot_scene(light.clone(), false));
     assert_eq!(r.last.local_shadows, 1);
-    assert_eq!(r.draw_counts().local[0].instances(), 1);
+    if views == 1 {
+        assert_eq!(r.draw_counts().local[0].instances(), 1);
+    }
     let alone_plain = shot(&mut r, spot_scene(unshadowed(&light), false));
     let mut lit = 0;
     for y in 0..H {
@@ -482,7 +522,133 @@ fn a_spot_shadows_the_floor_under_an_occluder() {
         return;
     };
     for aa in [Antialiasing::Off, Antialiasing::Msaa] {
-        check_spot(&gpu, aa);
+        check_spot(&gpu, aa, the_spot());
+    }
+}
+
+/// A point light in the spot's place: the cube's shadow on the floor, the floor out to the range
+/// (light meeting it from straight down to 73 degrees, across the cube map's seams) unshadowed
+/// where nothing stands between, the cube's lit faces not shadowed by it.
+#[test]
+fn a_point_light_shadows_the_floor_under_an_occluder() {
+    let Ok(gpu) = Gpu::headless(BackendChoice::from_env()) else {
+        eprintln!("no GPU: skipped");
+        return;
+    };
+    for aa in [Antialiasing::Off, Antialiasing::Msaa] {
+        check_spot(&gpu, aa, point_light(LIGHT));
+    }
+}
+
+/// A point light 2 m up with a cube on each side and one below it: each face of its cube map
+/// that looks at the floor holds a shadow, and the floor outside the shadows is the frame of
+/// `shadows: false`; local shadows off draws that frame to the bit.
+#[test]
+fn a_point_light_shadows_on_every_side() {
+    let Ok(gpu) = Gpu::headless(BackendChoice::from_env()) else {
+        eprintln!("no GPU: skipped");
+        return;
+    };
+    let light_at = Vec3::new(0.0, 2.0, 0.0);
+    let light = point_light(light_at);
+    // Hovering cubes: 0.8 m, centred 0.9 m up, 2.5 m out along +x, -x, +z and -z, and a flat one
+    // under the light.
+    let boxes: Vec<(Vec3, Vec3)> = [
+        (Vec3::new(2.5, 0.9, 0.0), Vec3::splat(0.8)),
+        (Vec3::new(-2.5, 0.9, 0.0), Vec3::splat(0.8)),
+        (Vec3::new(0.0, 0.9, 2.5), Vec3::splat(0.8)),
+        (Vec3::new(0.0, 0.9, -2.5), Vec3::splat(0.8)),
+        (Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.6, 0.1, 0.6)),
+    ]
+    .to_vec();
+    let instances = || {
+        let mut v = vec![floor(1)];
+        for (i, &(c, size)) in boxes.iter().enumerate() {
+            v.push(at(2 + i as u64, c, size, look("cube", GREY, true)));
+        }
+        v
+    };
+    let cam = CameraState::look_at(Vec3::new(1.0, 15.0, 9.0), Vec3::new(0.0, 0.0, 0.5));
+    let hit_box = |o: Vec3, d: Vec3, grow: f32| {
+        boxes
+            .iter()
+            .filter_map(|&(c, s)| enters(o, d, c - s * 0.5 - grow, c + s * 0.5 + grow))
+            .map(|(t, _)| t)
+            .fold(f32::INFINITY, f32::min)
+    };
+    let blocked_by_any = |p: Vec3, grow: f32| {
+        boxes.iter().any(|&(c, s)| {
+            blocked(
+                p,
+                light_at,
+                c - s * 0.5 - Vec3::splat(grow),
+                c + s * 0.5 + Vec3::splat(grow),
+            )
+        })
+    };
+    for aa in [Antialiasing::Off, Antialiasing::Msaa] {
+        let mut r = renderer(&gpu, aa, &cam);
+        let shadowed = shot(&mut r, frame(instances(), vec![light.clone()]));
+        assert_eq!((r.last.local_shadows, r.last.local_shadows_dropped), (1, 0));
+        let counts = r.draw_counts();
+        for (f, want) in [(0, 2), (1, 2), (3, 2), (4, 2), (5, 2)] {
+            assert!(
+                counts.local[f].instances() >= want,
+                "{aa:?}: face {f} draws the floor and its cube ({counts:?})"
+            );
+        }
+        let plain = shot(&mut r, frame(instances(), vec![unshadowed(&light)]));
+        let ambient = shot(&mut r, frame(instances(), vec![dark(&light)]));
+        let mut off = renderer(&gpu, aa, &cam);
+        off.set_local_shadows(LocalShadows::Off);
+        let by_option = shot(&mut off, frame(instances(), vec![light.clone()]));
+        assert!(by_option == plain, "{aa:?}: local shadows off");
+        // Floor pixels (every sample of the pixel's neighbourhood on the floor, no cube in front):
+        // in the umbra (12 cm inside every outline) the ambient frame, outside every shadow (12 cm
+        // out) the unshadowed one.
+        let mut umbra = [0usize; 5];
+        let mut floor_px = 0;
+        for y in 0..H {
+            for x in 0..W {
+                let floor_at = |dx: f32, dy: f32| {
+                    let (o, d) = (
+                        cam.position,
+                        ray(&cam, x as f32 + 0.5 + dx, y as f32 + 0.5 + dy),
+                    );
+                    let t = -o.y / d.y;
+                    (d.y < 0.0 && t < hit_box(o, d, 0.05)).then(|| o + d * t)
+                };
+                let Some(p) = floor_at(0.0, 0.0) else {
+                    continue;
+                };
+                if [(-1.5, -1.5), (1.5, -1.5), (-1.5, 1.5), (1.5, 1.5)]
+                    .iter()
+                    .any(|&(dx, dy)| floor_at(dx, dy).is_none())
+                    || (p - light_at).length() > 19.0
+                {
+                    continue;
+                }
+                let (s, u, a) = (rgb(&shadowed, x, y), rgb(&plain, x, y), rgb(&ambient, x, y));
+                let what = format!("{aa:?}, pixel ({x}, {y}), floor at {p}");
+                // 12 cm inside the outlines (the flat cube shrunk by less than its thickness).
+                let inside = |sz: Vec3| sz * 0.5 - (sz * 0.4).min(Vec3::splat(0.12));
+                if let Some(i) = boxes
+                    .iter()
+                    .position(|&(c, sz)| blocked(p, light_at, c - inside(sz), c + inside(sz)))
+                {
+                    umbra[i] += 1;
+                    assert_same(&format!("{what}, in a shadow"), s, a, 2e-3);
+                } else if !blocked_by_any(p, 0.12) {
+                    floor_px += 1;
+                    assert_same(&format!("{what}, outside the shadows"), s, u, 1e-3);
+                }
+            }
+        }
+        eprintln!("{aa:?}: umbra pixels by cube {umbra:?}, floor pixels {floor_px}");
+        assert!(
+            umbra.iter().all(|&n| n > 40) && floor_px > 20_000,
+            "{aa:?}: {umbra:?}, {floor_px}"
+        );
     }
 }
 
@@ -648,16 +814,26 @@ fn shadows_false_and_the_option_off_draw_the_same_frame() {
     assert_eq!(off.last.local_shadows, 1);
     assert!(shadowed != plain, "the shadow changes no pixel");
     assert_eq!(off.list_bytes() * 68, bare * 72, "one local view's list");
-    // Two spots, and five (the limit's four views).
+    // Two spots, five, and a point light (six views).
     let _ = shot(&mut off, scene(spots(2)));
     assert_eq!(off.last.local_shadows, 2);
     assert_eq!(off.list_bytes() * 68, bare * 76, "two local views' lists");
     let _ = shot(&mut off, scene(spots(5)));
     assert_eq!(
         (off.last.local_shadows, off.last.local_shadows_dropped),
-        (LOCAL_VIEWS as u32, 1)
+        (5, 0)
     );
-    assert_eq!(off.list_bytes() * 68, bare * 84, "four local views' lists");
+    assert_eq!(off.list_bytes() * 68, bare * 88, "five local views' lists");
+    let _ = shot(&mut off, scene(vec![point_light(LIGHT)]));
+    assert_eq!(
+        (off.last.local_shadows, off.last.local_shadows_dropped),
+        (1, 0)
+    );
+    assert_eq!(
+        off.list_bytes() * 68,
+        bare * 92,
+        "a point light's six views' lists"
+    );
     // Back and forth on one renderer: each frame comes back to the bit, with its lists.
     for round in 0..2 {
         off.set_local_shadows(LocalShadows::Off);
@@ -834,21 +1010,35 @@ fn casters_cast_by_their_opacity_and_a_transparent_receiver_is_shadowed() {
 
 // --- The limit ------------------------------------------------------------------------------------
 
-/// Where the row's spots stand along x: 5 m up, shining straight down on a 1 m cube 2 m up each,
-/// their cones (2.3 m wide on the floor) apart.
-const ROW: [f32; LOCAL_VIEWS + 1] = [-12.0, -6.0, 0.0, 6.0, 12.0];
+/// The row's spots: one more than the local views. Where they stand along x: 5 m up, shining
+/// straight down on a 1 m cube 2 m up each, their cones (2.1 m wide on the floor) 3 m apart.
+const ROW_N: usize = LOCAL_VIEWS + 1;
+fn row_x(i: usize) -> f32 {
+    (i as f32 - (ROW_N - 1) as f32 * 0.5) * 3.0
+}
+
+/// The row's ids by place, from 11 on.
+fn row_ids() -> [u64; ROW_N] {
+    std::array::from_fn(|i| 11 + i as u64)
+}
+
+/// Every spot of the row shadowed but the one at `place`.
+fn all_but(place: usize) -> Vec<bool> {
+    (0..ROW_N).map(|i| i != place).collect()
+}
 
 /// The row's spots with `ids` (by place), and its floor and cubes.
-fn row(ids: [u64; LOCAL_VIEWS + 1], extra: Vec<LightView>, reversed: bool) -> RenderFrame {
+fn row(ids: [u64; ROW_N], extra: Vec<LightView>, reversed: bool) -> RenderFrame {
     let mut v = vec![floor(1)];
     let mut lights = extra;
-    for (i, &x) in ROW.iter().enumerate() {
+    for (i, &id) in ids.iter().enumerate() {
+        let x = row_x(i);
         v.push(cube(2 + i as u64, Vec3::new(x, 2.0, 0.0), 1.0, GREY));
         lights.push(spot(
-            ids[i],
+            id,
             Vec3::new(x, 5.0, 0.0),
             Vec3::new(x, 0.0, 0.0),
-            25.0,
+            12.0,
             8.0,
             150.0,
         ));
@@ -868,8 +1058,9 @@ fn row_shadows(
     plain: &[f32],
     ambient: &[f32],
 ) -> Vec<bool> {
-    ROW.iter()
-        .map(|&x| {
+    (0..ROW_N)
+        .map(|i| {
+            let x = row_x(i);
             let p = Vec3::new(x, 0.0, 0.0);
             let (s, u, a) = (
                 patch(img, cam, p, 1),
@@ -898,40 +1089,42 @@ fn one_spot_more_than_the_limit_is_counted() {
         eprintln!("no GPU: skipped");
         return;
     };
-    let ids = [11, 12, 13, 14, 15];
+    let ids = row_ids();
+    let (first, last) = (0, ROW_N - 1);
+    let views = LOCAL_VIEWS as u32;
     let dim = |f: &RenderFrame, change: fn(&LightView) -> LightView| {
         let mut f = f.clone();
         f.lights = f.lights.map(|l| l.iter().map(change).collect());
         f
     };
-    // From the left: the spot at x = 12 is the farthest, the smallest on screen.
-    let left = CameraState::look_at(Vec3::new(-8.0, 12.0, 20.0), Vec3::new(2.0, 0.0, 0.0));
+    // From the left: the spot at the right end is the farthest, the smallest on screen.
+    let left = CameraState::look_at(Vec3::new(-14.0, 20.0, 34.0), Vec3::new(5.0, 0.0, 0.0));
     let mut r = renderer(&gpu, Antialiasing::Off, &left);
     let plain = shot(&mut r, dim(&row(ids, vec![], false), unshadowed));
     let ambient = shot(&mut r, dim(&row(ids, vec![], false), dark));
     let img = shot(&mut r, row(ids, vec![], false));
     assert_eq!(
         (r.last.local_shadows, r.last.local_shadows_dropped),
-        (LOCAL_VIEWS as u32, 1),
-        "five shadowed spots in view"
+        (views, 1),
+        "{ROW_N} shadowed spots in view"
     );
     assert_eq!(
         row_shadows("from the left", &left, &img, &plain, &ambient),
-        [true, true, true, true, false]
+        all_but(last)
     );
     // The order of the lights changes nothing: the same frame to the bit (the cones are apart, so
     // no pixel sums two lights).
     let again = shot(&mut r, row(ids, vec![], true));
     assert_eq!(
         (r.last.local_shadows, r.last.local_shadows_dropped),
-        (LOCAL_VIEWS as u32, 1)
+        (views, 1)
     );
     assert!(
         again == img,
         "the lights listed in reverse draw another frame"
     );
-    // From the right the spot at x = -12 is the smallest.
-    let right = CameraState::look_at(Vec3::new(8.0, 12.0, 20.0), Vec3::new(-2.0, 0.0, 0.0));
+    // From the right the spot at the left end is the smallest.
+    let right = CameraState::look_at(Vec3::new(14.0, 20.0, 34.0), Vec3::new(-5.0, 0.0, 0.0));
     let mut r = renderer(&gpu, Antialiasing::Off, &right);
     let plain = shot(&mut r, dim(&row(ids, vec![], false), unshadowed));
     let ambient = shot(&mut r, dim(&row(ids, vec![], false), dark));
@@ -939,22 +1132,21 @@ fn one_spot_more_than_the_limit_is_counted() {
     assert_eq!(r.last.local_shadows_dropped, 1);
     assert_eq!(
         row_shadows("from the right", &right, &img, &plain, &ambient),
-        [false, true, true, true, true]
+        all_but(first)
     );
     // From the middle the two end spots are equal on screen: the lower id keeps its shadow.
-    let middle = CameraState::look_at(Vec3::new(0.0, 12.0, 20.0), Vec3::ZERO);
+    let middle = CameraState::look_at(Vec3::new(0.0, 20.0, 34.0), Vec3::ZERO);
     let mut r = renderer(&gpu, Antialiasing::Off, &middle);
     let plain = shot(&mut r, dim(&row(ids, vec![], false), unshadowed));
     let ambient = shot(&mut r, dim(&row(ids, vec![], false), dark));
-    for (ids, want) in [
-        ([11, 12, 13, 14, 15], [true, true, true, true, false]),
-        ([15, 12, 13, 14, 11], [false, true, true, true, true]),
-    ] {
+    let mut swapped = ids;
+    swapped.swap(first, last);
+    for (ids, want) in [(ids, all_but(last)), (swapped, all_but(first))] {
         for reversed in [false, true] {
             let img = shot(&mut r, row(ids, vec![], reversed));
             assert_eq!(
                 (r.last.local_shadows, r.last.local_shadows_dropped),
-                (LOCAL_VIEWS as u32, 1)
+                (views, 1)
             );
             assert_eq!(
                 row_shadows(
@@ -968,35 +1160,38 @@ fn one_spot_more_than_the_limit_is_counted() {
             );
         }
     }
-    // A sixth shadowed spot behind the camera takes no view and is not counted.
+    // One more shadowed spot behind the camera takes no view and is not counted.
     let behind = spot(
-        16,
-        Vec3::new(0.0, 5.0, 60.0),
-        Vec3::new(0.0, 0.0, 60.0),
-        25.0,
+        99,
+        Vec3::new(0.0, 5.0, 80.0),
+        Vec3::new(0.0, 0.0, 80.0),
+        12.0,
         8.0,
         150.0,
     );
     let img = shot(&mut r, row(ids, vec![behind.clone()], false));
     assert_eq!(
         (r.last.local_shadows, r.last.local_shadows_dropped),
-        (LOCAL_VIEWS as u32, 1),
-        "a sixth spot out of view"
+        (views, 1),
+        "one more spot out of view"
     );
     assert_eq!(
-        row_shadows("with a sixth spot behind", &middle, &img, &plain, &ambient),
-        [true, true, true, true, false]
+        row_shadows("with one more spot behind", &middle, &img, &plain, &ambient),
+        all_but(last)
     );
-    // With one of the five out of view instead, the four in view all keep their shadows.
+    // With one of the row out of view instead, the ones in view all keep their shadows.
     let mut f = row(ids, vec![], false);
     if let Some(lights) = &mut f.lights {
-        lights[0] = LightView { id: 11, ..behind };
+        lights[0] = LightView {
+            id: ids[0],
+            ..behind
+        };
     }
     let _ = shot(&mut r, f);
     assert_eq!(
         (r.last.local_shadows, r.last.local_shadows_dropped),
-        (LOCAL_VIEWS as u32, 0),
-        "four spots in view, one behind the camera"
+        (views, 0),
+        "the row less one in view, one behind the camera"
     );
 }
 

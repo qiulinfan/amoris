@@ -107,7 +107,7 @@ struct ViewUniform {
     /// Material textures' uv gradient factors, and the specular anti-aliasing's and the sea's
     /// (common.wgsl `texture_lod`).
     texture_lod: [f32; 4],
-    /// Spot lights' shadow view-projections by slot (common.wgsl `local_views`).
+    /// Spot and point lights' shadow view-projections by slot (common.wgsl `local_views`).
     local_views: [[[f32; 4]; 4]; LOCAL_VIEWS],
 }
 
@@ -153,12 +153,12 @@ struct LightGpu {
     _p: f32,
 }
 
-// The shaders' layouts (common.wgsl `View` and `Light`, cull.wgsl `Cull`). A `View` past 1,024
+// The shaders' layouts (common.wgsl `View` and `Light`, cull.wgsl `Cull`). A `View` past 2,048
 // bytes would overflow the view buffers that tests build by hand (water_mesh.rs, water_caustics.rs,
 // water_ledge.rs, tests/water_spray.rs).
 const _: () = assert!(
-    std::mem::size_of::<ViewUniform>() == 1008
-        && std::mem::size_of::<CullUniform>() == 1600
+    std::mem::size_of::<ViewUniform>() == 1520
+        && std::mem::size_of::<CullUniform>() == 2368
         && std::mem::size_of::<LightGpu>() == 64
 );
 
@@ -208,10 +208,11 @@ pub struct FrameStats {
     /// The render scale: the opaque pass's size over the output's (1: the same; below, TAA
     /// upscales; `Renderer::set_render_scale`).
     pub render_scale: f32,
-    /// Local shadow views drawn: the spot lights shadowed this frame (docs/spec/shadows.md).
+    /// The spot and point lights shadowed through local views this frame (a point light's six
+    /// views count once; docs/spec/shadows.md).
     pub local_shadows: u32,
-    /// Spot lights with `shadows` set in view that got no shadow map this frame: those past the
-    /// limit (`LOCAL_VIEWS`), the smallest on screen.
+    /// Spot and point lights with `shadows` set in view that got no shadow map this frame: those
+    /// whose views no longer fit in `LOCAL_VIEWS`, the smallest on screen.
     pub local_shadows_dropped: u32,
 }
 
@@ -577,10 +578,12 @@ pub struct Renderer {
     lod: LodSettings,
     /// Whether the cascades also cull by their extruded slices (shadows.rs).
     shadow_cull: ShadowCull,
-    /// Whether spot lights cast through local shadow views (shadows.rs; `AMORIS_LOCAL_SHADOWS`).
+    /// Whether spot and point lights cast through local shadow views (shadows.rs;
+    /// `AMORIS_LOCAL_SHADOWS`).
     local_shadows: LocalShadows,
     /// The local views the lists, the argument sets and the shadow array are laid out for: the
-    /// spots with `shadows` set, at most `LOCAL_VIEWS`; 0 with local shadows off.
+    /// views of the spot and point lights with `shadows` set, at most `LOCAL_VIEWS`; 0 with local
+    /// shadows off.
     local_capacity: u32,
     regions_want: Option<bool>,
     regions_lod: Option<bool>,
@@ -589,7 +592,8 @@ pub struct Renderer {
     lights_cpu: Vec<LightGpu>,
     /// Whether the buffer still holds other rows than `lights_cpu`.
     lights_dirty: bool,
-    /// The rows that hold a slot (`shadow` set) in the buffer, by slot.
+    /// The rows that hold a slot (`shadow` set) in the buffer, by slot (a point light's row six
+    /// times).
     local_rows: Vec<u32>,
     /// Whether the warning about spots past the limit was given since they last all had a map.
     local_warned: bool,
@@ -2093,9 +2097,10 @@ impl Renderer {
         self.shadow_cull
     }
 
-    /// Whether spot lights with `shadows` set cast shadow-mapped shadows (shadows.rs;
-    /// `AMORIS_LOCAL_SHADOWS` sets the starting mode). Off draws the frame of a scene whose spots
-    /// have `shadows` off, from the next frame, with that scene's lists and shadow array.
+    /// Whether spot and point lights with `shadows` set cast shadow-mapped shadows (shadows.rs;
+    /// `AMORIS_LOCAL_SHADOWS` sets the starting mode). Off draws the frame of a scene whose spot and
+    /// point lights have `shadows` off, from the next frame, with that scene's lists and shadow
+    /// array.
     pub fn set_local_shadows(&mut self, mode: LocalShadows) {
         self.local_shadows = mode;
     }
@@ -2538,14 +2543,14 @@ impl Renderer {
         let replaced = self.meshes.take_replaced();
         // A double-sided transparent draw of a replaced row would read its old two-sided list.
         self.transparent.forget_rows(&replaced);
-        // The local shadow views to lay out for (docs/spec/shadows.md 2): the spots that ask for
-        // one, whatever else they are doing this frame.
+        // The local shadow views to lay out for (docs/spec/shadows.md 2): those of the spot and
+        // point lights that ask for them, whatever else they are doing this frame.
         let capacity = if self.local_shadows == LocalShadows::On {
             self.scene
                 .lights
                 .iter()
-                .filter(|l| shadows::casts_locally(l))
-                .count()
+                .map(shadows::cost)
+                .sum::<usize>()
                 .min(LOCAL_VIEWS) as u32
         } else {
             0
@@ -2683,11 +2688,7 @@ impl Renderer {
                     cos_outer: l.outer_deg.to_radians().cos(),
                     cos_inner: l.inner_deg.to_radians().cos(),
                     shadow: 0,
-                    shadow_texel: if shadows::casts_locally(l) {
-                        shadows::spot_view(l).map_or(0.0, |v| v.1)
-                    } else {
-                        0.0
-                    },
+                    shadow_texel: shadows::shadow_texel(l),
                     _p: 0.0,
                 })
                 .collect();
@@ -2962,8 +2963,9 @@ impl Renderer {
         let vp_j = proj_j * view;
         self.frame_count = self.frame_count.wrapping_add(1);
 
-        // The spot lights shadowed this frame (shadows.rs `local_views`, docs/spec/shadows.md 3):
-        // those whose lit sector meets the camera's frustum, the largest on screen first. The
+        // The lights shadowed this frame (shadows.rs `local_views`, docs/spec/shadows.md 3): the
+        // spots and point lights whose lit sphere meets the camera's frustum, the largest on screen
+        // first, while their views fit. The
         // frustum is the unjittered one widened by two scene pixels a side, which holds every
         // jittered one (TAA's jitter is at most half a pixel), so the choice does not follow the
         // jitter's phase.
@@ -2983,8 +2985,8 @@ impl Renderer {
             shadows::LocalViews::default()
         };
         let n_local = local.views.len() as u32;
-        // The chosen rows' `shadow` words name their slots; the lights buffer is written when the
-        // lights or the choice changed.
+        // The chosen rows' `shadow` words name their (first) slots; the lights buffer is written
+        // when the lights or the choice changed.
         let rows: Vec<u32> = local.views.iter().map(|v| v.light).collect();
         if self.lights_dirty || rows != self.local_rows {
             for &row in &self.local_rows {
@@ -2993,7 +2995,9 @@ impl Renderer {
                 }
             }
             for (k, &row) in rows.iter().enumerate() {
-                if let Some(l) = self.lights_cpu.get_mut(row as usize) {
+                if let Some(l) = self.lights_cpu.get_mut(row as usize)
+                    && l.shadow == 0
+                {
                     l.shadow = k as u32 + 1;
                 }
             }
@@ -3008,8 +3012,9 @@ impl Renderer {
         } else if !self.local_warned {
             self.local_warned = true;
             log::warn!(
-                "{} spot lights with shadows in view have no shadow map: a frame shadows at most \
-                 {LOCAL_VIEWS}, the largest on screen (FrameStats::local_shadows_dropped)",
+                "{} spot or point lights with shadows in view have no shadow map: a frame draws at \
+                 most {LOCAL_VIEWS} local views (a point light takes six), for the largest on \
+                 screen (FrameStats::local_shadows_dropped)",
                 local.dropped
             );
         }
@@ -3440,7 +3445,7 @@ impl Renderer {
             }
         }
         // The local shadow views, each into its layer after the cascades', whether the cascades
-        // are drawn or not (ray-traced sun shadows leave spot lights to their maps).
+        // are drawn or not (ray-traced sun shadows leave spot and point lights to their maps).
         for k in 0..n_local {
             let ts = self.profiler.render_scope("local shadows");
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -3917,7 +3922,7 @@ impl Renderer {
             antialiasing: self.aa.name(),
             gtao: self.gtao_mode.name(),
             render_scale: self.render_scale,
-            local_shadows: n_local,
+            local_shadows: local.lights,
             local_shadows_dropped: local.dropped,
         };
         trace::span(&mut self.trace, "render", rendering);

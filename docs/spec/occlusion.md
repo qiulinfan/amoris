@@ -416,8 +416,9 @@ planes of up to four local shadow views, [shadows.md](shadows.md) 7) and, for an
 cascade's box, up to nine more plane tests; the test runs only after the box test passes. The CPU's
 work is a few microseconds per frame and does not grow with the scene.
 
-A local shadow view (a spot light's shadow map) is culled by its frustum's six planes only: it has
-no slice, and `Cull.slices` is never indexed with one ([shadows.md](shadows.md) 5).
+A local shadow view (a spot light's shadow map, or a face of a point light's) is culled by its
+frustum's six planes only: it has no slice, and `Cull.slices` is never indexed with one
+([shadows.md](shadows.md) 5).
 
 **Switch.** `AMORIS_SHADOW_CULL=off|on` (natively; default on) and `Renderer::set_shadow_cull`.
 The image is the same either way; only the cascades' draws and their cost change.
@@ -426,8 +427,8 @@ The image is the same either way; only the cascades' draws and their cost change
 normal offset (1.5 times `splits[c] / 1024`), its 3x3 kernel of one-texel steps and the sampler's
 linear comparison, and its unshadowed answer for a negative view depth (MSAA's extrapolated points
 behind the eye); a non-negative caster depth bias; nothing but camera-view fragments reading the
-cascades (a reflection, a second view or a light probe sampling them would need its own slices;
-spot lights' shadow maps are other layers of the array, which `shadow_factor` never reads);
+cascades (a reflection, a second view or a light probe sampling them would need its own slices; spot
+and point lights' shadow maps are other layers of the array, which `shadow_factor` never reads);
 casters' spheres bounding what they draw (the camera's frustum test assumes it too; skinned parts
 use the grown sphere, section 9's `skinned_bounds.rs`); receivers' normals of unit length; and a
 fragment under water reading no farther up the refracted sun than `UNDERWATER_REACH_M`.

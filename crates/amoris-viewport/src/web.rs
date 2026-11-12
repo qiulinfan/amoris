@@ -767,8 +767,9 @@ impl Viewport {
         }
     }
 
-    /// Spot lights' shadow maps (local shadow views, docs/spec/shadows.md): `off` or `on` (the
-    /// default; anything else leaves it as it is). Off draws spot lights unshadowed.
+    /// Spot and point lights' shadow maps (local shadow views, docs/spec/shadows.md): `off` or `on`
+    /// (the default; anything else leaves it as it is). Off draws spot and point lights
+    /// unshadowed.
     pub fn set_local_shadows(&mut self, mode: &str) {
         if let Some(m) = amoris_render::LocalShadows::parse(mode) {
             self.renderer.set_local_shadows(m);

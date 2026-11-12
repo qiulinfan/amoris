@@ -5,8 +5,8 @@
 // workgroup counter first, so a scene of one mesh pays one global atomic per workgroup, view and
 // level instead of one per instance.
 //
-// The views: 0 the camera, 1 to 4 the cascades, 5 on the local shadow views (spot lights',
-// docs/spec/shadows.md). A view's list is region `v` of `visible`; its draw arguments are set `v`
+// The views: 0 the camera, 1 to 4 the cascades, 5 on the local shadow views (spot lights' and
+// point lights' cube faces, docs/spec/shadows.md). A view's list is region `v` of `visible`; its draw arguments are set `v`
 // for the camera and the cascades and set `v + 1` for a local view (`view_set`: the camera's late
 // set, `LATE`, lies between). `view_mask` names the views culled this frame: without a sun's
 // shadows the cascades' bits are clear while local views are still culled.
@@ -43,7 +43,7 @@ struct Slice {
 };
 
 struct Cull {
-    planes: array<Planes, 9>, // the camera's, the cascades', the local shadow views'
+    planes: array<Planes, 17>, // the camera's, the cascades', the local shadow views'
     view_proj: mat4x4f,      // the camera's (the occlusion test)
     instance_count: u32,
     view_count: u32,
@@ -109,10 +109,10 @@ const NONE: u32 = 0xffffffffu;
 // The workgroup's first instance's batch (variant, mesh) and its mesh's levels.
 var<workgroup> wg_batch: u32;
 var<workgroup> wg_lods: u32;
-// Per (view, level), the instances of the workgroup's batch: counted, then their base (9 views of
+// Per (view, level), the instances of the workgroup's batch: counted, then their base (17 views of
 // MAX_LODS levels).
-var<workgroup> wg_count: array<atomic<u32>, 72>;
-var<workgroup> wg_base: array<u32, 72>;
+var<workgroup> wg_count: array<atomic<u32>, 136>;
+var<workgroup> wg_base: array<u32, 136>;
 var<workgroup> wg_stats: array<atomic<u32>, 6>;
 
 fn sphere_in(view: u32, c: vec3f, r: f32) -> bool {
@@ -180,7 +180,7 @@ fn coarsest(first: u32, count: u32, scale: f32, bound: f32) -> u32 {
 fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_index) lid: u32,
         @builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u) {
     let idx = gid.x + gid.y * nwg.x * 256u;
-    if (lid < 72u) {
+    if (lid < 136u) {
         atomicStore(&wg_count[lid], 0u);
     }
     if (lid == 0u) {
@@ -192,9 +192,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
     }
     workgroupBarrier();
 
-    var inside: array<bool, 9>;
-    var level: array<u32, 9>;
-    var local_slot: array<u32, 9>;
+    var inside: array<bool, 17>;
+    var level: array<u32, 17>;
+    var local_slot: array<u32, 17>;
     var mesh = NONE;
     var lods = 0u;
     var variant = 0u;
@@ -293,7 +293,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
     }
     workgroupBarrier();
     let batches = cull.mesh_count * VARIANTS;
-    if (lid < 72u && wg_batch != NONE) {
+    if (lid < 136u && wg_batch != NONE) {
         let v = lid / MAX_LODS;
         let n = atomicLoad(&wg_count[lid]);
         if (v < cull.view_count && n > 0u) {

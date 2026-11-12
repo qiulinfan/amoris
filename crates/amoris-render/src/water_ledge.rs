@@ -491,7 +491,7 @@ mod tests {
             Some(&field_layout),
         );
         let classifier = Pipelines::new(&g.device);
-        let mut view_words = [0.0f32; 256];
+        let mut view_words = [0.0f32; 512];
         for matrix in 0..4 {
             for i in 0..4 {
                 view_words[matrix * 16 + i * 5] = 1.0;
@@ -788,7 +788,7 @@ mod tests {
             .map(|v| v.to_bits())
             .collect::<Vec<_>>();
         let params = input(&g, &words, wgpu::BufferUsages::STORAGE);
-        let view = input(&g, &[0u32; 256], wgpu::BufferUsages::UNIFORM);
+        let view = input(&g, &[0u32; 512], wgpu::BufferUsages::UNIFORM);
         let out = output(&g, cases.len() as u64 * 32);
         let local = bind(&g, &local_layout, &[(0, &view), (7, &params), (8, &out)]);
         let result = dispatch(&g, &pipeline, &local, None, cases.len() as u32, &out);

@@ -1,6 +1,6 @@
 // The opaque forward pass: physically based shading (GGX, Smith, Schlick) lit by the sun with
-// cascaded shadows, punctual lights from the clustered light grid (spot lights shadowed by their
-// local shadow views, docs/spec/shadows.md), and image-based light from the sky (prefiltered
+// cascaded shadows, punctual lights from the clustered light grid (spot and point lights shadowed
+// by their local shadow views, docs/spec/shadows.md), and image-based light from the sky (prefiltered
 // radiance cube for specular, spherical harmonics for diffuse), with height fog.
 // Vertices are pulled from the shared mesh buffers; the instance comes from the culling pass's
 // visible list.
@@ -165,17 +165,44 @@ fn shadow_factor(world: vec3f, n: vec3f, view_depth: f32) -> f32 {
     return mix(1.0, s, select(1.0, fade, c == 3u));
 }
 
-// The share of spot light `li`'s light that reaches `world`, from its local shadow view's map
-// (docs/spec/shadows.md 6; `li.shadow` is 1 + the view's slot). `n` is the surface's normal and
-// `l` the direction to the light. The point is moved off the surface by the map's texel at its
-// depth from the light, 1.5 texels along the normal and 1 toward the light (in the perspective
-// map's depth a constant bias would be metres at the range), and compared at nine taps one texel
-// apart. Outside the map, and nearer the light than its near plane, a point is lit.
+// The face of a point light's cube that holds the direction `d` from the light: the axis of its
+// largest coordinate (ties to x, then y), +x, -x, +y, -y, +z, -z (shadows.rs `point_views`).
+fn cube_face(d: vec3f) -> u32 {
+    let a = abs(d);
+    if (a.x >= a.y && a.x >= a.z) {
+        return select(1u, 0u, d.x >= 0.0);
+    }
+    if (a.y >= a.z) {
+        return select(3u, 2u, d.y >= 0.0);
+    }
+    return select(5u, 4u, d.z >= 0.0);
+}
+
+// The share of spot or point light `li`'s light that reaches `world`, from its local shadow view's
+// map (docs/spec/shadows.md 6; `li.shadow` is 1 + the view's slot, a point light's first face's).
+// `n` is the surface's normal and `l` the direction to the light. The point is moved off the
+// surface by the map's texel at its depth from the light, 1.5 texels along the normal and 1 toward
+// the light (in the perspective map's depth a constant bias would be metres at the range), and
+// compared at nine taps one texel apart; a point light's moved point chooses its cube's face.
+// Outside the map, and nearer the light than its near plane, a point is lit.
 fn local_shadow(li: Light, world: vec3f, n: vec3f, l: vec3f) -> f32 {
-    let slot = min(li.shadow - 1u, LOCAL_VIEWS - 1u);
-    let m = view.local_views[slot];
-    let texel = max((m * vec4f(world, 1.0)).w, 0.0) * li.shadow_texel;
-    let p = m * vec4f(world + (n * 1.5 + l) * texel, 1.0);
+    var slot = min(li.shadow - 1u, LOCAL_VIEWS - 1u);
+    var m = view.local_views[slot];
+    var depth: f32;
+    if (li.kind == 1u) {
+        // Along the axis of the face holding the receiver.
+        let a = abs(world - li.pos);
+        depth = max(a.x, max(a.y, a.z));
+    } else {
+        depth = (m * vec4f(world, 1.0)).w;
+    }
+    let texel = max(depth, 0.0) * li.shadow_texel;
+    let moved = world + (n * 1.5 + l) * texel;
+    if (li.kind == 1u) {
+        slot = min(slot + cube_face(moved - li.pos), LOCAL_VIEWS - 1u);
+        m = view.local_views[slot];
+    }
+    let p = m * vec4f(moved, 1.0);
     if (p.w <= 0.0) {
         return 1.0;
     }

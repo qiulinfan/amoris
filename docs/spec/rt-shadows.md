@@ -51,9 +51,9 @@ shaded fragment (overdraw included), where the cascades cost four depth passes.
   color factor times texture, LOD 0) reaches its cutoff, the test of the masked shadow pass.
 - **Frame** (renderer.rs): the cascades are neither culled for nor drawn, unless the frame has water
   or the liquid surface may draw (below); the top level is built after the cull and light passes,
-  before the opaque pass. Nothing else moves. Spot lights stay shadow-mapped: their local shadow
-  views ([shadows.md](shadows.md) 9) are culled and drawn as without ray tracing, into their own
-  layers of the shadow array, and only the sun's rays are traced.
+  before the opaque pass. Nothing else moves. Spot and point lights stay shadow-mapped: their local
+  shadow views ([shadows.md](shadows.md) 9) are culled and drawn as without ray tracing, into their
+  own layers of the shadow array, and only the sun's rays are traced.
 
 ## Semantics that differ from the cascades
 

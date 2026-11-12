@@ -412,7 +412,7 @@ mod tests {
         );
         // The view uniform: the sun straight overhead (`sun_dir` after four matrices and two
         // vectors).
-        let mut view = vec![0f32; 256];
+        let mut view = vec![0f32; 512];
         view[72..76].copy_from_slice(&[0.0, 1.0, 0.0, 10.0]);
         let view = buffer(
             "caustics test view",

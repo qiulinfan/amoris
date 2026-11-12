@@ -288,15 +288,16 @@ credential cleanup. File-verification records remain local, including in that ar
   page's `?shadow_cull=`): a change to it, to the cascades or to `shadow_factor`'s offset, kernel
   or negative-depth guard runs `cargo test -p amoris-render --lib shadows`, `--test shadow_cull` on
   D3D12 and Vulkan, and the `shadow_cull` example's `compare`: no pixel may change.
-- Spot lights with `shadows` set cast shadow maps as local shadow views
+- Spot and point lights with `shadows` set cast shadow maps as local shadow views
   ([docs/spec/shadows.md](docs/spec/shadows.md)): views 5 on of the culling pass, argument sets
-  after the late one, layers 4 on of the shadow array, at most four a frame, the rest counted in
-  `FrameStats::local_shadows_dropped`; `AMORIS_LOCAL_SHADOWS=off|on` (the viewport page's
-  `?local_shadows=`) turns them off. A change to them, to `local_shadow`'s offsets or kernel, to
-  cull.wgsl's view loop, to the `View`, `Light` or `Cull` layouts or to the argument sets runs
+  after the late one, layers 4 on of the shadow array, at most twelve a frame (a point light takes
+  six, its cube's faces), the rest counted in `FrameStats::local_shadows_dropped`;
+  `AMORIS_LOCAL_SHADOWS=off|on` (the viewport page's `?local_shadows=`) turns them off. A change to
+  them, to `local_shadow`'s offsets or kernel, to `cube_face`, to cull.wgsl's view loop, to the
+  `View`, `Light` or `Cull` layouts or to the argument sets runs
   `cargo test -p amoris-render --lib shadows` and `--test local_shadows` on Metal, MoltenVK and
-  under `AMORIS_GPU_MINIMAL=features,limits,timestamps`, and `tools/render/build_compare.py`
-  against a build before it with `AMORIS_LOCAL_SHADOWS=off`: no pixel may change.
+  under `AMORIS_GPU_MINIMAL=features,limits,timestamps`, and `tools/render/build_compare.py` against a
+  build before it with `AMORIS_LOCAL_SHADOWS=off`: no pixel may change.
 - The render scale ([docs/spec/taa-gtao.md](docs/spec/taa-gtao.md) 4.1): `AMORIS_RENDER_SCALE`
   (0.25 to 1; the viewport page: `?scale=`) draws the opaque pass, prepass, Hi-Z and GTAO smaller
   and TAA upscales (the mode is promoted to TAA); `Targets::scene` is the opaque pass's size,

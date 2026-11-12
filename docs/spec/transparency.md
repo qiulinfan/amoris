@@ -141,12 +141,13 @@ specular anti-aliasing), then:
 - **Coverage** `a`: the base color's alpha (factor times texture). An alpha-masked material that
   is transparent through transmission discards below its cutoff and has coverage 1.
 - **Light the surface adds** `C`: as `shade` lights an opaque surface (the sun with its cascades or
-  ray-traced shadow, the cluster's punctual lights, its spot lights shadowed by their local shadow
-  maps as on an opaque surface ([shadows.md](shadows.md) 6), the sky's image-based light, baked GI,
-  the emission), with F0 from the IOR (`((ior - 1) / (ior + 1))²`, 0.04 at 1.5) and the diffuse
-  color multiplied by `1 - t`: KHR_materials_transmission's transmission `t` (factor times texture)
-  is the share of the dielectric's light that passes through instead of being diffused. Specular
-  reflection and emission are unchanged by `t`. Unlit materials add their albedo and emission.
+  ray-traced shadow, the cluster's punctual lights, its spot and point lights shadowed by their
+  local shadow maps as on an opaque surface ([shadows.md](shadows.md) 6), the sky's image-based
+  light, baked GI, the emission), with F0 from the IOR (`((ior - 1) / (ior + 1))²`, 0.04 at 1.5) and
+  the diffuse color multiplied by `1 - t`: KHR_materials_transmission's transmission `t` (factor
+  times texture) is the share of the dielectric's light that passes through instead of being
+  diffused. Specular reflection and emission are unchanged by `t`. Unlit materials add their albedo
+  and emission.
 - **Light behind that passes** `T = (1 - a) + a (1 - m) t (1 - E) L`, with `m` the metalness, `E`
   the specular lobe's directional albedo for the dielectric F0 (`env_brdf`, the share the surface
   reflects rather than lets through, larger at grazing angles) and `L` the luminance of the base
@@ -180,9 +181,9 @@ there, as a skinned MASK material does; a skinned one that cannot cast casts not
 For every other material transmission is 0 and the tests are unchanged. Coloured or partial shadows
 would need another shadow representation (section 8).
 
-A spot light's shadow map ([shadows.md](shadows.md)) is drawn with the same two caster pipelines
-from the same flag, so a transparent instance casts into it by the same opacity test, and one that
-can never cast is not drawn into it either.
+A spot or point light's shadow map ([shadows.md](shadows.md)) is drawn with the same two caster
+pipelines from the same flag, so a transparent instance casts into it by the same opacity test, and
+one that can never cast is not drawn into it either.
 
 ## 6. TAA, render scale, MSAA, GTAO
 

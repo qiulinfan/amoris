@@ -2,7 +2,7 @@
 
 const PI: f32 = 3.14159265358979;
 const CASCADES: u32 = 4u;           // the sun's shadow cascades: views 1 to 4 of the lists
-const LOCAL_VIEWS: u32 = 4u;        // spot lights' shadow views (shadows.rs): views 5 to 8
+const LOCAL_VIEWS: u32 = 12u;       // spot and point lights' shadow views (shadows.rs): views 5 to 16
 const FLAG_ALIVE: u32 = 1u;
 const FLAG_VISIBLE: u32 = 2u;
 const FLAG_SHADOW: u32 = 4u;
@@ -44,9 +44,10 @@ struct View {
     // output's size samples the mip level the output's would; the specular anti-aliasing's and the
     // sea's derivatives by the larger. 1 otherwise.
     texture_lod: vec4f,
-    // Spot lights' shadow view-projections (standard depth 0..1; docs/spec/shadows.md): slot k is
-    // view 5 + k of the visible lists and layer 4 + k of the shadow array.
-    local_views: array<mat4x4f, 4>,
+    // Spot and point lights' shadow view-projections (standard depth 0..1; docs/spec/shadows.md):
+    // slot k is view 5 + k of the visible lists and layer 4 + k of the shadow array; a point light
+    // has six consecutive slots, its cube's faces +x, -x, +y, -y, +z, -z.
+    local_views: array<mat4x4f, 12>,
 };
 
 // One drawn thing, 80 bytes. Poses of the last two ticks; drawn at mix(prev, cur, alpha).
@@ -121,7 +122,7 @@ struct Light {
     dir: vec3f,            // spot axis
     cos_outer: f32,
     cos_inner: f32,
-    shadow: u32,           // 0: no shadow map this frame; else 1 + its local view's slot
+    shadow: u32,           // 0: no shadow map this frame; else 1 + its (first) local view's slot
     shadow_texel: f32,     // a texel of its map: metres wide per metre of depth from the light
     _p2: f32,
 };

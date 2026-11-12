@@ -119,9 +119,10 @@ and `r` its bounding sphere's centre and radius in the world, and `e_k` level `k
   texel in metres (`shadows::Cascades::texel`). A cascade cannot show detail finer than its texels,
   and its level does not depend on the camera's distance, so it changes only when an instance moves
   between cascades: cascades need no hysteresis and usually draw coarser levels than the camera;
-- a local shadow view (a spot light's shadow map, [shadows.md](shadows.md) 5): no bound of its own;
-  it draws the camera's level, picked in the same dispatch. A spot's texel is usually finer than a
-  pixel, and a caster finer than the receiver the camera draws would shadow it (7).
+- a local shadow view (a spot light's shadow map or a face of a point light's,
+  [shadows.md](shadows.md) 5): no bound of its own; it draws the camera's level, picked in the same
+  dispatch. A local view's texel is usually finer than a pixel, and a caster finer than the receiver
+  the camera draws would shadow it (7).
 
 `coarsest(bound)` is the coarsest acceptable level. The camera's level is
 `clamp(last, coarsest(B / (1 + h)), coarsest(B))`, `last` being the level the instance drew the
@@ -210,9 +211,9 @@ cascade's, the late set and each local shadow view's (`DrawCounts::local`).
 - **Shadow cascades** pick their own levels (4); a receiver's camera level and its caster level
   differ by at most a pixel's and a texel's error, within the cascades' normal offset of 1.5 texels
   where texels are coarser than pixels.
-- **Local shadow views** (spot lights' maps, [shadows.md](shadows.md) 5) draw the camera's level,
-  so the mesh that casts is the mesh that receives; a coarse level shadows itself only where its
-  own simplified shape does.
+- **Local shadow views** (spot and point lights' maps, [shadows.md](shadows.md) 5) draw the camera's
+  level, so the mesh that casts is the mesh that receives; a coarse level shadows itself only where
+  its own simplified shape does.
 - **The id pass** draws the camera's batches, levels included, so picking and `render.visible` see
   what is drawn.
 - **Skinned meshes** get levels made from the bind pose, drawn over the skinned vertices like the
