@@ -348,3 +348,15 @@
 .menu-item.is-active .add-doc {
   color: rgba(255, 255, 255, 0.75);
 }
+
+/* A component that only some of the selected entities have (multi.ts). */
+.card-some {
+  color: var(--warn);
+  font-size: 10.5px;
+  margin-left: 4px;
+}
+
+/* A field whose values differ across the selected entities: its label says so too. */
+.field-row.is-mixed > .field-label {
+  font-style: italic;
+}

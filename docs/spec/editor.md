@@ -102,7 +102,7 @@ one value a panel cannot draw no longer leaves a blank page.
 |---|---|---|
 | Hierarchy | Virtualized tree (children by `Parent`), icons by kind (camera, light, boat, sea, wind, mesh, empty), search by name, `t:Component` or `#id`; click, Cmd/Ctrl-click toggles, Shift-click ranges; arrows move and fold; F2 or Enter renames inline; drag rows onto a row to reparent, onto empty space to unparent; drop an asset to place it (under the row); context menu (rename, duplicate, delete, frame, copy id, create child, add component, unparent, break when written); + creates an empty, primitives, lights or a camera | `world.tree`, `world.edit` (spawn, set `Name`, set/remove `Parent`, destroy) |
 | Viewport | The renderer's canvas (section 5) with: orbit (right-drag or Alt+drag), pan (middle-drag or Shift+right-drag), zoom (wheel, pinch), click to pick (Shift/Cmd toggles), drag on empty space for rectangle selection, double-click to frame; tools Select/Move/Rotate/Scale (Q/W/E/R) with 3D gizmos (arrows with cones, plane handles, a screen handle; rotation rings with a view ring; scale cubes), World/Local (X), snapping with steps (hold Cmd/Ctrl to invert while dragging), grid (G), the axis gizmo (click an axis to look along it, the center for perspective/orthographic), camera menu (views, frame, reset), stats, the wind, selection labels; drop assets on the ground plane | `world.edit` with `group` while dragging, one undo entry on release; Escape takes the drag back (section 6) |
-| Inspector | The selection's name and components, each a collapsible card generated from its JSON Schema with the doc as tooltip: numbers (drag the strip to scrub, Shift ×10, Alt ×0.1; arithmetic accepted; arrows step), vectors per axis, rotations as Euler degrees (YXZ) over the stored quaternion, colours with a picker (stored linear, shown sRGB) and alpha, enums as selects with per-variant docs, booleans as switches, entity references as pickers (searchable, or drop a hierarchy row), nullable fields, nested objects, lists, tagged unions (`{Cuboid: {...}}`), the rest as JSON. Engine-written fields are marked. Card menu: reset to defaults, copy as JSON, break when written, remove. Add Component lists the registry with docs; its search puts names before docs that only mention the text, so Enter on a typed name adds that component; a component without fields is added as `{}` and its card says so. A number field writes what was typed into it: left untouched, it writes nothing, whatever the value has become meanwhile. Several selected: edits apply to each that has the component | `world.schema`, `world.get`, `world.edit` |
+| Inspector | The selection's name and components, each a collapsible card generated from its JSON Schema with the doc as tooltip: numbers (drag the strip to scrub, Shift ×10, Alt ×0.1; arithmetic accepted; arrows step), vectors per axis, rotations as Euler degrees (YXZ) over the stored quaternion, colours with a picker (stored linear, shown sRGB) and alpha, enums as selects with per-variant docs, booleans as switches, entity references as pickers (searchable, or drop a hierarchy row), nullable fields, nested objects, lists, tagged unions (`{Cuboid: {...}}`), the rest as JSON. Engine-written fields are marked. Card menu: reset to defaults, copy as JSON, break when written, remove. Add Component lists the registry with docs; its search puts names before docs that only mention the text, so Enter on a typed name adds that component; a component without fields is added as `{}` and its card says so. A number field writes what was typed into it: left untouched, it writes nothing, whatever the value has become meanwhile. Several selected: each card edits every selected entity that has the component, and a field whose values differ among them shows as mixed (section 6.2) | `world.schema`, `world.get`, `world.edit` |
 | Scripts | File list with problem counts, Monaco with tabs (one model per script so imports type-check), the `amoris` module's types (section 7), Cmd/Ctrl+S saves (`scripts.write` then `scripts.apply`), host diagnostics as markers beside the TypeScript worker's own, a breakpoint gutter (click or F9; conditional and unbound breakpoints drawn differently), the paused line, sticky scroll, minimap | `scripts.list/read/write/apply`, `debug.breakpoints.*` |
 | Debug | Continue/Pause, Step Over/Into/Out (F5, F6, F10, F11, Shift+F11), pause on exceptions (off, uncaught, all); the pause reason, tick, system and TypeScript location, and for a data breakpoint the field, its value before and after and the statement that wrote it; call stack (click a frame to show its source and its scopes; a frame seen after `run` returned is marked), the frame's Local and Closure scopes as expandable trees whose leaf values can be set (double-click, type an expression, Enter: section 8.1), watch expressions re-evaluated on each pause and frame change, breakpoints with editable conditions (the host's list, read again on each pause: logpoints, MCP agents' and CDP clients' breakpoints shown as such), data breakpoints. Three columns when wide | `debug` events, `debug.state/continue/pause/step/eval/set/exceptions/breakpoints.*/watch/unwatch` |
 | Console | The host's log with level filters and counts, search, follow, timestamps and ticks, a link to the source line; an input line evaluating in the game (on the selected frame while paused), with history; results are expandable trees | `log` events, `debug.eval` |
@@ -359,6 +359,25 @@ Each is one `world.edit` with its label (Create Terrain, Draw River, Create Wate
 against `amoris serve` (the build with `VITE_AMORIS_EXPOSE=1`), checks every edit on the host and
 saves the edit world and Play.
 
+### 6.2 Several entities selected
+
+With several entities selected the inspector shows the primary one's components (the last clicked;
+the head says `editing N selected`), and each card works on every selected entity that has its
+component: a card on only some of them says `2 of 3`. A field shows one value when all of them
+hold the same and a dash when they differ (`src/panels/inspector/multi.ts`): a number or text
+field reads `—`, a select `—`, a switch stands half-way, an entity reference reads `—`. Vectors
+say it per axis, a colour for its red, green and blue together and for its alpha, a rotation per
+Euler angle, and a nested object per field; a list whose items differ reads as a note and is
+edited one entity at a time.
+
+An edit sets the edited value on every one of them and keeps what each holds besides: typing a
+y sets each entity's y and keeps its own x and z, an Euler angle keeps each rotation's other two,
+a colour keeps each alpha, a nested field keeps its siblings, and a variant chosen keeps the
+payload of an entity already of that variant. Each entity's new value is the edit applied to its
+own (an `Update`, old value to new); all of them go in one `world.edit`, one undo entry (`Set
+Transform.position on 2 entities`), and a drag streams them as one group (section 6). A mixed
+field takes any value typed, the primary's own too.
+
 ## 7. Schema-driven fields and script types
 
 `world.schema` answers `[{name, origin, version, doc, schema}]` (amoris-sim's `ComponentInfo`).
@@ -541,7 +560,7 @@ the wire shapes (`HostDebugState`, `HostFrame`, `HostVariable`, `HostBreakpoint`
 | `src/viewport/` | The renderer interface, camera, math, gizmo, the frame meter, the fallback renderer |
 | `src/panels/<panel>/` | One module per panel (and its CSS) |
 | `mock/` | The mock host (section 1.1) |
-| `test/` | bun unit tests (`bun test`): history, live edits, subscriptions, the profile, water authoring, the desktop guards, arithmetic, the host's forms (`host-forms`: the cause chain, the pacing, enum spellings, the component search, and the mock answering them as the host does), what Create, Place and Duplicate send (`create`), and a poisoned world's status with the shell drawn from it, the newest events on connect, a component without fields and a select's keys (`halted`, the editor's client answered by the mock over the wire) |
+| `test/` | bun unit tests (`bun test`): history, live edits, subscriptions, the profile, water authoring, the desktop guards, arithmetic, the host's forms (`host-forms`: the cause chain, the pacing, enum spellings, the component search, and the mock answering them as the host does), what Create, Place and Duplicate send (`create`), and a poisoned world's status with the shell drawn from it, the newest events on connect, a component without fields and a select's keys (`halted`, the editor's client answered by the mock over the wire), mixed values and what an edit of several entities makes of each (`multi`) |
 | `tools/` | `capture.ts` (evidence of every panel against the mock), `debug-host.ts` (the debugger against the real host), `rename-host.ts` (the rename against the real host, section 8 item 2), `edit-host.ts` (the edit loop against the real host, or the mock: section 10), `sdk_check.ts` (the script editor's types against the real host), `profiler-capture.ts` (the profiler against the real host, docs/bench/profiler.md), `water-authoring.ts` (the water tools against the real host, 6.1), `viewport-loads.ts` (the viewport's loads, remounts and hot updates, 5), `gizmo-drag.ts` (live gizmo drags, docs/bench/gizmo.md), `serve-clients.ts` (clients held on a real host while its game thread is profiled, docs/bench/profiler.md); the pages are driven in headless Chrome over CDP (`cdp.ts`, `chrome.ts`): `launchChrome` starts the browser `chrome.ts` finds with a temporary profile of its own, on a CDP port Chrome picks (read from the profile's `DevToolsActivePort`) or on `--chrome-port`, which it refuses when something already listens there; it hands out a page only once the browser answering on the port is the process it started, and its `close` ends that process alone |
 
 ## 10. Evidence
@@ -606,6 +625,12 @@ driver asks the host over `/api/call` (`world.tree`, `world.get`, `history.list`
   the inspector's name field show it. Each is then moved by typing its position into the
   inspector (a row of four in front of the scene), read back from the host's
   `Transform.position`; `edit-host-1-host-capture.png` is the host's own picture of the four.
+- Several selected (section 6.2; added 2026-11-12): the sphere's row clicked, the cylinder's
+  Mod+clicked; the inspector reads `editing 2 selected`, the position `— 0.5 4` (their x differ),
+  `Model.mesh` a dash and metallic its one value. 1.5 typed into y sets both entities' y on the
+  host and keeps x at -1 and 1, one undo entry `Set Transform.position on 2 entities`; 0 typed
+  into the mixed x sets both to 0 and the field shows 0; two Mod+Z put each x and each y back.
+  `edit-host-1b-mixed.png`. The same driver passed against the mock.
 - Create > Directional, Point and Spot Light: the host's `Light.kind` is the value its own schema
   spells for that kind (the driver has no literal), the directional's row has the sun for an icon
   and the others a bulb. Create > Camera: `Camera 2`, with `fov_deg` at the schema's default.
@@ -724,8 +749,6 @@ completes the Boat's fields.
 - The worker's declarations are fetched on connect and after the editor's own apply: a component
   added in an unsaved file is unknown to it until the save, and one an agent adds (no push says the
   scripts changed) until the next apply or reconnect.
-- Multi-selection edits apply to every selected entity with the component but show the primary's
-  values (no mixed-value display).
 - The bun unit tests (`test/`) cover the stores and protocol pieces, and the CDP harnesses
   (`tools/`) drive the main flows end to end against the mock or a real host; nothing runs the
   harnesses automatically, and `cargo xtask check` runs neither.

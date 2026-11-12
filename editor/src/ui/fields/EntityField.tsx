@@ -9,7 +9,8 @@ import { useWorld } from "../../state/world";
 import { entityKind } from "../icons";
 import { cx } from "../cx";
 
-export function EntityField({ value, onChange, nullable = true, disabled }: { value: number | null; onChange(v: number | null): void; nullable?: boolean; disabled?: boolean }) {
+/** `mixed`: the selected entities refer to different ones (shown as a dash; picking sets all). */
+export function EntityField({ value, onChange, nullable = true, disabled, mixed }: { value: number | null; onChange(v: number | null): void; nullable?: boolean; disabled?: boolean; mixed?: boolean }) {
   const nodes = useWorld((s) => s.nodes);
   const order = useWorld((s) => s.order);
   const [open, setOpen] = useState<{ x: number; y: number; w: number } | null>(null);
@@ -48,10 +49,10 @@ export function EntityField({ value, onChange, nullable = true, disabled }: { va
         }}
       >
         <Icon size={13} />
-        <span className="entity-name">{value === null ? "None" : node ? node.name : `#${value} (missing)`}</span>
-        {value !== null && <span className="entity-id">#{value}</span>}
+        <span className="entity-name">{mixed ? "—" : value === null ? "None" : node ? node.name : `#${value} (missing)`}</span>
+        {value !== null && !mixed && <span className="entity-id">#{value}</span>}
       </button>
-      {nullable && value !== null && !disabled && (
+      {nullable && (value !== null || mixed) && !disabled && (
         <button type="button" className="entity-clear" aria-label="Clear" onClick={() => onChange(null)}>
           <X size={12} />
         </button>

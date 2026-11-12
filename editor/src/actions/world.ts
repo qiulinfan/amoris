@@ -233,6 +233,15 @@ export async function setFields(ids: EntityId[], component: string, patch: Recor
   );
 }
 
+/** Sets fields of a component on each entity to that entity's own values, as one undo entry: an
+ * inspector edit of several selected entities whose other fields or axes differ (multi.ts). */
+export async function setFieldsEach(component: string, patches: [EntityId, Record<string, unknown>][], label: string) {
+  await edit(
+    patches.map(([id, value]) => ({ set: { entity: id, component, value } })),
+    label,
+  );
+}
+
 export async function addComponent(ids: EntityId[], name: string) {
   const info = useWorld.getState().schema[name];
   if (!info) return;

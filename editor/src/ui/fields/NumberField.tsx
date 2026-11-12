@@ -129,7 +129,8 @@ export function NumberField({
     committed.current = true;
     const v = evaluateNumber(text);
     setText(null);
-    if (v !== null && v !== value) onChange(fix(v), "commit");
+    // A mixed field takes any value typed, the primary's own too: it sets every selected entity.
+    if (v !== null && (mixed || v !== value)) onChange(fix(v), "commit");
   };
 
   // Fewer decimals for larger numbers, so vectors fit narrow columns; the input shows all on focus.

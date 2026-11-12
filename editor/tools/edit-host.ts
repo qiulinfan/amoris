@@ -1,10 +1,10 @@
 // The editor's edit loop against a real host (editor.md 6, 8 item 12 and 10): headless Chrome opens
 // the editor that `amoris serve` serves (the build made with VITE_AMORIS_EXPOSE=1) and, with real
 // input only (clicks, keys, typed text), creates each primitive, each light and a camera from the
-// hierarchy's Create menu, renames, edits a field, adds a component, duplicates, deletes, undoes
-// and redoes, places a model and a splat from the Assets panel, changes the speed, plays, pauses,
-// reads an event's cause chain and resumes, and last plays a world that halts (a tick that fails
-// halfway) and stops it. After each step it asks the host itself what happened (`/api/call`:
+// hierarchy's Create menu, edits two selected at once (mixed values), renames, edits a field,
+// adds a component, duplicates, deletes, undoes and redoes, places a model and a splat from the
+// Assets panel, changes the speed, plays, pauses, reads an event's cause chain and resumes, and
+// last plays a world that halts (a tick that fails halfway) and stops it. After each step it asks the host itself what happened (`/api/call`:
 // `world.tree`, `world.get`, `history.list`, `capture`'s instance count, `time.control`,
 // `events.why`, `log.since`) and then reads what the page shows.
 //
@@ -240,15 +240,15 @@ async function js<T = unknown>(expression: string): Promise<T> {
   return r.result.value as T;
 }
 
-async function mouse(type: "mouseMoved" | "mousePressed" | "mouseReleased", x: number, y: number, clickCount = 1) {
-  await cdp.send("Input.dispatchMouseEvent", { type, x, y, button: type === "mouseMoved" ? "none" : "left", buttons: type === "mousePressed" ? 1 : 0, clickCount: type === "mouseMoved" ? 0 : clickCount });
+async function mouse(type: "mouseMoved" | "mousePressed" | "mouseReleased", x: number, y: number, clickCount = 1, modifiers = 0) {
+  await cdp.send("Input.dispatchMouseEvent", { type, x, y, modifiers, button: type === "mouseMoved" ? "none" : "left", buttons: type === "mousePressed" ? 1 : 0, clickCount: type === "mouseMoved" ? 0 : clickCount });
 }
 
-async function click(at: { x: number; y: number }, count = 1) {
+async function click(at: { x: number; y: number }, count = 1, modifiers = 0) {
   await mouse("mouseMoved", at.x, at.y);
   for (let n = 1; n <= count; n++) {
-    await mouse("mousePressed", at.x, at.y, n);
-    await mouse("mouseReleased", at.x, at.y, n);
+    await mouse("mousePressed", at.x, at.y, n, modifiers);
+    await mouse("mouseReleased", at.x, at.y, n, modifiers);
   }
 }
 
@@ -551,6 +551,50 @@ try {
       console.log("  edit-host-1-host-capture.png (the host's capture)");
     }
   }
+  // Several selected (editor.md 6.2): the sphere and the cylinder, Mod+click on the second row.
+  // Their positions differ in x alone and their meshes differ: those show as mixed. A y typed in
+  // sets both and keeps each x; an x typed in sets both; Mod+Z takes each edit off both.
+  {
+    const sphere = created.find((c) => c.label === "Sphere");
+    const cylinder = created.find((c) => c.label === "Cylinder");
+    if (sphere && cylinder) {
+      await selectRow(sphere.id);
+      const at = await row(cylinder.id);
+      if (at) await click(at, 1, MOD);
+      check(
+        await until("two selected", () => js<boolean>(`const s = window.amoris.selection.getState(); return s.ids.length === 2 && s.ids.includes(${sphere.id}) && s.ids.includes(${cylinder.id});`)),
+        "Mod+click: the sphere and the cylinder are selected",
+      );
+      check(await until("the inspector says so", () => js<boolean>(`return document.querySelector(".insp-multi")?.textContent === "editing 2 selected";`)), "The inspector reads 'editing 2 selected'");
+      const axes = async () => (await js<string[]>(`return [${[0, 1, 2].map((i) => `(${fieldInput("Transform", "position", i)})?.value ?? "?"`).join(", ")}];`)).map((v) => (v === "—" ? v : Number(v)));
+      check(await until("x mixed", async () => same(await axes(), ["—", 0.5, 4])), `Mixed: the position shows ${JSON.stringify(await axes())} (x differs, y and z do not)`);
+      const meshRow = `[...(${card("Model")}?.querySelectorAll(".field-row") ?? [])].find((r) => (r.querySelector(".field-label")?.getAttribute("data-tip") ?? "").split(":")[0] === "mesh")`;
+      const mesh = await js<{ value: string; placeholder: string; mixed: boolean } | null>(`const r = ${meshRow}; const i = r?.querySelector("input"); return i ? { value: i.value, placeholder: i.placeholder, mixed: r.classList.contains("is-mixed") } : null;`);
+      check(mesh !== null && mesh.value === "" && mesh.placeholder === "—" && mesh.mixed, `Mixed: Model.mesh (sphere, cylinder) shows ${JSON.stringify(mesh)}`);
+      const metallic = await js<string | null>(`return (${fieldInput("Model", "metallic")})?.value ?? null;`);
+      check(metallic !== null && metallic !== "—", `Not mixed: Model.metallic, the same on both, shows ${metallic}`);
+      const positions = async () => [(await entity(sphere.id)).components.Transform?.position, (await entity(cylinder.id)).components.Transform?.position];
+      const h = await history();
+      await typeNumber("Transform", "position", 1, 1.5);
+      check(await until("both y", async () => same(await positions(), [[-1, 1.5, 4], [1, 1.5, 4]])), `A y typed with two selected: the host has ${JSON.stringify(await positions())} (each x kept)`);
+      const entries = await newEntries(h);
+      check(entries.length === 1 && entries[0]!.label === "Set Transform.position on 2 entities", `One undo entry for both: ${JSON.stringify(entries.map((e) => e.label))}`);
+      // The mixed x takes the value typed: both at x 0, and the field no longer mixed.
+      const input = fieldInput("Transform", "position", 0);
+      await click(await locate("the position's x", input), 3);
+      await until("the field has the focus", () => js<boolean>(`return document.activeElement === (${input});`));
+      await type("0");
+      await enter();
+      check(await until("both x", async () => same(await positions(), [[0, 1.5, 4], [0, 1.5, 4]])), `An x typed into the mixed field: the host has ${JSON.stringify(await positions())}`);
+      check(await until("x no longer mixed", async () => same(await axes(), [0, 1.5, 4])), `The position shows ${JSON.stringify(await axes())}`);
+      await undoKey();
+      check(await until("undo x", async () => same(await positions(), [[-1, 1.5, 4], [1, 1.5, 4]])), `Mod+Z: each x back, ${JSON.stringify(await positions())}`);
+      await undoKey();
+      check(await until("undo y", async () => same(await positions(), [[-1, 0.5, 4], [1, 0.5, 4]])), `Mod+Z: each y back, ${JSON.stringify(await positions())}`);
+      await shot("edit-host-1b-mixed");
+    }
+  }
+
   for (const [label, kind] of [["Directional Light", "directional"], ["Point Light", "point"], ["Spot Light", "spot"]] as const) {
     const e = await create(label);
     if (!e) continue;
