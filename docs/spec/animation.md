@@ -131,6 +131,7 @@ bone masks, layers of state machines and montages:
 | `Avatar` | `walker`, `facing`, `target`, `turn_rate`, `root_motion`; engine-written `yaw`, `speed`, `local`, `last` | persisted; scripts read and write it |
 | `CameraRig` | section 6 | persisted; scripts read and write it |
 | `Buttons` | `held`, `pressed` (a bit per game button) | persisted; scripts read it |
+| `MorphWeights` | `overrides`, `weights` (by target name; section 5a) | persisted; scripts reach it through `ctx.anim` |
 
 The project's rigs (`AnimRigs`, the graphs bound to their clips) come from the game's setup and
 stay through a restore.
@@ -151,6 +152,7 @@ ctx.anim.next(e, "b");                          // the section after the current
 ctx.anim.jump(e, "b"); ctx.anim.stop(e, 0.2);   // now; or fade the slot's montage out
 const s = ctx.anim.state(e);                    // {layers: [{state, time}], montage: {name, section, time, length} | null}
 const hand = ctx.anim.socket(e, "hand_r");      // {position, rotation} in the world, or null
+ctx.anim.setWeight(e, "blink", 1);              // a morph target held at a weight (section 5a)
 ```
 
 ## 5. What the renderer draws
@@ -159,6 +161,68 @@ The render feed's `AnimView` gains `pose`: the joints' local transforms (transla
 scale) in the skeleton's joint order, as the tick computed them. The renderer interpolates two
 ticks' poses (lerp, nlerp) and skins from the result; `clip`-driven views (`Animator`) are drawn as
 before. An attached entity is an ordinary instance whose `Transform` the simulation wrote.
+
+## 5a. Morph targets (blend shapes)
+
+- Status: Proposed (2026-11-12, gap A1). References: glTF 2.0's morph targets (`targets`,
+  `mesh.weights`, `node.weights`, animation channels with the path `weights`, and the
+  `extras.targetNames` convention Blender and most exporters write), Unreal's morph target curves
+  and `SetMorphTarget`, Godot's `blend_shapes/<name>` tracks and `set_blend_shape_value`.
+
+**Import.** A primitive's targets keep their position and normal offsets and, when the file has
+them, their tangent offsets (zeros where a target has none). Each glTF mesh's targets are named by
+its `extras.targetNames` when that is a list of as many strings, else by their indices (`"0"`,
+`"1"`, ...). A node with such a mesh has default weights: the node's `weights`, else the mesh's,
+else zeros, one per target. An animation channel whose path is `weights` keys every target of its
+node's mesh at once (a cubic channel keeps its values at the keys, as other channels do). The
+renderer's import (`MeshData.morph`, `SkeletonNode.weights`, `AnimationClip.morph`) and the
+simulation's (`Joint.targets` and `Joint.weights`, a `Track`'s `w` keys) read the same file the
+same way. A mesh with targets keeps its vertices as a skinned one does (no flat normals) and its
+offsets follow the vertex order its levels of detail give it; every level is morphed.
+
+**In the graph.** A pose is the joints' transforms and the morph weights of every node with
+targets, flat in the file's node order (the skeleton's targets, `Rig::morph_len`). The rest pose
+takes each node's default weights. A clip's weight track writes its node's weights; it binds to
+the target skeleton by node name and then by target name, so a clip made on another file drives
+the targets the two share, and the others keep the target's defaults. Weights blend wherever
+joints do: linearly between a blend space's clips, across a fade, under a layer by the mask weight
+of the node that holds the mesh (a face's targets follow the head's mask), and between a slot and
+the layers below it. Every operation is an `f32` addition, subtraction or multiplication in a
+fixed order (section 2), so weights have the same bits on every target.
+
+**Scripts.** `MorphWeights` (persisted, version 1; scripts reach it through `ctx.anim`) holds
+`overrides`, weights set by name that replace what the graph gives for every target of that name,
+and `weights`, each named target's weight after the last evaluation (its first node's, when several
+nodes share a name), engine-written as `AnimState.sockets` is, so a restore or a fork reads the same
+weights. `anim.graph` inserts it on an entity whose graph's skeleton has targets; an entity whose
+skeleton has none never gets one unless a script sets a weight, so worlds without targets keep their
+state and their hashes.
+
+```ts
+ctx.anim.weight(e, "blink");          // the last evaluation's weight, this call's own override over it; null if no such target
+ctx.anim.setWeight(e, "blink", 1);    // holds the target at 1 from the next evaluation on
+ctx.anim.setWeight(e, "blink", null); // gives it back to the graph
+```
+
+Overrides act through the graph; a model played by an `Animator` takes its clip's weight channels
+and otherwise its defaults, all evaluated by the renderer.
+
+**What the renderer draws.** `AnimView` gains `morph`, the pose's flat weights as the tick computed
+them (empty for a pose without targets and for a clip), interpolated between two ticks like the
+joints. A mesh with targets is drawn as a skinned one is: each entity's copy of it is written every
+frame by the skinning pass (`skinning.rs`, `skin.wgsl`), which first adds each active target's
+offsets times its weight to the rest position, normal and tangent, then skins (glTF's order); a mesh
+with targets and no skin takes one identity joint. The normal and tangent are normalized after
+skinning. **At most 16 targets are active per part and frame** (`skinning::MAX_ACTIVE`): those with
+the largest magnitude of weight, the lower index first among equals; zero weights are never active,
+and the rest are left out for that frame. A part's job names its source's offsets, its first active
+target and their count; the pass holds seven storage buffers (jobs, rest vertices, skin weights,
+joint matrices, the vertex pool, the targets' offsets and the active targets with their weights),
+within WebGPU's eight per stage, and needs no feature or limit beyond the baseline
+(`AMORIS_GPU_MINIMAL` draws the same). A morphed copy's culling sphere grows by the sum over its
+targets of the largest position offset (weights of magnitude above 1 may leave it), and by
+`SKINNED_GROW` as well when it is skinned. A part with no active target runs the pass's arithmetic
+as before, and meshes without targets are drawn as before, pixel for pixel.
 
 ## 6. The third-person body, its buttons and the camera
 
@@ -235,8 +299,20 @@ the game's rules (steering), not in the grid.
 - amoris-physics: a sweep finds the first body; a rig's camera stops at a wall.
 - Navigation: a path goes round a wall and up a ramp, not up a cliff; none crosses a gap wider
   than a step.
+- Morph targets (section 5a; `tests/fixtures/scenes/morph`, generated by its `gen_morph.py`):
+  amoris-assets imports the fixture's targets, names, defaults and weight channels for the renderer
+  and the simulation alike; a graph's weights from a clip, a fade and a mask are the recorded bits
+  on every target; amoris-runtime keeps `MorphWeights` and the drawn weights through a script's
+  override (the project's `check.toml` runs determinism, forks and reloads); amoris-render's `morph`
+  GPU test draws a fully weighted target where the same mesh moved by its offset is drawn, unskinned
+  and skinned (the offset turned by the joint: morph, then skin), on every native backend and under
+  `AMORIS_GPU_MINIMAL`; meshes without targets draw the same frames as before
+  (`tools/render/build_compare.py`, `draw_paths`).
 
 ## 10. Limits
 
 - No inverse kinematics yet (feet on slopes, hands on a two-handed grip); no additive layers; no
   physics-driven ragdolls; no animation compression. Nav cells are a grid, not polygons.
+- Morph targets: at most 16 active per part and frame; no sparse storage on the GPU (every target
+  keeps an offset for every vertex); overrides need a graph; the ray-traced shadows and reflections
+  see the morphed vertices as they see skinned ones.
