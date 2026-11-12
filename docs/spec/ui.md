@@ -87,8 +87,10 @@ render pass and one pipeline (`ui.wgsl`): textured, coloured quads whose vertice
 glyph and solid quads sampling the R8 glyph atlas's coverage, image quads their own RGBA texture
 (an `Rgba8UnormSrgb` texture per image, bound as group 1, drawn in runs of the same texture).
 Elements outside laid-out nodes draw in the feed's order, as they did; a laid-out root draws its
-background, then its elements (image, bar, text), then its children. Within one entity the feed
-orders stacks, buttons, images, texts and bars.
+own elements in the feed's order, which within one entity is stack (its background), button (its
+face), image, text and bar, then its children. In the browser the canvas is not sRGB-encoded and
+the pass blends sRGB values, as the text and bars always did there, so translucent faces and
+backgrounds come out darker than natively, where blending is linear.
 
 The fragment stage reads one uniform buffer and two textures, no storage buffers, inside the WebGPU
 baseline (webgpu-baseline.md).
@@ -142,7 +144,8 @@ receives presses alone.
   the screen every player sees (charter 3, principle 2, the 2026-11-12 note), and a press changes
   only what any player could press.
 - Not done: keyboard or gamepad focus and navigation between buttons, per-seat UI, presses in the
-  editor's viewport.
+  editor's viewport. The player page is the first-person seat's: for a game without a walker its
+  veil stays up (clicks still reach the buttons under it).
 
 ## 7. Commands
 
@@ -155,8 +158,8 @@ Recorded in its canonical form `{"entity": <id>}`.
 
 `ui.list {}` (Read): the visible elements in `EntityId` order, each `{entity, kind, parent?, name?}`
 with its kind's fields: a text's `text`, a bar's `value` and `max`, an image's `image`, a button's
-`label` (its `UiText`), `enabled`, `toggle`, `on` and `presses`, a stack's `direction`. At most 256
-elements; `omitted` counts the rest.
+`label` (its `UiText`, not listed again as a text), `enabled`, `toggle`, `on` and `presses`, a
+stack's `direction`. At most 256 elements; `omitted` counts the rest.
 
 `ui.` is an engine event prefix: scripts may not emit `ui.*` (`script.event_reserved`).
 
@@ -171,14 +174,27 @@ sent whole when any UI component, a UI entity's `Transform` or its `Parent` chan
 
 ## 9. Tests and checks
 
-- Renderer (`cargo test -p amoris-render --test ui`): an image at its anchor with its tint; a column
-  stack of buttons placed by spacing and padding, with their hit rectangles; each button state's
-  colour (face, hover, held, on, disabled); a CJK line in the fixture's font against the engine
-  font's boxes; a `reference_height` stack at two window heights; the old text and bar path drawn
-  to the same pixels by a frame without laid-out nodes.
+- Renderer (`cargo test -p amoris-render --test ui`): an image at its anchor with its tint and at
+  its own size; a column stack of buttons placed by its padding and spacing, with their hit
+  rectangles, and a row aligned to its end; each button state's colour (face, hover, held, on,
+  disabled); a CJK line in the fixture's font against the engine font's other glyphs, and a text
+  whose font is on the way left out and counted pending; a `reference_height` stack at two window
+  heights.
+- The engine font's frames: the `ui_frames` example draws texts at every anchor, over entities and
+  beside bars, at scales 1 and 2, from JSON that both forms of `UiView` read; built in this tree and
+  in an export of `321bb008` (before this file), its PNGs are byte for byte the same (2026-11-12,
+  Metal on the M5).
 - Runtime (`cargo test -p amoris-runtime --features transpile --test ui`): the extraction of every
-  element, a hidden stack's children left out; `ui.press` refusals; a press as a seat in a game with
-  players, its event in the script's next tick, the toggle and the counter; `ui.list`; the run's
-  recording replays identical.
-- The captures (`tests/fixtures/scenes/ui-hud/`): `amoris serve` with one toggle pressed through
-  `ui.press`, captured natively and in headless Chrome's WebGPU viewport.
+  element, a hidden stack's children left out; `ui.press` refusals changing nothing; presses, the
+  toggle and the counter, the event in the rule's next tick; `ui.list` and a press as the seat of
+  a game with players, which sends no developer command; the run's recording replays identical.
+- `amoris check tests/fixtures/scenes/ui-hud`: its inputs press as the local player at ticks 10, 40
+  and 60, through determinism, a fork, a replay and a reload.
+- The captures (2026-11-12, M5, Metal and Chrome 156): `amoris serve tests/fixtures/scenes/ui-hud`
+  with the Sound toggle pressed by `amoris player press Sound`, captured natively (`capture`) and
+  in headless Chrome's WebGPU viewport (`/wasm/index.html?render=...`, `node tools/web_bench.mjs`)
+  with the pointer over Settings: the same layout, `ui_hit` naming Start, Sound and Settings and
+  none for the disabled Quit, a gap or the scene. The game exported with `cargo xtask export-web`
+  in headless Chrome: synthesized clicks on Sound and then Start, through the veil, reached the
+  worker as two `ui.press` and the rule's status line, and no pointer lock was asked for. Not run:
+  Direct3D 12 and Vulkan, and a real mouse in a native window.
