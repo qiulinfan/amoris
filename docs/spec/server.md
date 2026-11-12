@@ -561,7 +561,7 @@ path.
 
 | Route | player | checker | developer |
 |---|---|---|---|
-| `POST /api/call` | its seat's `player.*`; a body `seat` other than its own is `seat.not_yours`, a body `handle` is `permission.denied` | the catalog's reads (below); a body `seat` or `handle` is `permission.denied` | everything, as its own session; a body `seat` or `handle` as on a host without grants (5) |
+| `POST /api/call` | its seat's `player.*`, and `ui.list` and `ui.press` (ui.md 6); a body `seat` other than its own is `seat.not_yours`, a body `handle` is `permission.denied` | the catalog's reads (below); a body `seat` or `handle` is `permission.denied` | everything, as its own session; a body `seat` or `handle` as on a host without grants (5) |
 | `/mcp`, `/mcp/<token>` | the `player` tool alone, with the player instructions | the developer's tools; the host refuses what is no read | every tool |
 | `GET /api/grant` | `{role, seat, label, session}`: what the token is, answered without the game | the same | the same |
 | `GET /api/catalog`, `GET /assets/<path>` | 403 | yes | yes |
@@ -580,10 +580,10 @@ host state like the sessions: nothing of them is in the world, its hash, a snaps
 (amoris-app's `tests/locked_host.rs` compares the hash of a locked and an unlocked host).
 
 **The player.** Its calls are its seat's player's whatever the request says: sent from the seat's
-player source, the player tools alone (`seat_permits`, player.md 7), no omniscient view. The body's
-`seat` may repeat its own; another seat is refused with `seat.not_yours {path: "/seat", seat,
-yours}` before any seat is looked up, and a `seat` that is not a string with `request.wrong_type`.
-Other keys of the body (`role`, `token`) are not read.
+player source, the player tools and the game UI's `ui.list` and `ui.press` alone (`seat_permits`,
+player.md 7), no omniscient view. The body's `seat` may repeat its own; another seat is refused
+with `seat.not_yours {path: "/seat", seat, yours}` before any seat is looked up, and a `seat` that
+is not a string with `request.wrong_type`. Other keys of the body (`role`, `token`) are not read.
 
 **The checker.** Its calls are the catalog entries of kind `read`, by name or alias; every other
 entry is `permission.denied {request, role: "checker", needs: "developer"}`, and a name the catalog
@@ -806,7 +806,7 @@ parameters loosely and the runtime's decoder refuses unknown ones with suggestio
 | `debug` | attach, detach, breakpoints.set, breakpoints.clear, breakpoints.list, pause, continue, step, state, eval, set, watch, unwatch, exceptions, wait, rewind, writes -> `debug.*` |
 | `capture` | -> `capture` |
 | `docs` | -> `docs.search` |
-| `player` | session, describe, observe, nearby, events, affordances, intents, act, wait, continue, pacing -> `player.*` (player.md; a developer names the seat) |
+| `player` | session, describe, observe, nearby, events, affordances, intents, act, wait, continue, pacing -> `player.*` (player.md; a developer names the seat); ui -> `ui.list`, press -> `ui.press` (ui.md 6) |
 
 Results are the method's JSON as text; refusals are tool results with `isError` and the text
 `{"error": {code, message, detail}}`. The `debug` tool's input schema lists every parameter its

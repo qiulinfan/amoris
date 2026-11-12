@@ -63,7 +63,7 @@ fn a_player_is_its_seat_and_sees_through_its_own_perception() {
             "{s:#}"
         );
         let d = p.ok("player.describe", json!({}));
-        assert_eq!(d["contract"], json!("0.2"), "{d:#}");
+        assert_eq!(d["contract"], json!("0.3"), "{d:#}");
         // The whole definition is beyond the default 2000 tokens: names only, and the call for
         // the rest (README, The game definition).
         assert_eq!(d["seats"], json!(["skipper"]), "{d:#}");

@@ -1,7 +1,7 @@
 # MCP tools
 
 Status: Draft, slice 0. Maintained in Amoris's `shared/contract/`. Section 14: what is built.
-Contract version 0.2 (README, Versioning).
+Contract version 0.3 (README, Versioning).
 
 Charter: 3.1 (pull perception, token budgets, the marked omniscient view), 3.3 (fork, restore,
 replay), 3.4 (structured errors, refusal of unknown fields), 3.5 (time model), 3.6 (tools with
@@ -143,6 +143,8 @@ pub struct Policy {
 | `commit`, `wait` | lockstep; `wait` also in real time | no | as a player | 5 |
 | `continue` | real time and lockstep | no | as a player | 5 |
 | `fork`, `discard` | if `policy.fork` | no | yes | 5.5 |
+| `ui` | yes | yes | yes | 5 |
+| `press` | yes | no | yes | 5 |
 | `snapshot`, `restore` | if `policy.fork` or `policy.rewind`; a player restores main only with `rewind`, its own branches with `fork` | no | yes | 5.6 |
 | `why`, `world_query`, `world_get`, `schema`, `project_brief`, `docs_search`, `assets` | no | yes | yes | 6 |
 | `time_control` | pause and resume only, if `policy.pause` | no | yes | 6 |
@@ -236,6 +238,8 @@ suffixes (`_m`, `_deg`, `_s`), the frame, numbers that are finite and refused ra
 | `act` | `ActRequest` | `ActResult` | actions.md |
 | `step`, `commit`, `wait`, `continue` | `StepRequest`, `CommitRequest`, `WaitRequest`, `ContinueRequest` | `TimeResult` | time.md, Requests |
 | `session`, `fork`, `discard`, `snapshot`, `restore`, `replay` | below | below | this file |
+| `ui` (0.3) | `{}` | `{elements: [{entity, kind, parent?, name?, ...}], omitted?}`: the screen's visible UI in id order, at most 256 elements | `docs/spec/ui.md` 7 |
+| `press` (0.3) | `{entity}`: an id, a name or `Name#id` | `{entity, on, presses}`; refused, changing nothing, with `ui.not_a_button`, `ui.disabled` or `ui.hidden` | `docs/spec/ui.md` 7 |
 
 Each takes `world` (4.1). A developer names the seat in requests that take one; a checker may set
 `omniscient: true` where a request has it. The rules of each request (validation, atomicity, when
@@ -774,7 +778,7 @@ layer.
 8. **Idempotent retries.** A client that retries a timed-out `act` would apply it twice. Not in
    slice 2; if traces show it, an optional client `request_id` remembered per session.
 
-## 14. As built (0.2)
+## 14. As built (0.2 and 0.3)
 
 Amoris's MCP server (amoris-mcp) is a projection of the runtime's command catalog into a few grouped
 tools, each an `action` over catalog methods (`docs/spec/server.md`), rather than one typed tool per
@@ -829,6 +833,16 @@ request (decision 1 above). The player-facing requests arrived on that design
   while main stays at one tick (`session.limit_reached`, refused up front). Of `policy`, a grants
   file takes `fork` alone, on a player grant (default false: `session.policy_denies`). A branch's
   answers carry `world` (4.1); main's do not. Codes and their templates are 7.1's.
+- **The game UI as built** (0.3, 2026-11-12; `docs/spec/ui.md` 6 and 7). The screen's UI is what
+  every player sees, so it is no seat's perception: `ui` and `press` are the `player` tool's actions
+  for the runtime's `ui.list` (a Read) and `ui.press` (a Write, recorded in its canonical form
+  `{"entity": <id>}` and replayed like `act`), and `amoris player ui` and `amoris player press
+  <entity>` carry them on the CLI. They are the only commands a player source sends besides the
+  `player.*` ones: the runtime (`amoris_runtime::player::ui_command`) and the host
+  (`seat_permits`) let them through and refuse every other as before. A press is the press a
+  person's pointer makes on the button in the native window or the browser player, sent there as
+  the local player. Neither takes `world`: a player's branches have no presenter, so the UI is
+  main's.
 - **Not built**: of 3.1's `Grant`, `profile`, `decision`, `clock`, `max_wall_ms` and of `policy`
   all but `fork` (a grants file that names one is refused, never accepted and ignored), `--grant
   <json>` for a stdio session that runs its own game, and `session.seat_taken` between sessions

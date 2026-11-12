@@ -2,7 +2,7 @@
 
 - Status: Draft, slice 0. Maintained in this repository's `shared/contract/`.
 - Charter: 2.2, 3.1, 3.4, 3.5, 3.6, 3.7, 6.1, 6.2, 7 (items 8, 9, 10 and 12).
-- Contract version: 0.2 (draft).
+- Contract version: 0.3 (draft).
 
 ## What the contract is
 
@@ -73,6 +73,7 @@ engine's own version applies.
 |---|---|
 | 0.1 | First draft (2026-10-03), integrated the same day with the slice 0 specifications and spikes: names settled (`Problem`, `EventSeq`, `ActOrigin`, applied writes by `tick`), halts after a script failure (time.md), `describe` taking `entity` or `part` (mcp.md 5.2). Revised the same day after review: world state separated from wire forms; projections and the sailing declarations in files of their own; the `intents` tool; entity references in the projections' forms; the text grammar for every perception answer; undeclared events hidden; declared requested decisions and episodes; `omniscient_player`; one seat per body. |
 | 0.2 | As built on Pioneer (2026-10-09, `docs/spec/player.md`; charter 5.1, Pioneer): `Observer.team` and team vision (perception.md, The perception update, step 5a); `wait` in stepped pacing, for the seat holding the clock, is a `step` until its next decision point (time.md, Requests); the player tools are the runtime's `player.*` commands, carried by one MCP tool `player` with an `action`, and a session is bound to a seat by the process that serves it (mcp.md 14); a game declares its players in `project.toml`'s `[player]`, and the declaration is world state (The game definition). |
+| 0.3 | The game UI (2026-11-12, `docs/spec/ui.md` 6 and 7; charter 3, principle 2, that day's note): a player reads the screen's UI with `ui` (the runtime's `ui.list`) and presses one of its buttons with `press` (`ui.press`, a write recorded like `act`), two new actions of the `player` tool and the only requests a player sends besides the `player.*` ones (mcp.md 3.3, 5, 14). Nothing else changed: 0.2's requests, answers, the text projection and the codes are unchanged. |
 
 On 2026-10-16 the owner's rename of the engine's identifier (`pocket` to `amoris`, charter 5.1)
 changed the engine's own names in these files and in `shared/benchmark/`: the types crate

@@ -298,7 +298,8 @@ put it, so watching or driving a seat never takes events from the player who pla
 (`amoris_interface::time::session::push_delta`; before 2026-10-09 a developer's call consumed them).
 
 **The role is enforced by the engine** (charter 5.1, the Pioneer note after review). In a game that
-declares players, a player source sends the `player.*` commands alone; every other command is a
+declares players, a player source sends the `player.*` commands alone, and the game UI's
+`ui.list` and `ui.press` (ui.md 6: the screen is every player's); every other command is a
 developer's and is refused with `permission.denied` (`{request, role: "player", needs:
 "developer"}`) before anything runs, in three places:
 

@@ -111,7 +111,7 @@ fn a_replay_of_another_engine_is_refused() {
         source: &other,
         target: "test",
         profile: "test",
-        contract: "0.2",
+        contract: "0.3",
     })
     .unwrap();
     let bytes = std::thread::Builder::new()

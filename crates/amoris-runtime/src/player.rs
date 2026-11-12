@@ -41,7 +41,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 /// The contract version the player tools speak (shared/contract/README.md, Versioning).
-pub const CONTRACT: &str = "0.2";
+pub const CONTRACT: &str = "0.3";
 
 /// The engine's action catalogs a project can name in `[player] actions`.
 pub const CATALOGS: &[&str] = &["sailing", "first_person", "third_person", "none"];

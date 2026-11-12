@@ -725,6 +725,9 @@ fn a_player_token_is_its_seat_whatever_the_body_says() {
         &request("player.describe", json!({"entity": "Crate4"})),
     );
     assert_eq!(e["code"], json!("perception.unknown_entity"), "{e:#}");
+    // The screen's UI is every player's (docs/spec/ui.md 6): the seat reads it, as it presses it.
+    let ui = result(&url, PLAYER, "ui.list", json!({}));
+    assert!(ui["elements"].is_array(), "{ui:#}");
 
     // The body's `seat`: its own is taken, another is not its to name, and nothing else is one.
     let seated =
@@ -865,6 +868,8 @@ fn a_player_token_is_its_seat_whatever_the_body_says() {
         );
         let (failed, text) = c.tool("player", json!({"action": "session"}));
         assert!(!failed && text.contains("\"role\":\"player\""), "{text}");
+        let (failed, text) = c.tool("player", json!({"action": "ui"}));
+        assert!(!failed && text.contains("\"elements\""), "{text}");
     }
     // An MCP session belongs to its grant: the player's under the checker's token is no
     // session, nor a developer's under the player's.
