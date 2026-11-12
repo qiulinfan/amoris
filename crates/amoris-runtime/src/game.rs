@@ -122,6 +122,7 @@ impl GameBuilder {
     pub fn build(self) -> Result<Game, Problem> {
         let set = self.setup.scripts.clone();
         let mut g = Game::make(self.setup, self.seed, self.extras, &set)?;
+        crate::player::check_script_intents(g.sim.world())?;
         g.project = self.project;
         let scene = g.setup.scene.clone();
         scene.spawn_into(&mut g.sim.boundary())?;
@@ -1076,6 +1077,14 @@ impl Game {
         };
         let report = amoris_script::swap(self.sim.world_mut(), &set, true)
             .map_err(|e| scripts::refused("swap", &e))?;
+        if let Err(p) = crate::player::check_script_intents(self.sim.world()) {
+            // The game's own bundle back, as a refused swap leaves it.
+            if let Some(old) = self.bundles.get(&self.current).cloned() {
+                amoris_script::swap(self.sim.world_mut(), &old, true)
+                    .map_err(|e| scripts::refused("swap", &e))?;
+            }
+            return Err(p);
+        }
         let previous = self.current;
         self.current = hash;
         self.sync_context();

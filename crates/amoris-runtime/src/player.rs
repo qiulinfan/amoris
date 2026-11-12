@@ -280,7 +280,9 @@ fn derive(world: &mut World) -> Result<(), Problem> {
         },
     });
     world.insert_resource(DerivedFrom(spec));
-    Ok(())
+    // The intents the world's scripts declare (script-host.md 5.5): code like the catalog, so a
+    // catalog derived again takes the live program's, as the swap that installed it did.
+    amoris_script::scripts::declare_intents(world)
 }
 
 /// After a restore: the declarations of the restored world's spec, or none. Those already derived
@@ -365,6 +367,23 @@ fn write_field(
         access.insert(&mut ent, v);
     }
     Ok(())
+}
+
+/// A game whose scripts declare intents declares players (script-host.md 5.5): their intents are
+/// the player layer's, started by a seat. `script.bad_definition` otherwise.
+pub fn check_script_intents(world: &World) -> Result<(), Problem> {
+    let intents = amoris_script::scripts::live_intents(world);
+    match intents.first() {
+        Some(i) if !declared(world) => Err(Problem::new(
+            "script.bad_definition",
+            format!(
+                "The scripts declare the intent {i}, an intent of the player layer, which this \
+                 game does not declare: add [player] to project.toml."
+            ),
+            amoris_contract::detail([("intents", json!(intents))]),
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// Whether the world declares a player layer.
