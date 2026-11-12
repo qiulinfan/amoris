@@ -1430,7 +1430,7 @@ Python：`tools/neural/`（神经资源训练）、`tools/eval/`（评测）。
   唯一的游戏 blockcraft 已迁入 `samples/blockcraft/`（d5e17f64），该仓库随后删除（第 1 节）；引擎里
   用到它的示例与基准因此不再依赖旁边的另一个检出，新游戏直接在 `samples/` 里开始。
 - `tests/fixtures/` 放只有测试与检查读的项目：`controls/` 是检查的负对照，`sdk/` 是 SDK 的类型测
-  试，`scenes/` 是测试、检查与测量工具读的场景（八个 `water-*`、`gi-room`、`pt-lab`）。
+  试，`scenes/` 是测试、检查与测量工具读的场景（八个 `water-*`、`gi-room`、`pt-lab`、`hierarchy`）。
 - 生成的文件（场景、网格、纹理、方块数据、`.d.ts`、提交的 wasm 包）与写它们的生成器一起提交，改动靠
   重新生成，不手改；项目的生成器放在项目自己的文件夹里，如 `build_scene.py` 与 blockcraft 的
   `gen_world.py`。
