@@ -3,10 +3,12 @@
 //! `group`, so the editor streams a gizmo drag; the drag's edits are one undo entry; an MCP
 //! session's edit in the middle of the drag splits it; every entry names its source, and the
 //! server adds the session (`mcp-<n>` as `agent` events name it, `api` for the HTTP API's client).
+//! And the editor's rename (editor.md 8 item 2): a `set` of `Name` whose value is the name, which
+//! the catalog's schema shows, the publication carries and the history undoes.
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use amoris_link::Source;
 use amoris_mcp::Backend as _;
@@ -161,6 +163,178 @@ fn a_streamed_drag_is_one_entry_and_entries_name_their_sources() {
         let h = call(Via::Editor, "history.list", json!({})).await;
         assert_eq!(h["redo"][3], json!("Move Sloop"), "{h:#}");
         assert_eq!(h["entries"]["redo"][0]["session"], json!("api"), "{h:#}");
+    });
+    drop(host);
+    handle.shutdown(5000).unwrap();
+}
+
+#[test]
+fn a_rename_through_the_host_is_in_the_catalog_and_undoable() {
+    let (handle, host) = start();
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let call = |via: Via, method: &'static str, params: Value| {
+            let host = host.clone();
+            async move {
+                host.call(&via, method, params)
+                    .await
+                    .unwrap_or_else(|e| panic!("{method}: {e:#?}"))
+            }
+        };
+        // The catalog's schema says a `set` takes the fields or, for `Name`, a string.
+        let catalog = call(Via::Editor, "catalog.list", json!({})).await;
+        let edit = catalog
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == "world.edit")
+            .unwrap();
+        let defs = &edit["params"]["$defs"];
+        assert_eq!(
+            defs["SetOp"]["properties"]["value"]["$ref"],
+            json!("#/$defs/SetValue"),
+            "{edit:#}"
+        );
+        let forms: Vec<&str> = defs["SetValue"]["anyOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|b| b["type"].as_str())
+            .collect();
+        assert_eq!(forms, ["object", "string"], "{edit:#}");
+        assert!(
+            defs["SetValue"]["anyOf"][1]["description"]
+                .as_str()
+                .is_some_and(|d| d.contains("64 bytes")),
+            "{edit:#}"
+        );
+        assert!(
+            edit["doc"].as_str().unwrap().contains("renames"),
+            "{edit:#}"
+        );
+
+        // The form the editor sends for F2 and for the inspector's name field.
+        let name_of = |id: u64| {
+            let host = host.clone();
+            async move {
+                host.call(&Via::Editor, "world.get", json!({"entity": id}))
+                    .await
+                    .unwrap()["name"]
+                    .clone()
+            }
+        };
+        let r = call(
+            Via::Editor,
+            "world.edit",
+            json!({"ops": [{"set": {"entity": 4, "component": "Name", "value": "CrateA"}}],
+                   "label": "Rename Crate1 → CrateA"}),
+        )
+        .await;
+        assert_eq!(r["label"], json!("Rename Crate1 → CrateA"), "{r:#}");
+        let tree = call(Via::Editor, "world.tree", json!({"filter": "CrateA"})).await;
+        let ids: Vec<&Value> = tree.as_array().unwrap().iter().map(|e| &e["id"]).collect();
+        assert_eq!(ids, [&json!(4)], "{tree:#}");
+        // The publication carries the name: `world.changed` diffs its `Name` rows.
+        let published = |id: u64, name: &'static str| {
+            let reader = handle.reader();
+            async move {
+                for _ in 0..500 {
+                    let snap = reader.latest();
+                    let rows = amoris_link::SnapshotView::new(&snap)
+                        .rows_json("Name")
+                        .unwrap();
+                    if rows.contains(&(id, json!(name))) {
+                        return true;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                false
+            }
+        };
+        assert!(published(4, "CrateA").await);
+
+        // An MCP session renames the same way; the history names both sources.
+        let agent = McpBackend::new(host.clone()).open();
+        agent
+            .call(
+                "world.edit".to_owned(),
+                json!({"ops": [{"set": {"entity": "Crate2", "component": "Name",
+                                         "value": "CrateB"}}]}),
+            )
+            .await
+            .unwrap();
+        let h = call(Via::Editor, "history.list", json!({})).await;
+        let shown: Vec<Value> = h["entries"]["undo"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| json!([e["label"], e["source"].is_string(), e["session"]]))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                json!(["Rename Crate1 → CrateA", true, null]),
+                json!(["set Name on Crate2", false, "mcp-1"]),
+            ],
+            "{h:#}"
+        );
+        assert_eq!(h["entries"]["undo"][0]["source"], json!("editor"), "{h:#}");
+
+        // Undo and redo through the host put the names back, in the publication too.
+        call(Via::Editor, "history.undo", json!({})).await;
+        assert_eq!(name_of(5).await, json!("Crate2"));
+        call(Via::Editor, "history.undo", json!({})).await;
+        assert_eq!(name_of(4).await, json!("Crate1"));
+        assert!(published(4, "Crate1").await);
+        call(Via::Editor, "history.redo", json!({})).await;
+        assert_eq!(name_of(4).await, json!("CrateA"));
+        assert!(published(4, "CrateA").await);
+
+        // A removed name leaves the publication's rows, and its undo brings it back.
+        call(
+            Via::Editor,
+            "world.edit",
+            json!({"ops": [{"remove": {"entity": 6, "component": "Name"}}]}),
+        )
+        .await;
+        assert_eq!(name_of(6).await, Value::Null);
+        let unnamed = {
+            let reader = handle.reader();
+            async move {
+                for _ in 0..500 {
+                    let snap = reader.latest();
+                    let rows = amoris_link::SnapshotView::new(&snap)
+                        .rows_json("Name")
+                        .unwrap();
+                    if rows.iter().all(|(id, _)| *id != 6) {
+                        return true;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                false
+            }
+        };
+        assert!(unnamed.await);
+        call(Via::Editor, "history.undo", json!({})).await;
+        assert!(published(6, "Crate3").await);
+
+        // A name over 64 bytes is refused at the op's value and changes nothing.
+        let e = host
+            .call(
+                &Via::Editor,
+                "world.edit",
+                json!({"ops": [{"set": {"entity": 4, "component": "Name",
+                                         "value": "界".repeat(22)}}]}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "sim.name_too_long", "{e:#?}");
+        assert_eq!(e.detail["path"], json!("/ops/0/set/value"), "{e:#?}");
+        assert_eq!(e.detail["bytes"], json!(66), "{e:#?}");
+        assert_eq!(name_of(4).await, json!("CrateA"));
     });
     drop(host);
     handle.shutdown(5000).unwrap();

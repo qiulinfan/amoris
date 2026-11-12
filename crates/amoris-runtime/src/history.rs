@@ -194,7 +194,7 @@ mod tests {
         Edit::Set {
             entity: EntityRef::Id(id),
             component: component.into(),
-            value,
+            value: value.into(),
             replace: true,
         }
     }

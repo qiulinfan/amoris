@@ -1,8 +1,9 @@
 //! The history of `world.edit` (docs/spec/server.md 3.1): edits of one `group` from one source are
 //! one undo entry (a gizmo drag), which undoes and redoes whole; another group, an ungrouped edit or
 //! an edit by another source in between starts a new entry; every entry names its source; an undo
-//! of a `group` takes back only a whole drag; and the recording holds every edit of a group, so it
-//! replays as without groups.
+//! of a `group` takes back only a whole drag; the recording holds every edit of a group, so it
+//! replays as without groups; and a rename (a `set` of `Name`) is one entry whose undo and redo put
+//! the names back.
 #![cfg(feature = "transpile")]
 #![allow(clippy::disallowed_methods)]
 mod common;
@@ -252,5 +253,138 @@ fn an_undo_of_a_group_takes_back_only_a_whole_drag() {
         assert_eq!(u["label"], json!("Move Sloop"));
         assert_eq!(sloop_x(&mut g), start + 3.0);
         assert_eq!(undo_labels(&mut g).len(), 3);
+    });
+}
+
+/// The editor's rename as an op: a `set` of `Name` whose value is the name.
+fn rename(entity: Value, name: &str) -> Value {
+    json!({"set": {"entity": entity, "component": "Name", "value": name}})
+}
+
+fn name_of(g: &mut Game, id: u64) -> Value {
+    g.apply(&Command::new(
+        Source::Developer(9),
+        1,
+        "world.get",
+        json!({"entity": id}),
+    ))
+    .unwrap()["name"]
+        .clone()
+}
+
+/// editor.md 8 item 2: the editor's rename is one labelled entry; undo and redo put the names
+/// back, also for an entity that had no name, and renames of one group merge as any set does.
+#[test]
+fn a_rename_is_one_entry_whose_undo_and_redo_put_the_names_back() {
+    common::big_stack(|| {
+        let mut g = Game::new(common::sailing(), 1).unwrap();
+        let sink = MemorySink::new();
+        g.record(Box::new(sink.clone()), RecordOptions::default())
+            .unwrap();
+        let start = g.world_hash().unwrap();
+        let mut editor = Caller::new(Source::Editor);
+        // What the editor sends for F2 and for the inspector's name field.
+        let r = editor.call(
+            &mut g,
+            "world.edit",
+            json!({"ops": [rename(json!(4), "CrateA")], "label": "Rename Crate1 → CrateA"}),
+        );
+        assert_eq!(r["label"], json!("Rename Crate1 → CrateA"), "{r}");
+        assert_eq!(name_of(&mut g, 4), json!("CrateA"));
+        let renamed = g.world_hash().unwrap();
+        assert_ne!(renamed, start);
+        let h = history(&mut g);
+        assert_eq!(
+            h["entries"]["undo"],
+            json!([{"label": "Rename Crate1 → CrateA", "source": "editor"}]),
+            "{h}"
+        );
+        // Undo: the old name and the world as it was; redo: the new name.
+        let u = editor.call(&mut g, "history.undo", json!({}));
+        assert_eq!(u["label"], json!("Rename Crate1 → CrateA"), "{u}");
+        assert_eq!(name_of(&mut g, 4), json!("Crate1"));
+        assert_eq!(g.world_hash().unwrap(), start);
+        let h = history(&mut g);
+        assert_eq!(h["undo"], json!([]), "{h}");
+        assert_eq!(
+            h["entries"]["redo"],
+            json!([{"label": "Rename Crate1 → CrateA", "source": "editor"}]),
+            "{h}"
+        );
+        editor.call(&mut g, "history.redo", json!({}));
+        assert_eq!(name_of(&mut g, 4), json!("CrateA"));
+        assert_eq!(g.world_hash().unwrap(), renamed);
+        // Without a label the entry is named after the edit, with the entity as the call gave it.
+        let r = editor.call(
+            &mut g,
+            "world.edit",
+            json!({"ops": [rename(json!(5), "Second")]}),
+        );
+        assert_eq!(r["label"], json!("set Name on #5"), "{r}");
+        let r = editor.call(
+            &mut g,
+            "world.edit",
+            json!({"ops": [rename(json!("Crate3"), "Third")]}),
+        );
+        assert_eq!(r["label"], json!("set Name on Crate3"), "{r}");
+        assert_eq!(undo_labels(&mut g).len(), 3);
+
+        // An entity spawned without a name: naming it is undone to no name, the world hashing as
+        // before the naming, and redone to the name.
+        let spawned = editor.call(&mut g, "world.edit", json!({"ops": [{"spawn": {}}]}));
+        let id = spawned["spawned"][0].as_u64().unwrap();
+        assert_eq!(name_of(&mut g, id), Value::Null);
+        let unnamed = g.world_hash().unwrap();
+        editor.call(
+            &mut g,
+            "world.edit",
+            json!({"ops": [rename(json!(id), "Box")]}),
+        );
+        assert_eq!(name_of(&mut g, id), json!("Box"));
+        editor.call(&mut g, "history.undo", json!({}));
+        assert_eq!(name_of(&mut g, id), Value::Null);
+        assert_eq!(g.world_hash().unwrap(), unnamed);
+        editor.call(&mut g, "history.redo", json!({}));
+        assert_eq!(name_of(&mut g, id), json!("Box"));
+
+        // Renames of one group are one entry, which undoes to the name from before the first.
+        let before = undo_labels(&mut g).len();
+        for name in ["C", "Cr", "Crow"] {
+            let ops = json!([rename(json!(7), name)]);
+            editor.call(
+                &mut g,
+                "world.edit",
+                json!({"ops": ops, "label": "Rename Crate4", "group": "typing"}),
+            );
+        }
+        assert_eq!(name_of(&mut g, 7), json!("Crow"));
+        assert_eq!(undo_labels(&mut g).len(), before + 1);
+        editor.call(&mut g, "history.undo", json!({"group": "typing"}));
+        assert_eq!(name_of(&mut g, 7), json!("Crate4"));
+        editor.call(&mut g, "history.redo", json!({}));
+        assert_eq!(name_of(&mut g, 7), json!("Crow"));
+
+        g.run(3).unwrap();
+        g.finish_recording().unwrap();
+        // Every rename, undo and redo is one `world_edit` write, and the recording replays.
+        let replay = Replay::read(&sink.bytes()).unwrap();
+        let writes: Vec<&RecordedWrite> = replay
+            .records()
+            .iter()
+            .flat_map(|r| match r {
+                Record::Tick { writes, .. } => writes.iter().collect(),
+                _ => Vec::new(),
+            })
+            .collect();
+        assert_eq!(writes.len(), 14);
+        assert!(writes.iter().all(|w| w.name == "world_edit"));
+        // The undo of a first naming is recorded as the removal of the name.
+        assert_eq!(
+            serde_json::from_str::<Value>(&writes[7].params).unwrap(),
+            json!({"edits": [{"op": "remove", "entity": id, "component": "Name"}]})
+        );
+        let mut fresh = Game::for_replay(&replay).unwrap();
+        let out = verify(&replay, &mut fresh, VerifyOptions::mode(ReplayMode::Verify)).outcome;
+        assert_eq!(out, ReplayOutcome::Identical);
     });
 }

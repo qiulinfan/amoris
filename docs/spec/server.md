@@ -121,9 +121,10 @@ refuses them with `command.thread_only`.
 
 Ops are externally tagged: `{"spawn": {name?, prefab?, components?}}`,
 `{"set": {entity, component, value, replace?}}` (fields merge; keys may be paths, `position.1`;
-`replace` writes the value whole), `{"remove": {entity, component}}`, `{"destroy": {entity}}`. An
-entity is an id, a name or `Name#id`. The call is checked whole against the world as the earlier ops
-leave it, then applied at one boundary; a refusal names the op as written (`/ops/1/set/entity`).
+`replace` writes the value whole; for `Name` the value is the name, a string: Names, below),
+`{"remove": {entity, component}}`, `{"destroy": {entity}}`. An entity is an id, a name or `Name#id`.
+The call is checked whole against the world as the earlier ops leave it, then applied at one
+boundary; a refusal names the op as written (`/ops/1/set/entity`).
 
 Every edit is recorded as `world_edit {edits}` with entity names resolved to ids (threads.md 5.3),
 the same write for `world.edit`, undo and redo, so a recording replays without the history.
@@ -169,6 +170,40 @@ nothing changes; the editor then writes the dragged fields back instead (editor.
 The server pushes `history` only when it differs from the last one it pushed (amoris-server
 `push_history`): the steps of a streamed drag merge into its entry and leave the list as it was,
 so a drag pushes it once, when its entry appears.
+
+Names (2026-11-11, editor.md 8 item 2): `Name` is the entity's name and the one component whose
+`value` is a string, of at most 64 bytes of UTF-8 (`Name::new`); the catalog's schema of a `set`'s
+`value` is the object of fields or that string (`SetValue`). A `set` of `Name` renames the entity,
+or names one that had none; a name is written whole, so `replace` changes nothing. An object given
+for `Name`, or a string given for another component an edit writes, is `request.wrong_type` at the
+op's `value` (`/ops/0/set/value`; a value that is neither is refused there by the shape,
+`object or string`), and a longer name is `sim.name_too_long` with `path` the same place; nothing is
+applied. A `remove` of `Name` leaves the entity unnamed, as one spawned without `name`: `world.tree`
+and `world.get` answer `name: null`, and only its id finds it. Either is one history entry whose
+undo and redo put the names back (the undo of a first naming removes the name, so the world hashes
+as before it), and is recorded as `world_edit` with the entity's id and the same value, so
+recordings made before, which hold objects only, decode as they did.
+
+The later ops of a call find entities by the names its earlier ops leave, as their `entity` and
+through an entity field of a project component: after a rename the new name finds the entity and
+the old one is `sim.entity_not_found`, unless another entity carries it by then (two entities can
+swap names in one call); a name two entities share by then is `request.ambiguous_ref` (`Name#id` or
+the id says which), and a removed name finds nothing. An entity an earlier op destroys keeps its
+name until the call is applied: naming it is refused with `destroyed_by`, and a name it shares
+stays ambiguous. An entity the call spawns still cannot be named by a later op. In every case an
+op's `entity`, or an entity field of a scene or an edit, that finds no entity says where it was
+written (`path`: `/ops/1/set/entity`, `/ops/1/set/value/take`). The recorded forms hold ids, so a
+replay looks no name up.
+
+What an edit cannot write (2026-11-11): a spawn takes its name as `name`, and `Name` among its
+`components` is refused (`request.invalid_value` at `ops[0].spawn.components.Name`). The registry's
+other components that are neither engine components with a JSON form nor project components are
+state the engine keeps itself (a seat's `Controls`, an observer's `ObserverMemory` and
+`ObserverEvents`): a `set`, a `remove` or a spawn naming one is `request.invalid_value` at the op's
+`component` (a spawn's `components.<Name>`), in a scene too. Until then each of these, `Name`
+included, was answered `sim.component_unknown` with the registry suggesting the very name ("There
+is no component 'Name'; did you mean [\"Name\"]?"); an edit or a scene now answers that code only
+for a name the registry does not hold.
 
 ### 3.2 `time.step` stop conditions
 
@@ -521,6 +556,17 @@ through `Host::call` (also that `profile.frame` answers while held and leaves th
 reader alone turns nothing on) and that Play starts the ring again; amoris-link's `profile` tests
 the summaries, the rows' order, the world's ticks only, and that a reader holding the ring never
 stops the game thread.
+
+Names (3.1; 2026-11-11, macOS): `crates/amoris-runtime/tests/edits.rs` tests the rename in both
+forms with its recorded form, the refusals with their paths, the removal of a name, the names the
+later ops of a call see and what an edit cannot write, and `tests/history.rs` that a rename is one
+entry whose undo and redo put the names back, also for an entity that had none and for renames of
+one group; each records and replays. `edit.rs`'s unit test decodes a canonical `world_edit` as
+recordings held it before. amoris-app's `tests/history_host.rs` renames through `Host::call` (the
+catalog's schema, the publication's `Name` rows, an MCP session, undo and redo), and the smoke test
+renames over `/ws` as the editor does (the `world.changed` push naming `[id, "Name"]`, the tree by
+the new name, a name of 66 bytes refused at `/ops/0/set/value`, the undo) and reads the string
+form in `/api/catalog`.
 
 ## 11. Open
 

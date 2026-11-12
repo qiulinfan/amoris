@@ -350,7 +350,12 @@ adopt them or the editor should change:
 1. `world.edit` takes `group?: string`: consecutive edits with the same group merge into one undo
    entry (a drag). Detected from the catalog's params schema. Adopted 2026-10-15.
 2. `set` of `Name` takes the name as a string `value`; `world.get` may list `Name` among components
-   (the editor ignores it there).
+   (the editor ignores it there). Adopted 2026-11-11 (server.md 3.1, Names): the host renames from
+   the string, as one undo entry. A name over 64 bytes of UTF-8 is refused with
+   `sim.name_too_long`, which the editor shows as an error toast: the inspector's name field stops
+   at 64 characters, not bytes, so a name of 22 CJK characters reaches the host and is refused
+   there. A `remove` of `Name`, which the editor never sends, leaves an entity unnamed (`name:
+   null`).
 3. The hierarchy is the `Parent {parent: EntityId}` component, and `world.tree` nests by it.
 4. The debugger is the host's as-built `debug.*` (section 8.1), not an editor-specific form.
 5. Agent edits are marked in the history. Adopted 2026-10-15 with item 1 (server.md 3.1): each
@@ -458,7 +463,7 @@ the wire shapes (`HostDebugState`, `HostFrame`, `HostVariable`, `HostBreakpoint`
 | `src/panels/<panel>/` | One module per panel (and its CSS) |
 | `mock/` | The mock host (section 1.1) |
 | `test/` | bun unit tests (`bun test`): history, live edits, subscriptions, the profile, water authoring, the desktop guards, arithmetic |
-| `tools/` | `capture.ts` (evidence of every panel against the mock), `debug-host.ts` (the debugger against the real host), `sdk_check.ts` (the script editor's types against the real host), `profiler-capture.ts` (the profiler against the real host, docs/bench/profiler.md), `water-authoring.ts` (the water tools against the real host, 6.1), `viewport-loads.ts` (the viewport's loads, remounts and hot updates, 5), `gizmo-drag.ts` (live gizmo drags, docs/bench/gizmo.md), `serve-clients.ts` (clients held on a real host while its game thread is profiled, docs/bench/profiler.md); the pages are driven in headless Chrome over CDP (`cdp.ts`, `chrome.ts`) |
+| `tools/` | `capture.ts` (evidence of every panel against the mock), `debug-host.ts` (the debugger against the real host), `rename-host.ts` (the rename against the real host, section 8 item 2), `sdk_check.ts` (the script editor's types against the real host), `profiler-capture.ts` (the profiler against the real host, docs/bench/profiler.md), `water-authoring.ts` (the water tools against the real host, 6.1), `viewport-loads.ts` (the viewport's loads, remounts and hot updates, 5), `gizmo-drag.ts` (live gizmo drags, docs/bench/gizmo.md), `serve-clients.ts` (clients held on a real host while its game thread is profiled, docs/bench/profiler.md); the pages are driven in headless Chrome over CDP (`cdp.ts`, `chrome.ts`) |
 
 ## 10. Evidence
 
@@ -493,6 +498,19 @@ off macOS.
 | `debug-host-9-edited-script.png` | While it runs: `const knots = speed * 1.944;` typed as a new line 28 of rules.ts, Mod+S (`scripts.write`, then `scripts.apply`: the toast "Scripts applied, bundle 4685e123… hot-swapped, no errors"), a breakpoint on line 29: tick 655 stops there with `knots = 2.4262` in Local |
 | `debug-host-10-stopped.png` | Stop clicked while paused there: Edit mode 0.1 s later (Stop continued the pause first); the edit world came back with its old bundle, so the editor applied the scripts on disk to it (the toast "Scripts applied, bundle 4685e123…"; `time.control` answers that bundle in mode `edit`); the breakpoint on line 29 stays |
 | `debug-host-11-replay.png` | Play again: the new fork runs the edited scripts, tick 1 stops on line 29 with `knots = 0` in Local. The driver then removes the breakpoint and stops again while paused |
+
+The rename against the real host (section 8 item 2; 2026-11-11, macOS): `amoris serve` on a copy of
+`samples/sailing` serving the built editor, driven by `tools/rename-host.ts` in headless Chrome with
+real input only (clicks, keys, typed text; `?viewport=fallback`, so the run needs no WebGPU).
+Crate1's row clicked in the hierarchy, F2, `CrateA` typed, Enter; Mod+Z and Mod+Shift+Z with the
+row focused; `CrateB` typed over the inspector's name field, Enter; then 22 CJK characters, which
+fit the field's 64 characters and are 66 bytes. After each step the driver asks the host over
+`/api/call` what the entity is called and reads the hierarchy row and the name field: exit 0, every
+step. The host's history holds `Rename Crate1 → CrateA` (source `editor`) and `Rename CrateA →
+CrateB`; the long name is refused, shown as the toast `Rename CrateB → …: sim.name_too_long`, and
+the entity stays CrateB. `rename-host-1-renamed.png` and `rename-host-2-refused.png` show the editor
+after the first rename and at the refusal. The same driver passes against the mock (`bun run mock
+-- --port <n> --no-agent --dist`), which answers these forms as the host does.
 
 `debug.png`, `debug-paused.png`, `console.png` and `scripts.png` were taken again against the mock
 (`tools/capture.ts`) after the mock moved to the real shapes and frames (the callback and `run`, the

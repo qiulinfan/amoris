@@ -34,8 +34,7 @@ pub fn named(world: &World) -> Vec<(EntityId, String)> {
         .collect()
 }
 
-fn not_found(reference: &str, world: &World) -> Problem {
-    let names = named(world);
+fn not_found(reference: &str, names: &[(EntityId, String)]) -> Problem {
     let suggestions = suggest_names(reference, names.iter().map(|(_, n)| n.as_str()));
     Problem::new(
         "sim.entity_not_found",
@@ -45,6 +44,37 @@ fn not_found(reference: &str, world: &World) -> Problem {
             ("suggestions", json!(suggestions)),
         ]),
     )
+}
+
+/// The entity `s` names among `names` (every named entity with its name): the one of that name, or
+/// of `Name#id` the one with that id. `sim.entity_not_found` when none has it,
+/// `request.ambiguous_ref` when several do.
+pub fn resolve_name(
+    names: &[(EntityId, String)],
+    s: &str,
+    path: &Pointer,
+) -> Result<EntityId, Problem> {
+    let (name, id) = match s.rsplit_once('#') {
+        Some((name, id)) if id.parse::<u64>().is_ok() => {
+            (name, id.parse::<u64>().ok().and_then(EntityId::new))
+        }
+        _ => (s, None),
+    };
+    let found: Vec<&(EntityId, String)> = names
+        .iter()
+        .filter(|(i, n)| n == name && id.is_none_or(|id| id == *i))
+        .collect();
+    match found.as_slice() {
+        [] => Err(not_found(s, names)),
+        [(id, _)] => Ok(*id),
+        many => {
+            let c: Vec<(u64, &str, &str)> = many
+                .iter()
+                .map(|(i, n)| (i.get(), n.as_str(), "entity"))
+                .collect();
+            Err(ambiguous_ref(path, s, &c))
+        }
+    }
 }
 
 /// The live entity a reference names: `sim.entity_not_found` when none does, `request.ambiguous_ref`
@@ -61,41 +91,33 @@ pub fn resolve(world: &World, r: &EntityRef, path: &Pointer) -> Result<EntityId,
                 EntityId::new(*n).ok_or_else(|| entity::entity_id_invalid(&n.to_string(), 0))?;
             live(id)
         }
-        EntityRef::Name(s) => {
-            let (name, id) = match s.rsplit_once('#') {
-                Some((name, id)) if id.parse::<u64>().is_ok() => {
-                    (name, id.parse::<u64>().ok().and_then(EntityId::new))
-                }
-                _ => (s.as_str(), None),
-            };
-            let found: Vec<(EntityId, String)> = named(world)
-                .into_iter()
-                .filter(|(i, n)| n == name && id.is_none_or(|id| id == *i))
-                .collect();
-            match found.as_slice() {
-                [] => Err(not_found(s, world)),
-                [(id, _)] => Ok(*id),
-                many => {
-                    let c: Vec<(u64, &str, &str)> = many
-                        .iter()
-                        .map(|(i, n)| (i.get(), n.as_str(), "entity"))
-                        .collect();
-                    Err(ambiguous_ref(path, s, &c))
-                }
-            }
-        }
+        EntityRef::Name(s) => resolve_name(&named(world), s, path),
     }
+}
+
+/// `p` saying where in the request it arose (`detail.path`), when it does not say: a `world_edit`
+/// of many edits, or a scene of many entities, names the reference that found no entity.
+pub fn at_path(mut p: Problem, path: &Pointer) -> Problem {
+    p.detail
+        .entry("path")
+        .or_insert_with(|| json!(path.to_string()));
+    p
 }
 
 /// A JSON value standing for an entity: an id, a name, or `null` for none.
 pub fn resolve_json(world: &World, v: &Value, path: &Pointer) -> Result<Option<EntityId>, Problem> {
+    let found = |r: EntityRef| {
+        resolve(world, &r, path)
+            .map(Some)
+            .map_err(|p| at_path(p, path))
+    };
     match v {
         Value::Null => Ok(None),
         Value::Number(n) => match n.as_u64() {
-            Some(n) => resolve(world, &EntityRef::Id(n), path).map(Some),
+            Some(n) => found(EntityRef::Id(n)),
             None => Err(wrong_type(path, "an entity id, a name or null", "number")),
         },
-        Value::String(s) => resolve(world, &EntityRef::Name(s.clone()), path).map(Some),
+        Value::String(s) => found(EntityRef::Name(s.clone())),
         other => Err(wrong_type(
             path,
             "an entity id, a name or null",

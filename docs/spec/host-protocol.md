@@ -142,12 +142,16 @@ true}`); every other call that needs the game thread is refused at once with `de
 ```json
 {"spawn": {"name": "Crate", "prefab": {...}, "components": {"Transform": {...}, "Model": {...}}}}
 {"set": {"entity": 12, "component": "Transform", "value": {...}, "replace": false}}  // fields merge
+{"set": {"entity": 12, "component": "Name", "value": "Crate A"}}  // rename: Name's value is the name
 {"remove": {"entity": 12, "component": "Model"}}
 {"destroy": {"entity": 12}}
 ```
 
 Each is recorded as the runtime's `world_edit` with names resolved to ids; undo restores a destroyed
-entity under its id with every component (server.md 3.1).
+entity under its id with every component (server.md 3.1). A `set` of `Name` takes the name as a
+string of at most 64 bytes of UTF-8 and renames the entity (or names one without a name); a `remove`
+of `Name` leaves it unnamed (`name: null`, found by its id alone). Both are undoable, and the later
+ops of the call find entities by the names the earlier ones leave (server.md 3.1, Names).
 
 ## 5. The render feed (`/render`)
 
@@ -238,4 +242,6 @@ live and undoes at once), `set` of `Name` takes a string, the hierarchy is a `Pa
 the editor changes with this file. Adopted 2026-10-15: `group` and the history's sources (server.md
 3.1); entries carry their source instead of an `agent:` label prefix, which the editor still reads
 from a host without sources. The order stays this draft's (each stack most recent last): the editor
-reverses the redo stack itself.
+reverses the redo stack itself. Adopted 2026-11-11: `set` of `Name` takes a string (section 4;
+server.md 3.1, Names); until then the host refused the editor's rename (`request.wrong_type`: the
+value had to be an object).
