@@ -198,7 +198,11 @@ written as that specification names them.
   by hash, so a replay names exactly the bytes it ran with), the cooked mesh format (positions,
   indices, LOD levels, bounds) that physics and rendering both read, and the glTF 2.0 importer with
   mesh optimization and LOD generation (`gltf`, `meshopt`; charter 4.4). Its own specification comes
-  before slice 3; slice 0 only measures import (`budgets.md`, import).
+  before slice 3; slice 0 only measures import (`budgets.md`, import). Like the render feed, it also
+  holds what the game and the presenters share about a person's input (`input`, input.md): the
+  devices' input names, the standard gamepad's dead zones, the project's input map, and the seat
+  that turns a frame of devices into `player.act` actions, which the native window and the
+  viewport both run.
 - **Exports**: the cooked mesh type and its loader by `ContentHash`, the importer (feature
   `import`), and `read_data(path) -> Result<(Arc<[u8]>, ContentHash), Problem>`, the one function
   through which the game thread reads a data file by path and reports the `DataRead` to a running
