@@ -132,6 +132,7 @@ bone masks, layers of state machines and montages:
 | `CameraRig` | section 6 | persisted; scripts read and write it |
 | `Buttons` | `held`, `pressed` (a bit per game button) | persisted; scripts read it |
 | `MorphWeights` | `overrides`, `weights` (by target name; section 5a) | persisted; scripts reach it through `ctx.anim` |
+| `AnimIk` | `goals` (by IK node: `target`, `pole`, `weight`), engine-written `weight` and `ground_m` of the feet (section 6a) | persisted; scripts reach it through `ctx.anim` |
 
 The project's rigs (`AnimRigs`, the graphs bound to their clips) come from the game's setup and
 stay through a restore.
@@ -142,7 +143,8 @@ evaluation inserts the state, and the evaluation keeps it over the graph's defau
 (Forces, first) advances every graph by the tick, evaluates its pose, sockets and root motion and
 emits its notifies; `physics.walk` (Physics) moves each walker, by its avatar's root motion when
 that has any; `physics.avatar` (Physics, after the step) stands every avatar at its walker's feet
-and turns it; `anim.attach` and `camera.rig` (Finish) place attached things and rigged cameras. A
+and turns it; `anim.ik` (Physics, after `physics.avatar`) bends a graph's pose by its IK nodes
+(section 6a); `anim.attach` and `camera.rig` (Finish) place attached things and rigged cameras. A
 script therefore reads the notifies and sockets of the tick before it, as its other observations.
 
 ```ts
@@ -252,6 +254,98 @@ as before, and meshes without targets are drawn as before, pixel for pixel.
   metres and `shake_rad` radians of look, along fixed sines of the clock's time, so a replay
   shakes the same.
 
+## 6a. Inverse kinematics
+
+- Status: Proposed (2026-11-12, gap A2). References: Unreal's Two Bone IK (a joint target that
+  sets the bend's plane, reach limits), its Look At node (a clamped angle and a blend weight) and
+  its Leg IK / foot placement (traces down from each foot, a pelvis offset, the foot turned to the
+  floor's normal, interpolated offsets, off while airborne); Godot 4's `SkeletonModifier3D` family
+  (`TwoBoneIK3D` with a pole, `LookAtModifier3D` with angle limits, a modifier's influence); Andy
+  Nicholas's soft IK for the reach near full extension.
+
+A graph's pose is bent after its layers by an ordered list of IK nodes, data in the graph file. A
+graph without `ik` (every graph made before this) is evaluated as before, bit for bit: `anim.ik`
+leaves its pose, its sockets and its state alone, and no entity of it gets an `AnimIk`.
+
+```json
+"ik": [
+  {"name": "feet", "feet": {"pelvis": "pelvis", "legs": ["foot_l", "foot_r"]}},
+  {"name": "hand_r", "two_bone": {"tip": "hand_r"}, "weight": "reach"},
+  {"name": "look", "look_at": {"joints": ["chest", "neck", "head"], "axis": [0, 0, 1],
+                               "limit_deg": 70}}
+]
+```
+
+Every node has a unique `name` and a `weight`: a number (default 1) or the name of a graph
+parameter, either clamped to 0..1. Its effect is that weight times its goal's (below). A node whose
+effect is 0 changes nothing; between 0 and 1 each joint it turns is mixed (nlerp) from the pose
+under it toward its solution, and the feet's offsets are scaled by it.
+
+**Two bones** (`two_bone`): `tip` (a hand, a foot), its parent and its grandparent (the forearm and
+the upper arm). The tip is brought to the goal's `target` analytically: by the law of cosines the
+middle joint is placed in the plane through the root, the target and the bend direction, and the two
+upper joints turn, each by the shortest rotation from its child's old direction to its new one. The
+bend direction is the goal's `pole` (a point in the world), else the animated pose's own bend (the
+middle joint's offset from the root-to-tip line), else the node's `pole` (a direction in the model's
+space, default `[0, 0, 1]`, ahead). The reach is clamped: no closer than the bones' difference, and
+past `l1 + l2 - soft_m` (`soft_m`, default 0.02 m) it grows by `soft_m * u / (1 + u)` only, u the
+overshoot in units of `soft_m`, so a limb never snaps straight as its target passes its length; a
+target out of reach is reached toward along the line from the root. The tip keeps the rotation it
+had in the model's space (`keep_tip`, default true; false lets it turn with the lower bone).
+
+**Look at** (`look_at`): `joints` (the first nearest the root, each an ancestor of the next) and
+`axis`, the direction in the last joint's frame that should point at the goal's `target` (default
+`[0, 0, 1]`). The wanted direction is clamped to `limit_deg` (default 60) from where the animation
+points the axis; then the joints turn in order, each by its share of what remains (the first by
+1/n, the last by all that is left), so a spine, neck and head turn together and the head ends on the
+clamped direction.
+
+**Feet** (`feet`, at most one per graph): `pelvis` (default `"pelvis"`), `legs` (foot joints, each
+solved as a two-bone tip), `probe_up_m` (0.5), `probe_down_m` (0.6), `max_drop_m` (0.45),
+`max_raise_m` (0), `tilt_deg` (30), `soft_m` (0.02), `pole` (`[0, 0, 1]`), `rate_mps` (1.5),
+`blend_s` (0.2), `still_mps` (0.3), `moving_mps` (2.5) and `moving_weight` (0.5). Each tick, for
+each foot, a ray goes down from `probe_up_m` above the body's origin at the animated foot's x and z,
+`probe_up_m + probe_down_m` long, against the fixed colliders (terrain, the level; not sensors, not
+moving bodies). The hit's height over the body's origin is that foot's ground (no hit: 0, the foot
+keeps its animated height), kept in `AnimIk.ground_m` and moved toward a new value by `rate_mps` at
+most (an entity's first tick takes it at once). The pelvis goes down by the lowest ground, clamped
+to `-max_drop_m..max_raise_m`, so the lower foot reaches down and the higher one bends; each foot is
+then brought by two-bone IK to its animated place raised by its ground, and turned by the shortest
+rotation from up to its hit's normal, clamped to `tilt_deg`. Its effect fades with speed: the node's
+weight times the goal's, times 1 at `still_mps` or slower falling linearly to `moving_weight` at
+`moving_mps` (the `Avatar`'s measured `speed`), times 0 while the avatar's walker is not grounded;
+`AnimIk.weight` moves toward that by `dt / blend_s` a tick, so a landing or a stop fades in. A
+graph's feet node is on by its declaration; an entity that is no `Avatar` places its feet as if
+standing still.
+
+**Goals and scripts.** `AnimIk` (persisted, version 1) holds `goals`, by node name, each an optional
+`target` and `pole` (points in the world) and a `weight` (default 1), and the feet's engine-written
+`weight` and `ground_m` (one per leg). `anim.ik` inserts it on an entity whose graph has a feet
+node; a script's goal inserts it on any. Two-bone and look-at nodes act only while their goal has a
+target; a feet node needs no goal (a goal's weight turns it down, 0 off).
+
+```ts
+ctx.anim.setIk(e, "hand_r", { target: [0.4, 1.2, 2], pole: [0.8, 1, 1.5], weight: 1 });
+ctx.anim.setIk(e, "feet", { weight: 0 });  // the feet node off (a jump, a ladder)
+ctx.anim.setIk(e, "hand_r", null);         // released
+ctx.anim.ik(e, "hand_r");                  // {target, pole, weight} as set (this call's own over it), or null
+```
+
+**When.** `anim.ik` runs in the Physics phase after `physics.avatar`, so the body stands where this
+tick put it and the fixed colliders are as this step left them; world points enter the model's space
+through the body's `Transform` and its `Model`'s scale. It writes `AnimPose`, and the sockets of a
+graph with IK nodes again from the bent pose and the body's place now (so `ctx.anim.socket` and
+`Attach` see the hand where IK put it; graphs without IK keep theirs from `anim.graph`). All of it
+is `f32` additions, subtractions, multiplications, divisions and square roots in a fixed order
+(section 2), the angle limits' sines and cosines taken once from `amoris_sim::math` when the graph
+is read, so a pose has the same bits on every target. The renderer draws the bent pose like any
+other; the render feed's format does not change.
+
+**Follow-ups** (not built): full-body IK; FABRIK and CCD chains of any length; hands on a held
+prop (a goal that follows another entity's socket, a two-handed grip); toe probing and foot roll on
+step edges; weight smoothing for two-bone and look-at nodes in the engine (scripts fade their goals'
+weights); a walker that climbs a step lifts the body at once, which the feet do not hide.
+
 ## 7. Physics queries for scripts
 
 `ctx.physics` reads the solver as the last step left it (query.rs): `ray(from, dir, maxM, opts)`
@@ -308,11 +402,22 @@ the game's rules (steering), not in the grid.
   and skinned (the offset turned by the joint: morph, then skin), on every native backend and under
   `AMORIS_GPU_MINIMAL`; meshes without targets draw the same frames as before
   (`tools/render/build_compare.py`, `draw_paths`).
+- Inverse kinematics (section 6a; `tests/fixtures/scenes/ik`, generated by its `gen_ik.py`):
+  amoris-assets `anim::ik`: a two-bone chain reaches a reachable target and keeps its bone
+  lengths, bends toward its pole, reaches toward an unreachable target along the line and never
+  straightens fully (the soft reach), and mixes by its weight; a look-at turns by its clamped angle
+  at most and ends on the target within it; the graph file's `ik` parses and refuses what is
+  wrong. amoris-runtime's `ik` runs the fixture (figures on a slope, astride a stair and walking up
+  steps, one turning its head and reaching with a hand): the feet stand on the ground and the
+  pelvis drops, a feet node turned off leaves a foot hanging, the hand reaches its target, the head
+  turns no further than its limit, a restore runs on to the same poses, and the poses' digest is the
+  recorded one; the fixture's `check.toml` runs determinism, forks and reloads. The existing
+  samples' and fixtures' checks (thornkeep's graphs, the morph fixture's digest) are unchanged.
 
 ## 10. Limits
 
-- No inverse kinematics yet (feet on slopes, hands on a two-handed grip); no additive layers; no
-  physics-driven ragdolls; no animation compression. Nav cells are a grid, not polygons.
+- Inverse kinematics is two-bone, look-at and feet only (section 6a's follow-ups); no additive
+  layers; no physics-driven ragdolls; no animation compression. Nav cells are a grid, not polygons.
 - Morph targets: at most 16 active per part and frame; no sparse storage on the GPU (every target
   keeps an offset for every vertex); overrides need a graph; the ray-traced shadows and reflections
   see the morphed vertices as they see skinned ones.
