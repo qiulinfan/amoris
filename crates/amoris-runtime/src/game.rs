@@ -1132,9 +1132,8 @@ impl Game {
                     p.label.as_deref().unwrap_or(""),
                     saves::meta(tick, &hash),
                 )?;
-                let path = saves::write(&root, &p.name, &bytes)?;
-                let rel = path.strip_prefix(&root).unwrap_or(&path);
-                Ok(json!({"name": p.name, "path": rel.display().to_string(),
+                saves::write(&root, &p.name, &bytes)?;
+                Ok(json!({"name": p.name, "path": saves::shown(&p.name),
                           "bytes": bytes.len(), "tick": tick, "world_hash": hash}))
             }
             other => Err(catalog::unknown(other, &self.extras.commands)),
