@@ -760,8 +760,16 @@ impl Seat {
             self.sent = Some(now);
         }
         if input.zoom_steps != 0 {
-            let zoom =
-                (self.zoom * ZOOM_STEP.powi(input.zoom_steps)).clamp(ZOOM_RANGE[0], ZOOM_RANGE[1]);
+            // A step a press, multiplied in order (the game crates' lint refuses `powi`).
+            let mut zoom = self.zoom;
+            for _ in 0..input.zoom_steps.unsigned_abs() {
+                zoom = if input.zoom_steps > 0 {
+                    zoom * ZOOM_STEP
+                } else {
+                    zoom / ZOOM_STEP
+                };
+            }
+            let zoom = zoom.clamp(ZOOM_RANGE[0], ZOOM_RANGE[1]);
             if zoom != self.zoom {
                 self.zoom = zoom;
                 actions.push(json!({"do": "set", "controls": {"zoom": zoom}}));
