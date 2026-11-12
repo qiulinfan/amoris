@@ -8,6 +8,7 @@ import "./styles/ui.css";
 import "./styles/shell.css";
 import "./styles/dock.css";
 import { App } from "./App";
+import { Boundary } from "./ui/Boundary";
 import { registerBuiltinCommands } from "./commands/builtin";
 import { installKeyboard } from "./commands/registry";
 import { startSync } from "./host/sync";
@@ -26,6 +27,8 @@ if (import.meta.env.DEV || import.meta.env.VITE_AMORIS_EXPOSE === "1") {
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <App />
+    <Boundary name="The editor" root>
+      <App />
+    </Boundary>
   </StrictMode>,
 );

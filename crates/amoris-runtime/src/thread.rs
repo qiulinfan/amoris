@@ -541,6 +541,8 @@ impl Loop {
         let pace = self.pace(now);
         if wrote && pace != Pace::RunTick {
             self.publish();
+        } else if pace != Pace::RunTick {
+            self.publish_time_change();
         }
         match pace {
             Pace::RunTick => self.tick(),
@@ -688,7 +690,8 @@ impl Loop {
                     // Nothing ticks until a restore: real time stops asking for ticks (a resume
                     // asks once more and is refused), and the status says halted.
                     self.model.pause();
-                    self.publish_halted();
+                    self.log_fault(&p);
+                    self.publish_time();
                 } else {
                     self.publish();
                 }
@@ -1033,13 +1036,13 @@ impl Loop {
 
     fn time_control(&mut self, params: &Value) -> Result<Value, Problem> {
         let p: TimeControlParams = crate::decode(params, "time.control")?;
-        if let Some(speed) = p.speed {
-            let pacing = Pacing::RealTime { speed };
+        // `speed`, then `pacing`, which wins when both are given. Both are checked before either
+        // is applied: a refused command changes nothing.
+        let speed = p.speed.map(|speed| Pacing::RealTime { speed });
+        for pacing in speed.iter().chain(&p.pacing) {
             pacing.check()?;
-            self.model.set_pacing(pacing);
         }
-        if let Some(pacing) = p.pacing {
-            pacing.check()?;
+        for pacing in speed.into_iter().chain(p.pacing) {
             self.model.set_pacing(pacing);
         }
         match p.pause {
@@ -1226,9 +1229,50 @@ impl Loop {
         }
     }
 
-    /// A poisoned world has no snapshot of its own (it is not at a boundary): publishes the last
-    /// published world again with the halted status, when a reader is attached.
-    fn publish_halted(&mut self) {
+    /// The error of a tick that left the world poisoned, on the log stream: in real time no
+    /// `time.step` waits for it, so without this line a presenter shows a halted world and
+    /// nothing says why (threads.md 8). A resume of a poisoned world logs its refusal the same way.
+    fn log_fault(&mut self, p: &Problem) {
+        if !self.attached.load(Ordering::Acquire) {
+            return;
+        }
+        let system = p.detail.get("system").and_then(Value::as_str);
+        let mut r = LogRecord::new(
+            "error",
+            system.unwrap_or("host"),
+            format!("{}: {}", p.code, p.message),
+        );
+        r.tick = Some(
+            self.game
+                .sim()
+                .poisoned()
+                .map_or(self.game.tick().0, |f| f.tick.0),
+        );
+        self.publisher.log([r]);
+    }
+
+    /// A command that changed only how time runs (a pause, a resume, the pacing) wrote nothing to
+    /// the world, so no publication follows it when no tick does (threads.md 4.3): publishes the
+    /// last published world again when its time status no longer says the pacing, the pause or
+    /// the halt of now. Without it a paused game's readers, the server's status push among them,
+    /// go on saying the pacing and the pause of before the command.
+    fn publish_time_change(&mut self) {
+        if !self.attached.load(Ordering::Acquire) {
+            return;
+        }
+        let now = time_status(&self.game, &self.model);
+        let last = self.publisher.latest();
+        if (now.pacing, now.paused, now.halted)
+            != (last.time.pacing, last.time.paused, last.time.halted)
+        {
+            self.publish_time();
+        }
+    }
+
+    /// Publishes the last published world again with the time status of now, when a reader is
+    /// attached: after a command that changed only that status, and for a poisoned world, which
+    /// has no snapshot of its own (it is not at a boundary) and whose status says halted.
+    fn publish_time(&mut self) {
         if !self.attached.load(Ordering::Acquire) {
             return;
         }

@@ -27,7 +27,7 @@ use crate::Host;
 use crate::local::{inside, walk};
 
 /// What a held host answers itself (besides `catalog.list`, `events.*`, `log.since`,
-/// `profile.frame`, `assets.list`, `docs.search`, `scripts.guide` and `debug.*`, which never need
+/// `profile.frame`, `assets.list`, `assets.upload`, `docs.search`, `scripts.guide` and `debug.*`, which never need
 /// the game).
 pub const PAUSED_READS: &[&str] = &[
     "status",

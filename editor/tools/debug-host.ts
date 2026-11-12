@@ -10,7 +10,7 @@
 //   paused (the edit world takes the edited scripts) and Play again into the edited code.
 //
 //   amoris serve <copy of samples/sailing> --port 7911 --editor editor/dist
-//   bun tools/debug-host.ts --url http://127.0.0.1:7911/ [--out ../out/bench-runs/editor] [--line 27]
+//   bun tools/debug-host.ts --url http://127.0.0.1:7911/ [--out ../out/bench-runs/editor] [--line 27] [--chrome-port 9340]
 //
 // Screenshots go to <out>/debug-host-*.png; what each step saw is printed (and kept beside them as
 // debug-host.txt by the caller).
@@ -33,7 +33,7 @@ const MOD = process.platform === "darwin" ? 4 : 2;
 const H = 1000;
 mkdirSync(OUT, { recursive: true });
 
-const { proc, pageWs } = await launchChrome(Number(opt("--chrome-port", "9351")));
+const { pageWs, close: closeChrome } = await launchChrome(Number(opt("--chrome-port", "0")));
 const cdp = await Cdp.connect(pageWs);
 const sleep = (ms: number) => Bun.sleep(ms);
 const t0 = Date.now();
@@ -481,5 +481,5 @@ try {
   process.exitCode = 1;
 } finally {
   cdp.close();
-  proc.kill();
+  await closeChrome();
 }

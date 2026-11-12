@@ -67,7 +67,7 @@ pub use amoris_physics::water::resident as water_resident;
 pub use boundary::take_held;
 pub use catalog::{CATALOG, Command, CommandDef, CommandFn, NoParams, catalog_json};
 pub use control::{RestoreBundle, Sample, SnapshotsRestoreParams, StepParams};
-pub use edit::{Edit, EditOp, WorldEditOps, WorldEditParams, WorldGetParams, label_of};
+pub use edit::{Edit, EditOp, SetValue, WorldEditOps, WorldEditParams, WorldGetParams, label_of};
 pub use engine::{engine_component, merge};
 pub use game::{Extras, Game, GameBuilder, PlayerRun, PlayerStart, SystemFn, registry, run_config};
 pub use present::Extractor;

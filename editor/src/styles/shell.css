@@ -160,6 +160,11 @@
   color: var(--play);
 }
 
+.mode-badge.is-halted {
+  background: color-mix(in srgb, var(--error) 18%, transparent);
+  color: var(--error);
+}
+
 .mode-dot {
   width: 6px;
   height: 6px;

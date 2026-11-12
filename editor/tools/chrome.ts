@@ -6,7 +6,10 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 
 export function chromePath(): string {
-  if (process.env.CHROME) return process.env.CHROME;
+  if (process.env.CHROME) {
+    if (!existsSync(process.env.CHROME)) throw new Error(`no Chrome found at CHROME=${process.env.CHROME}`);
+    return process.env.CHROME;
+  }
   const candidates =
     process.platform === "win32"
       ? [

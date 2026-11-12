@@ -4,7 +4,7 @@
 // `window.amoris` hooks to set up the rest.
 //
 //   bun run dev:mock            # in another terminal (mock host + Vite)
-//   bun tools/capture.ts --url http://127.0.0.1:5173/ --out ../out/bench-runs/editor
+//   bun tools/capture.ts --url http://127.0.0.1:5173/ --out ../out/bench-runs/editor [--chrome-port 9340]
 
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -21,7 +21,7 @@ const W = 1600;
 const H = 1000;
 mkdirSync(OUT, { recursive: true });
 
-const { proc, pageWs } = await launchChrome(9339);
+const { pageWs, close: closeChrome } = await launchChrome(Number(opt("--chrome-port", "0")));
 const cdp = await Cdp.connect(pageWs);
 const sleep = (ms: number) => Bun.sleep(ms);
 
@@ -209,8 +209,10 @@ try {
   await shot("assets", await panelRect("assets"));
 
   // ---- Play (at 4x, so the crew takes every crate) ---------------------------------------------
-  await js(`await amoris.api.time.control({ speed: 4 });`);
+  // The speed is set once Play runs: each world has its own, and Play's fork starts at the speed
+  // the transport shows, not at one set a moment before the key.
   await key("p", "KeyP", META);
+  await js(`for (let i = 0; i < 100 && amoris.session.getState().status?.mode !== 'play'; i++) await new Promise((r) => setTimeout(r, 50)); await amoris.api.time.control({ speed: 4 });`);
   await sleep(9000);
   await js(`await amoris.api.time.control({ speed: 1 }); amoris.selection.getState().set([3]);`);
   await js(`amoris.openPanel('events'); const ev = amoris.events.getState().events; const e = ev.findLast((x) => x.name === 'crates.all') ?? ev.findLast((x) => x.name === 'crate.taken'); if (e) { amoris.events.getState().select(e.seq, await amoris.api.events.why(e.seq)); }`);
@@ -267,5 +269,5 @@ try {
   console.log("done");
 } finally {
   cdp.close();
-  proc.kill();
+  await closeChrome();
 }

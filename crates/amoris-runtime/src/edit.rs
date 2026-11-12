@@ -17,6 +17,11 @@
 //! closes a loop is judged once, on the hierarchy the whole call leaves, so a call may pass
 //! through a loop (swapping a parent with its child takes two sets) but never leave one
 //! (`sim.parent_cycle`).
+//! `Name` is the entity's name and the one component a `set` writes from a string
+//! ([`SetValue::Name`]; docs/spec/server.md 3.1, Names): a `set` of it renames the entity or names
+//! one that had no name, and a `remove` leaves it unnamed. Names are looked up as the edits before
+//! leave them too, so after a rename a later edit of the call finds the entity by its new name and
+//! no longer by the old one, as its `entity` or through an entity field.
 //!
 //! Every applied call also yields its inverse (docs/spec/server.md, history): the edits that bring
 //! the world back, computed from the call's net effect on each entity it touched, in the order
@@ -26,23 +31,29 @@
 //! destroyed, the topmost of them alone, since a destroy takes what is under it.
 //! `world.edit` is the protocol's form of the same call (`{ops: [{set: {...}}], label}`).
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use amoris_contract::codes::wrong_type;
 use amoris_contract::{Pointer, Problem, detail};
 use amoris_script::ComponentAccess;
 use amoris_sim::entity::hierarchy;
 use amoris_sim::registry::{ComponentSchema, FieldType, ProjectValues};
-use amoris_sim::{Boundary, EntityId, Hierarchy, Parent, Persisted};
+use amoris_sim::{Boundary, EntityId, Hierarchy, Name, Parent, Persisted};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::engine::{Inserter, engine_component, merge};
 use crate::scene::{
-    Prefab, PreparedSpawn, bad_value, prepare_among, project_component, unknown_component,
+    Prefab, PreparedSpawn, bad_value, not_editable, prepare_among, project_component,
+    unknown_component,
 };
-use crate::values::{self, EntityRef, resolve};
+use crate::values::{self, EntityRef, at_path, resolve};
+
+/// The component that is an entity's name.
+const NAME: &str = <Name as Persisted>::NAME;
 
 /// `world_edit`'s parameters.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -66,11 +77,12 @@ pub enum Edit {
         components: Map<String, Value>,
     },
     /// Writes the listed fields, adding the component when missing; other fields keep their
-    /// values. A key may be a path into the component (`position.1`).
+    /// values. A key may be a path into the component (`position.1`). For `Name` the value is the
+    /// name, a string.
     Set {
         entity: EntityRef,
         component: String,
-        value: Map<String, Value>,
+        value: SetValue,
         /// Write the value whole (fields not given take their defaults) instead of merging.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         replace: bool,
@@ -105,6 +117,22 @@ pub struct Revived {
     pub name: Option<String>,
     #[serde(default)]
     pub components: Map<String, Value>,
+}
+
+/// What a `set` writes: an object of the component's fields or, for `Name` alone, the name.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum SetValue {
+    /// The fields to write; a key may be a path into the component (`position.1`).
+    Fields(Map<String, Value>),
+    /// The entity's name, when the component is `Name`: at most 64 bytes of UTF-8.
+    Name(String),
+}
+
+impl From<Map<String, Value>> for SetValue {
+    fn from(fields: Map<String, Value>) -> SetValue {
+        SetValue::Fields(fields)
+    }
 }
 
 /// `world.edit`'s parameters (docs/spec/host-protocol.md 4): one transaction.
@@ -152,7 +180,8 @@ pub struct SetOp {
     /// An id, a name, or `Name#id`.
     pub entity: EntityRef,
     pub component: String,
-    pub value: Map<String, Value>,
+    /// The fields to write, or for `Name` the name as a string (a rename).
+    pub value: SetValue,
     /// Write the value whole instead of merging fields.
     #[serde(default)]
     pub replace: bool,
@@ -312,6 +341,7 @@ enum Checked {
 enum Setter {
     Engine(Inserter),
     Project(Arc<dyn ComponentAccess>, ProjectValues),
+    Name(Name),
 }
 
 enum Remover {
@@ -324,6 +354,8 @@ enum Pending {
     /// An engine component's whole JSON value.
     Engine(Value),
     Project(ProjectValues),
+    /// The entity's name.
+    Name(String),
     Removed,
 }
 
@@ -357,12 +389,6 @@ fn destroyed_earlier(id: EntityId, by: usize, at: &Pointer) -> Problem {
             ("destroyed_by", json!(by)),
         ]),
     )
-}
-
-/// `problem` with the place of the request it is about.
-fn at_path(mut problem: Problem, at: &Pointer) -> Problem {
-    problem.detail.insert("path".into(), json!(at.to_string()));
-    problem
 }
 
 impl Plan {
@@ -437,6 +463,94 @@ impl Plan {
         Ok(())
     }
 
+    /// The names the edits checked so far set (`Some`) or remove (`None`), by entity.
+    fn renamed(&self) -> impl Iterator<Item = (EntityId, Option<&str>)> {
+        self.pending
+            .iter()
+            .filter(|((_, component), _)| component == NAME)
+            .filter_map(|((id, _), pending)| match pending {
+                Pending::Name(name) => Some((*id, Some(name.as_str()))),
+                Pending::Removed => Some((*id, None)),
+                Pending::Engine(_) | Pending::Project(_) => None,
+            })
+    }
+
+    /// The live entity `r` names in the world as the edits checked so far leave it (`at` is where
+    /// the call names it): a name is looked up among the names those edits set and removed, so a
+    /// renamed entity is found by its new name alone, and an entity one of them destroys is
+    /// refused. An entity they destroy keeps its name until the call is applied: naming it says
+    /// which edit destroys it, and a name it shares stays ambiguous.
+    fn resolve(
+        &self,
+        world: &bevy_ecs::prelude::World,
+        r: &EntityRef,
+        at: &Pointer,
+    ) -> Result<EntityId, Problem> {
+        let found = match r {
+            EntityRef::Name(s) if self.renamed().next().is_some() => {
+                let mut names: BTreeMap<EntityId, String> =
+                    values::named(world).into_iter().collect();
+                for (id, name) in self.renamed() {
+                    match name {
+                        Some(name) => names.insert(id, name.to_owned()),
+                        None => names.remove(&id),
+                    };
+                }
+                let names: Vec<(EntityId, String)> = names.into_iter().collect();
+                values::resolve_name(&names, s, at)
+            }
+            _ => resolve(world, r, at),
+        };
+        self.live(found.map_err(|p| at_path(p, at))?, at)
+    }
+
+    /// `patch` (a project component's fields, at `at`) with every entity field given by name
+    /// resolved to its id as [`Plan::resolve`] does; `patch` itself while no edit checked so far
+    /// changed a name, since the world's names then hold.
+    fn entity_fields<'p>(
+        &self,
+        world: &bevy_ecs::prelude::World,
+        schema: &ComponentSchema,
+        patch: &'p Map<String, Value>,
+        at: &Pointer,
+    ) -> Result<Cow<'p, Map<String, Value>>, Problem> {
+        if self.renamed().next().is_none() {
+            return Ok(Cow::Borrowed(patch));
+        }
+        let mut resolved = patch.clone();
+        for f in schema.fields.iter().filter(|f| f.ty == FieldType::Entity) {
+            if let Some(Value::String(name)) = patch.get(&*f.name) {
+                let r = EntityRef::Name(name.clone());
+                let id = self.resolve(world, &r, &at.key(&f.name))?;
+                resolved.insert(f.name.to_string(), json!(id.get()));
+            }
+        }
+        Ok(Cow::Owned(resolved))
+    }
+
+    /// A spawn's `components` (at `at`) with the entity fields of its project components resolved
+    /// as [`Plan::entity_fields`] does.
+    fn spawn_fields<'p>(
+        &self,
+        world: &bevy_ecs::prelude::World,
+        components: &'p Map<String, Value>,
+        at: &Pointer,
+    ) -> Result<Cow<'p, Map<String, Value>>, Problem> {
+        if self.renamed().next().is_none() {
+            return Ok(Cow::Borrowed(components));
+        }
+        let mut resolved = components.clone();
+        for (cname, value) in components {
+            if let (Some((schema, _)), Some(patch)) =
+                (project_component(world, cname), value.as_object())
+            {
+                let patch = self.entity_fields(world, &schema, patch, &at.key(cname))?;
+                resolved.insert(cname.clone(), Value::Object(patch.into_owned()));
+            }
+        }
+        Ok(Cow::Owned(resolved))
+    }
+
     /// Refuses a project component's checked patch whose entity fields name an entity an earlier
     /// edit destroys (`canonical` holds ids).
     fn references(
@@ -495,8 +609,10 @@ fn check_set(
         plan.pending.insert(key, Pending::Engine(whole));
         return Ok((Setter::Engine(inserter), value.clone()));
     }
-    let (schema, access) =
-        project_component(world, component).ok_or_else(|| unknown_component(world, component))?;
+    let (schema, access) = project_component(world, component)
+        .ok_or_else(|| not_editable(world, component, &at.key("component")))?;
+    let named = plan.entity_fields(world, &schema, value, &at.key("value"))?;
+    let value = &*named;
     let base = match plan.pending.get(&key) {
         _ if replace => amoris_script::access::defaults(&schema),
         Some(Pending::Project(v)) => v.clone(),
@@ -514,12 +630,45 @@ fn check_set(
     Ok((Setter::Project(access, v), canonical))
 }
 
-fn check_remove(b: &Boundary<'_>, component: &str) -> Result<Remover, Problem> {
+/// A `set` of `Name`: the name as a string of at most 64 bytes of UTF-8 (`Name::new`), written
+/// whole, on an entity with a name or without. Later edits of the call find the entity by it.
+fn check_name(
+    plan: &mut Plan,
+    id: EntityId,
+    value: &SetValue,
+    at_value: &Pointer,
+) -> Result<(Setter, SetValue), Problem> {
+    let SetValue::Name(text) = value else {
+        return Err(wrong_type(at_value, "string", "object"));
+    };
+    let name = Name::new(text.as_str()).map_err(|p| at_path(p, at_value))?;
+    plan.pending
+        .insert((id, NAME.to_owned()), Pending::Name(text.clone()));
+    Ok((Setter::Name(name), value.clone()))
+}
+
+/// A `set` (at `at`) whose `value` is a string for a component other than `Name`: its fields go
+/// in an object, or it is no component a `set` can write.
+fn not_fields(world: &bevy_ecs::prelude::World, component: &str, at: &Pointer) -> Problem {
+    if engine_component(component).is_some() || project_component(world, component).is_some() {
+        wrong_type(&at.key("value"), "object", "string")
+    } else {
+        not_editable(world, component, &at.key("component"))
+    }
+}
+
+fn check_remove(b: &Boundary<'_>, component: &str, at: &Pointer) -> Result<Remover, Problem> {
+    // The entity goes on unnamed, as one spawned without a name.
+    if component == NAME {
+        return Ok(Remover::Engine(|e| {
+            e.remove::<Name>();
+        }));
+    }
     if let Some(c) = engine_component(component) {
         return Ok(Remover::Engine(c.remove));
     }
     let (_, access) = project_component(b.world(), component)
-        .ok_or_else(|| unknown_component(b.world(), component))?;
+        .ok_or_else(|| not_editable(b.world(), component, &at.key("component")))?;
     Ok(Remover::Project(access))
 }
 
@@ -539,16 +688,15 @@ pub fn world_edit(b: &mut Boundary<'_>, params: &WorldEditParams) -> Result<Appl
     for (i, edit) in params.edits.iter().enumerate() {
         let at = Pointer::root().key("edits").index(i);
         let at_entity = at.key("entity");
-        let r = |plan: &Plan, r: &EntityRef| {
-            let id = resolve(b.world(), r, &at_entity)?;
-            plan.live(id, &at_entity)
-        };
+        let r = |plan: &Plan, r: &EntityRef| plan.resolve(b.world(), r, &at_entity);
         match edit {
             Edit::Spawn {
                 name,
                 prefab,
                 components,
             } => {
+                let named = plan.spawn_fields(b.world(), components, &at.key("components"))?;
+                let components = &*named;
                 let revived = |id: EntityId| plan.revived.contains(&id);
                 checked.push(Checked::Spawn(prepare_among(
                     b.world(),
@@ -587,9 +735,21 @@ pub fn world_edit(b: &mut Boundary<'_>, params: &WorldEditParams) -> Result<Appl
                 replace,
             } => {
                 let id = r(&plan, entity)?;
-                let (setter, value) = check_set(b, &mut plan, id, component, value, *replace, &at)?;
+                let at_value = at.key("value");
+                let (setter, value) = if component == NAME {
+                    check_name(&mut plan, id, value, &at_value)?
+                } else {
+                    match value {
+                        SetValue::Fields(fields) => {
+                            let (setter, fields) =
+                                check_set(b, &mut plan, id, component, fields, *replace, &at)?;
+                            (setter, SetValue::Fields(fields))
+                        }
+                        SetValue::Name(_) => return Err(not_fields(b.world(), component, &at)),
+                    }
+                };
                 if component == Parent::NAME {
-                    plan.reparent(b, id, &at.key("value").key("parent"))?;
+                    plan.reparent(b, id, &at_value.key("parent"))?;
                 }
                 checked.push(Checked::Set(id, component.clone(), setter));
                 let mut c = json!({"op": "set", "entity": id.get(), "component": component,
@@ -604,7 +764,7 @@ pub fn world_edit(b: &mut Boundary<'_>, params: &WorldEditParams) -> Result<Appl
                 checked.push(Checked::Remove(
                     id,
                     component.clone(),
-                    check_remove(b, component)?,
+                    check_remove(b, component, &at)?,
                 ));
                 plan.pending
                     .insert((id, component.clone()), Pending::Removed);
@@ -746,6 +906,17 @@ pub fn components_json(
     out
 }
 
+/// A component a `set` or `remove` touches, as the inverse restores it: its JSON value, and for
+/// `Name` the name as a string (a destroyed entity's name travels beside its components instead,
+/// so [`components_json`] leaves it out).
+fn touched_json(
+    world: &bevy_ecs::prelude::World,
+    e: bevy_ecs::prelude::Entity,
+    name: &str,
+) -> Option<Value> {
+    component_of(world, &world.entity(e), name).ok().flatten()
+}
+
 /// What a call's inverse needs from the world before it: the entities it destroys whole (each
 /// destroy's own entity, then those under it), the components it sets or removes on live entities,
 /// and the ids it revives.
@@ -770,7 +941,7 @@ impl Before {
                     if let Some(e) = live(*id) {
                         out.touched
                             .entry((*id, comp.clone()))
-                            .or_insert_with(|| component_json(world, e, comp));
+                            .or_insert_with(|| touched_json(world, e, comp));
                     }
                 }
                 Checked::Destroy(id, under) => {
@@ -844,13 +1015,19 @@ impl Before {
                     inv.push(Edit::Set {
                         entity: EntityRef::Id(id.get()),
                         component,
-                        value,
+                        value: SetValue::Fields(value),
                         replace: true,
                     });
                 }
+                Some(Value::String(name)) if component == NAME => inv.push(Edit::Set {
+                    entity: EntityRef::Id(id.get()),
+                    component,
+                    value: SetValue::Name(name),
+                    replace: false,
+                }),
                 Some(_) => {}
                 None => {
-                    if component_json(world, e, &component).is_some() {
+                    if touched_json(world, e, &component).is_some() {
                         if component == Parent::NAME {
                             h.clear(id);
                         }
@@ -925,6 +1102,9 @@ fn apply(b: &mut Boundary<'_>, c: Checked) -> Result<Value, Problem> {
                     if !access.write(&mut ent, &v) {
                         access.insert(&mut ent, v);
                     }
+                }
+                Setter::Name(name) => {
+                    ent.insert(name);
                 }
             }
             json!({"op": "set", "entity": id.get()})
@@ -1051,4 +1231,67 @@ pub fn world_get(
         answer["fields"] = Value::Object(got);
     }
     Ok(answer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A recording made before `Name` could be set holds `set`s with object values only: its
+    /// canonical `world_edit` decodes as it did and writes back the same, and a rename's `value`
+    /// is the name.
+    #[test]
+    fn the_canonical_form_recorded_before_names_still_decodes() {
+        let recorded = json!({"edits": [
+            {"op": "set", "entity": 3, "component": "Boat", "value": {"rudder": 0.5},
+             "replace": true},
+            {"op": "set", "entity": 4, "component": "Cargo", "value": {"value": 9}},
+            {"op": "remove", "entity": 3, "component": "Log"},
+            {"op": "destroy", "entity": 7},
+            {"op": "spawn", "name": "Mate", "prefab": null, "components": {"Crew": {"take": 4}}},
+            {"op": "revive", "entity": 7, "name": "Crate4",
+             "components": {"Cargo": {"value": 3}}}
+        ]});
+        let p: WorldEditParams = crate::decode(&recorded, "world_edit").unwrap();
+        match &p.edits[0] {
+            Edit::Set {
+                value: SetValue::Fields(fields),
+                replace: true,
+                ..
+            } => assert_eq!(fields.get("rudder"), Some(&json!(0.5))),
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(
+            &p.edits[1],
+            Edit::Set {
+                value: SetValue::Fields(_),
+                replace: false,
+                ..
+            }
+        ));
+        assert_eq!(serde_json::to_value(&p).unwrap(), recorded);
+
+        let rename = json!({"edits": [
+            {"op": "set", "entity": 4, "component": "Name", "value": "CrateA"}
+        ]});
+        let p: WorldEditParams = crate::decode(&rename, "world_edit").unwrap();
+        match &p.edits[0] {
+            Edit::Set {
+                value: SetValue::Name(name),
+                ..
+            } => assert_eq!(name, "CrateA"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(serde_json::to_value(&p).unwrap(), rename);
+
+        // Neither form: refused by the shape, before any edit is looked at.
+        for bad in [json!(7), json!([1]), json!(null), json!(true)] {
+            let mut call = rename.clone();
+            call["edits"][0]["value"] = bad;
+            let e = crate::decode::<WorldEditParams>(&call, "world_edit").unwrap_err();
+            assert_eq!(e.code, "request.wrong_type", "{e:#?}");
+            assert_eq!(e.detail["expected"], json!("object or string"), "{e:#?}");
+            assert_eq!(e.detail["path"], json!("/edits/0/value"), "{e:#?}");
+        }
+    }
 }

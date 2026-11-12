@@ -770,6 +770,10 @@
   background: white;
 }
 
+.toggle.is-mixed .toggle-knob {
+  transform: translateX(6.5px);
+}
+
 .color-field {
   display: grid;
   grid-template-columns: 28px 1fr 1fr;
@@ -785,6 +789,10 @@
   border: 1px solid rgba(255, 255, 255, 0.15);
   cursor: pointer;
   overflow: hidden;
+}
+
+.swatch.is-mixed {
+  background: repeating-linear-gradient(135deg, var(--swatch) 0 5px, var(--bg-input) 5px 10px);
 }
 
 .swatch input {
@@ -945,4 +953,37 @@
   height: 5px;
   margin: -2px 0;
   cursor: row-resize;
+}
+
+/* A part of the window that failed to draw (ui/Boundary.tsx): what failed, in its own place. */
+
+.boundary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--statusbar-h);
+  padding: 2px 10px;
+  background: rgba(240, 96, 93, 0.1);
+  color: var(--text-1);
+  overflow: hidden;
+}
+
+.boundary-title {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.boundary-message {
+  font-family: var(--mono);
+  user-select: text;
+}
+
+.dock-panel > .boundary,
+.boundary.is-root {
+  flex-direction: column;
+  justify-content: center;
+  height: 100%;
+  padding: 16px;
+  text-align: center;
 }

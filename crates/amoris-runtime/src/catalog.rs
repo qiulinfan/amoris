@@ -141,9 +141,10 @@ pub const CATALOG: &[CommandDef] = &[
     def(
         "world.edit",
         Kind::Write,
-        "Spawn, set (fields merge), remove and destroy, all or nothing at one boundary; undoable \
-         (edits of one `group` in a row are one undo entry). Set or remove Parent to place an \
-         entity under another; destroy takes everything under the entity.",
+        "Spawn, set (fields merge; a string `value` for `Name` renames), remove and destroy, all or \
+         nothing at one boundary; undoable (edits of one `group` in a row are one undo entry). Set \
+         or remove Parent to place an entity under another; destroy takes everything under the \
+         entity.",
         schema::<WorldEditOps>,
     ),
     def(

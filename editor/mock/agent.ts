@@ -84,7 +84,7 @@ export class MockAgent {
       });
       add(4300, () => this.emit(session, "message", "Done: all four crates now lie within 3 m of the sloop's line. Undo it from History to restore the original layout."));
     } else {
-      add(1400, () => this.call(session, "events.since", { seq: Math.max(0, s.seq - 5) }, (r) => `${(r as unknown[]).length} recent events`, "what happened lately?"));
+      add(1400, () => this.call(session, "events.since", { seq: Math.max(0, s.seq - 5) }, (r) => `${(r as { events: unknown[] }).events.length} recent events`, "what happened lately?"));
       add(2200, () =>
         this.call(session, "world.query", { with: ["Boat"], fields: ["Boat.speed", "Boat.heading_deg"] }, (r) => {
           const row = (r as Record<string, number>[])[0];

@@ -1,8 +1,13 @@
 // The mock's component registry: what `world.schema` answers. Engine components are written in the
 // shape `schemars` gives the Rust types (crates/amoris-physics: Transform, Velocity, RigidBody,
-// Collider, Boat, Sail, Sea, Wind; amoris-assets' visual components as the charter lists them),
-// project components in the shape `ComponentSchema::json_schema` gives TypeScript components
-// (samples/sailing/scripts/components.ts). The editor builds its inspector from these alone.
+// Collider, Boat, Sail, Sea, Wind), project components in the shape `ComponentSchema::json_schema`
+// gives TypeScript components (samples/sailing/scripts/components.ts). The editor builds its
+// inspector from these alone.
+//
+// The visual components (Model, Light, Camera, Splat; crates/amoris-assets/src/visual.rs) are copied
+// by hand from the host's own `world.schema` answer: its fields in its order, its defaults, its
+// enum values in its spelling (the longest docs shortened). tools/edit-host.ts compares them with a
+// real host's when it runs against one, so a copy that drifts fails there.
 
 export interface ComponentInfo {
   name: string;
@@ -22,14 +27,18 @@ const entityIdDef = {
   description: "An entity's id: a whole number from 1 to 2^53 - 1, never reused.",
 };
 
-const v3 = (description: string) => ({
+/** `{default}` when the field has one (the host's schemas carry each field's default). */
+const withDefault = (value: unknown) => (value === undefined ? {} : { default: value });
+const v3 = (description: string, value?: [number, number, number]) => ({
+  ...withDefault(value),
   description,
   type: "array",
   items: { type: "number", format: "double" },
   minItems: 3,
   maxItems: 3,
 });
-const v4 = (description: string) => ({
+const v4 = (description: string, value?: [number, number, number, number]) => ({
+  ...withDefault(value),
   description,
   type: "array",
   items: { type: "number", format: "double" },
@@ -42,7 +51,10 @@ const num = (description: string, extra: Record<string, unknown> = {}) => ({
   format: "double",
   ...extra,
 });
-const bool = (description: string) => ({ description, type: "boolean" });
+const bool = (description: string, value?: boolean) => ({ ...withDefault(value), description, type: "boolean" });
+const text = (description: string, value?: string) => ({ ...withDefault(value), description, type: "string" });
+/** A number the host leaves out unless set (`Option<f64>`). */
+const optional = (description: string) => ({ default: null, description, type: ["number", "null"], format: "double" });
 const unit = (value: string, description?: string) => ({
   type: "string",
   const: value,
@@ -54,11 +66,12 @@ function engine(
   doc: string,
   properties: Record<string, unknown>,
   defs?: Record<string, unknown>,
+  version = 1,
 ): ComponentInfo {
   return {
     name,
     origin: "Engine",
-    version: 1,
+    version,
     doc,
     schema: {
       $schema: SCHEMA,
@@ -295,41 +308,64 @@ export const COMPONENTS: ComponentInfo[] = [
   ),
   engine(
     "Model",
-    "What the renderer draws for an entity: a mesh asset or a primitive, its base colour (linear RGBA) and its scale.",
+    "What an entity looks like: a mesh drawn with a material, at its `Transform`, scaled.\n\n`mesh` names a built-in primitive (`cube`, `sphere`, `plane`, `cylinder`, `capsule`, `cone`,\n`torus`) or a mesh of an asset: `models/boat.glb` (every mesh of the file's default scene) or\n`models/boat.glb#Hull` (the mesh named Hull; `#2` is the third). `material` is empty for the\ninline parameters below, or names an asset's material (`models/boat.glb#Sail`), whose values\nthe inline `color` multiplies.",
     {
-      mesh: { description: "An asset path (`models/crate.glb`) or a primitive (`primitive:cube`, `primitive:sphere`, `primitive:cylinder`, `primitive:plane`).", type: "string" },
-      color: v4("Base colour, linear RGBA."),
-      scale: v3("Scale along the entity's x, y and z."),
-      cast_shadows: bool("Whether it casts shadows."),
-      visible: bool("Whether it is drawn."),
+      cast_shadows: bool("Whether it casts shadows.", true),
+      color: v4("Base color, linear RGBA; multiplies the material's. An alpha below 1 draws the entity\nblended, sorted with the other transparent ones.", [1, 1, 1, 1]),
+      emissive: v3("Emitted light, linear RGB in nits-like units (1 = as bright as a lit white surface).", [0, 0, 0]),
+      ior: optional("Optional index of refraction override; None preserves the material's."),
+      material: text("Empty for the inline material, or an asset material path.", ""),
+      mesh: text("A primitive name or an asset mesh path.", "cube"),
+      metallic: num("0 dielectric to 1 metal.", { default: 0 }),
+      roughness: num("0 mirror to 1 rough.", { default: 0.5 }),
+      scale: v3("Scale along the entity's own axes.", [1, 1, 1]),
+      transmission: optional("Optional transmission override, 0 to 1; None preserves the imported material's. Above 0 the\nentity is glass."),
+      visible: bool("Whether it is drawn.", true),
     },
+    undefined,
+    2,
   ),
   engine(
     "Light",
-    "A light: directional (the sun), point or spot; it shines along the entity's -z.",
+    "A light at the entity's `Transform`.",
     {
-      kind: { $ref: "#/$defs/LightKind" },
-      color: { ...v3("Linear RGB colour.") },
-      intensity: num("Lux for directional lights, lumens for the others.", { minimum: 0 }),
-      range: num("Metres; point and spot lights only.", { minimum: 0 }),
-      spot_angle_deg: num("Cone angle, degrees; spot lights only.", { minimum: 1, maximum: 179 }),
-      shadows: bool("Whether it casts shadows (cascaded for the sun)."),
+      color: v3("Linear RGB.", [1, 0.96, 0.9]),
+      inner_deg: num("Spot: the full-intensity cone's half angle, degrees.", { default: 25 }),
+      intensity: num("Directional: illuminance in lux-like units (the sun at noon is about 10). Point and spot:\nluminous intensity, candela-like.", { default: 6 }),
+      kind: { $ref: "#/$defs/LightKind", default: "directional" },
+      outer_deg: num("Spot: the cone's half angle, degrees.", { default: 35 }),
+      range: num("Point and spot: where the light fades to nothing, metres.", { default: 20 }),
+      shadows: bool("Whether it casts shadows (directional: cascaded shadow maps).", true),
     },
     {
       LightKind: {
         description: "What kind of light.",
-        oneOf: [unit("Directional", "Parallel rays, like the sun."), unit("Point", "Shines every way from a point."), unit("Spot", "A cone along -z.")],
+        oneOf: [
+          unit("directional", "Parallel light from infinitely far along the entity's -z (the sun)."),
+          unit("point", "From the entity's origin in every direction."),
+          unit("spot", "From the entity's origin in a cone along its -z."),
+        ],
       },
     },
   ),
   engine(
     "Camera",
-    "A camera looking along the entity's -z; the active one is the game's view.",
+    "A camera at the entity's `Transform`, looking along its -z with +y up.",
     {
-      fov_deg: num("Vertical field of view, degrees.", { minimum: 1, maximum: 179 }),
-      near: num("Near plane, metres.", { minimum: 0 }),
-      far: num("Far plane, metres.", { minimum: 0 }),
-      active: bool("Whether this camera is the game's view."),
+      active: bool("The camera the game is shown through; the lowest-id active camera wins.", true),
+      exposure_ev: num("Exposure compensation, stops.", { default: 0 }),
+      far: num("Far plane, metres; 0 for infinitely far (reversed-Z makes that free).", { default: 0 }),
+      fov_deg: num("Vertical field of view, degrees.", { default: 60 }),
+      near: num("Near plane, metres.", { default: 0.1 }),
+    },
+  ),
+  engine(
+    "Splat",
+    "A 3D Gaussian Splatting cloud (charter 4.4, neural rendering) at the entity's `Transform`:\n`asset` names a `.ply` (the 3DGS training output layout) or `.splat` file.",
+    {
+      asset: { default: "", type: "string" },
+      scale: num("Uniform scale.", { default: 1 }),
+      visible: { default: true, type: "boolean" },
     },
   ),
   engine(

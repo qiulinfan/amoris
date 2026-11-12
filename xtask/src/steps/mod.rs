@@ -7,6 +7,7 @@ pub mod cross_build;
 pub mod deps;
 pub mod diag;
 pub mod docs;
+pub mod editor;
 pub mod fixture;
 pub mod generate;
 pub mod gpus;
@@ -51,9 +52,8 @@ pub fn prepare(env: &Env) -> Result<Prepared, Problem> {
 /// The steps a step needs: it is skipped when one of them failed (checks.md 4).
 fn needs(step: &str) -> &'static [&'static str] {
     match step {
-        "test" | "gpus" | "types" | "determinism" | "fork" | "replay" | "reload" | "contract" => {
-            &["build"]
-        }
+        "test" | "gpus" | "editor" | "types" | "determinism" | "fork" | "replay" | "reload"
+        | "contract" => &["build"],
         "web" => &["build", "wasm", "determinism", "replay"],
         "perf" => &["build", "web"],
         _ => &[],
@@ -163,6 +163,10 @@ impl Run<'_> {
                     crate::run::python(),
                     gpus::default_auto(test_ran, &set),
                 )
+            }
+            "editor" => {
+                let amoris = self.amoris();
+                editor::run(env, &amoris, opts.quick)
             }
             "wasm" => {
                 let (members, web) = self.members();

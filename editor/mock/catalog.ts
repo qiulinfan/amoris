@@ -4,7 +4,7 @@
 
 export interface CatalogCommand {
   name: string;
-  kind: "read" | "write" | "control";
+  kind: "read" | "write" | "control" | "request";
   doc: string;
   params: Record<string, unknown>;
   result?: Record<string, unknown>;
@@ -72,8 +72,24 @@ export const CATALOG: CatalogCommand[] = [
   {
     name: "time.control",
     kind: "control",
-    doc: "Pause, resume or change the speed and pacing.",
-    params: obj({ pause: { type: "boolean" }, speed: { type: "number", minimum: 0.0625, maximum: 16 }, pacing: { type: "string", enum: ["realtime", "fast"] } }),
+    doc: "Pause, resume, set the real-time speed or the pacing.",
+    params: obj({
+      pause: { type: "boolean", description: "Pause (true) or resume (false)." },
+      speed: { type: "number", description: "Real time at this multiple of real time (0 < speed <= 1000)." },
+      pacing: {
+        description: "`\"stepped\"` or `{\"real_time\": {\"speed\": x}}`.",
+        oneOf: [
+          { type: "string", const: "stepped", description: "Ticks run only when a `step` asks for them." },
+          {
+            type: "object",
+            description: "Ticks follow the loop's clock at `speed` times real time.",
+            properties: { real_time: { type: "object", properties: { speed: { type: "number" } }, required: ["speed"] } },
+            required: ["real_time"],
+            additionalProperties: false,
+          },
+        ],
+      },
+    }),
   },
   {
     name: "time.step",
@@ -81,16 +97,40 @@ export const CATALOG: CatalogCommand[] = [
     doc: "Run ticks; answered after the last, or when an event named `until` is emitted.",
     params: obj({ ticks: int("Ticks to run (1 by default)."), until: str("Stop when an event of this name is emitted."), watch: { type: "object" } }),
   },
-  { name: "play.start", kind: "control", doc: "Play: run a fork of the edit world.", params: obj() },
+  {
+    name: "play.start",
+    kind: "control",
+    doc: "Play: forks the edit world and runs the fork in real time; edits go to the fork.",
+    params: obj({ speed: { type: "number", description: "Real-time speed, default 1." }, paused: { type: "boolean", description: "Start paused." } }),
+  },
   { name: "play.stop", kind: "control", doc: "Stop: discard the play world and return to the edit world.", params: obj() },
   { name: "scripts.list", kind: "read", doc: "The project's scripts with their diagnostics.", params: obj() },
   { name: "scripts.read", kind: "read", doc: "A script's text.", params: obj({ path: str("Relative to the project root.") }, ["path"]) },
   { name: "scripts.write", kind: "write", doc: "Writes a script and returns its diagnostics.", params: obj({ path: str("Relative to the project root."), text: str("The whole file.") }, ["path", "text"]) },
   { name: "scripts.apply", kind: "write", doc: "Type check, compile and hot swap the scripts at a tick boundary.", params: obj({ paths: { type: "array", items: { type: "string" } } }) },
   { name: "assets.list", kind: "read", doc: "The project's asset files with kinds and thumbnails.", params: obj({ dir: str("A directory under assets/.") }) },
-  { name: "assets.import", kind: "write", doc: "Imports a file into the project's assets.", params: obj({ path: str("The file to import.") }, ["path"]) },
-  { name: "events.since", kind: "read", doc: "Game events after a sequence number.", params: obj({ seq: int("Exclusive."), limit: int("At most this many.") }, ["seq"]) },
-  { name: "events.why", kind: "read", doc: "The cause chain of an event, oldest first.", params: obj({ seq: int("The event.") }, ["seq"]) },
+  {
+    name: "assets.upload",
+    kind: "request",
+    doc: "Writes a file into the project (an asset from the editor's browser or an agent): its bytes in base64 parts {path, data, offset, done}, offset 0 first, each part at most 1 MiB; the last part (done, the default) moves the file into place and answers {path, kind, bytes}. A file already at path is replaced only with overwrite.",
+    params: obj(
+      {
+        path: str("Where the file goes: a path inside the project, such as `models/lighthouse.glb`."),
+        data: str("This part's bytes, base64 (the standard alphabet, padded)."),
+        offset: { type: "integer", minimum: 0, default: 0, description: "Where this part starts in the file: 0 begins the upload (again)." },
+        done: { type: "boolean", default: true, description: "Whether this is the last part (default true): the file is then moved into place." },
+        overwrite: { type: "boolean", default: false, description: "Whether a file already at `path` is replaced (default false: refused with `assets.exists`)." },
+      },
+      ["path", "data"],
+    ),
+  },
+  {
+    name: "events.since",
+    kind: "read",
+    doc: "Game events after a stream number (the newest without one), as {events, last, missed}.",
+    params: obj({ seq: int("Events after this stream number; default: the newest."), limit: int("At most this many, default 100.") }),
+  },
+  { name: "events.why", kind: "read", doc: "An event and the chain of events that caused it, nearest first, as {event, causes, complete}.", params: obj({ seq: int("The event's stream number.") }, ["seq"]) },
   { name: "snapshots.list", kind: "read", doc: "The ring of kept snapshots.", params: obj() },
   { name: "snapshots.restore", kind: "control", doc: "Restores the kept snapshot at a tick.", params: obj({ tick: int("A kept snapshot's tick.") }, ["tick"]) },
   // The debugger: amoris-debug's agents' API as the real host serves it (docs/spec/debugger.md 7).

@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { addComponent } from "../../actions/world";
 import type { EntityId } from "../../host/protocol";
+import { searchComponents } from "../../host/schema";
 import { useWorld } from "../../state/world";
 import { componentIcon } from "../../ui/icons";
 import { cx } from "../../ui/cx";
@@ -15,7 +16,7 @@ export function AddComponent({ ids, present }: { ids: EntityId[]; present: Set<s
   const [q, setQ] = useState("");
   const [active, setActive] = useState(0);
   const items = useMemo(
-    () => list.filter((c) => c.name !== "Name" && !present.has(c.name) && (!q || c.name.toLowerCase().includes(q.toLowerCase()) || c.doc.toLowerCase().includes(q.toLowerCase()))),
+    () => searchComponents(list.filter((c) => c.name !== "Name" && !present.has(c.name)), q),
     [list, present, q],
   );
   const pick = (name: string) => {

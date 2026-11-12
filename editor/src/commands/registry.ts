@@ -3,7 +3,7 @@
 // so a shortcut shown in a menu is the one that works.
 
 import type { LucideIcon } from "lucide-react";
-import { eventKey, isEditable, normalize } from "./keys";
+import { eventKey, normalize, ownsKey } from "./keys";
 
 export type Category = "File" | "Edit" | "Create" | "View" | "Viewport" | "Game" | "Debug" | "Help" | "Panel";
 
@@ -73,12 +73,13 @@ export function installKeyboard(): () => void {
     if (e.isComposing) return;
     // Held keys repeat only stepping (F10, F11), never toggles such as Play.
     if (e.repeat && e.key !== "F10" && e.key !== "F11") return;
-    const list = byKey.get(eventKey(e));
+    const combo = eventKey(e);
+    const list = byKey.get(combo);
     if (!list) return;
     const target = e.target as HTMLElement | null;
     // Text fields, the code editor and open menus or dialogs handle their own keys; only global
     // commands (the palette, Play, stepping) reach past them.
-    const editable = isEditable(target) || !!target?.closest?.(".monaco-editor, .menu, .dialog");
+    const editable = ownsKey(target, combo) || !!target?.closest?.(".monaco-editor, .menu, .dialog");
     const cmd = list.find((c) => (!editable || c.global) && isEnabled(c));
     if (!cmd) return;
     e.preventDefault();

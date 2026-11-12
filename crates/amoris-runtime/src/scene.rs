@@ -14,7 +14,7 @@ use amoris_contract::{Pointer, Problem, detail};
 use amoris_physics::sailing;
 use amoris_script::{ComponentAccess, ScriptAccess};
 use amoris_sim::registry::{ComponentOrigin, ProjectValues};
-use amoris_sim::{Boundary, ComponentRegistry, EntityId, Name};
+use amoris_sim::{Boundary, ComponentRegistry, EntityId, Name, Persisted};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -156,6 +156,28 @@ pub fn unknown_component(world: &bevy_ecs::prelude::World, name: &str) -> Proble
     )
 }
 
+/// The refusal of a component a scene or an edit names (at `path`) and cannot write, which is
+/// every one that is neither an engine component with a JSON form nor a project component:
+/// `sim.component_unknown` when the registry holds none of that name; when it holds one,
+/// `request.invalid_value` saying why, since [`unknown_component`] would suggest the very name it
+/// calls unknown. `Name` among `components` is the entity's `name`; the others are state the
+/// engine's own systems keep (a seat's `Controls`, what an observer remembers).
+pub fn not_editable(world: &bevy_ecs::prelude::World, name: &str, path: &Pointer) -> Problem {
+    let registered = world
+        .get_resource::<ComponentRegistry>()
+        .is_some_and(|r| r.get(name).is_some());
+    if !registered {
+        return unknown_component(world, name);
+    }
+    if name == <Name as Persisted>::NAME {
+        return bad_value(path, "an entity's name is its `name`, beside `components`");
+    }
+    bad_value(
+        path,
+        &format!("{name} is state the engine keeps itself, which a scene or an edit cannot write"),
+    )
+}
+
 /// A project component's schema and accessor, or `None` when `name` is not one.
 pub fn project_component(
     world: &bevy_ecs::prelude::World,
@@ -219,7 +241,7 @@ pub fn prepare_among(
             let values = values::patch_among(world, &schema, &defaults, patch, &at, also)?;
             parts.push(Part::Project { access, values });
         } else {
-            return Err(unknown_component(world, cname));
+            return Err(not_editable(world, cname, &at));
         }
     }
     for (cname, whole) in base {

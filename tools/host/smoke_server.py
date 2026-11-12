@@ -301,6 +301,9 @@ def main():
         names = {c["name"] for c in cat}
         check({"world.edit", "time.step", "play.start", "events.since"} <= names,
               f"catalog: {len(cat)} commands with schemas")
+        value = next(c for c in cat if c["name"] == "world.edit")["params"]["$defs"].get("SetValue", {})
+        check({"object", "string"} <= {b.get("type") for b in value.get("anyOf", [])},
+              "catalog: a set's value is the fields or, for Name, a string")
         s = call(base, "status")["result"]
         check(s["mode"] == "edit" and s["paused"] is True, "api status")
         e = call(base, "world.edit", {"ops": [{"destroy": {"entity": "Crate2"}}]})
@@ -333,6 +336,25 @@ def main():
               f"ws: world.changed pushed {c and c['data']}")
         f = ws.request(3, "history.undo")
         check(f and "result" in f, "ws history.undo")
+        # A rename as the editor sends it (editor.md 8 item 2): Name's value is the name.
+        label = "Rename Crate3 → CrateC"
+        f = ws.request(7, "world.edit", {"ops": [{"set": {"entity": 6, "component": "Name",
+                                                           "value": "CrateC"}}], "label": label})
+        check(f and f.get("result", {}).get("label") == label, "ws world.edit renames an entity")
+        c, _ = ws.until(lambda f: f.get("event") == "world.changed"
+                        and [6, "Name"] in f["data"].get("changed", []), 5)
+        check(c is not None, "ws: world.changed names the renamed entity's Name")
+        tree = call(base, "world.tree", {"filter": "CrateC"}).get("result", [])
+        check([e["id"] for e in tree] == [6], "api world.tree finds it by the new name")
+        long = call(base, "world.edit", {"ops": [{"set": {"entity": 6, "component": "Name",
+                                                           "value": "界" * 22}}]})
+        check(long.get("error", {}).get("code") == "sim.name_too_long"
+              and long["error"]["detail"].get("path") == "/ops/0/set/value",
+              "api: a name over 64 bytes is refused at the op's value")
+        f = ws.request(8, "history.undo")
+        got = call(base, "world.get", {"entity": 6}).get("result", {})
+        check(f and f.get("result", {}).get("label") == label and got.get("name") == "Crate3",
+              "ws history.undo gives the entity its name back")
         f = ws.request(4, "time.step", {"ticks": 30}, timeout=20)
         check(f and f["result"]["tick"] > 0, "ws time.step")
         f = ws.request(5, "play.start", {"speed": 2})

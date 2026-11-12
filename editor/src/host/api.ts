@@ -3,6 +3,7 @@
 import { HostClient, endpointsFromLocation } from "./client";
 import type {
   Breakpoint,
+  CauseChain,
   DataWatch,
   DebugState,
   EditOp,
@@ -13,7 +14,10 @@ import type {
   HostDataWatch,
   HostDebugState,
   HostVariable,
+  HostWhy,
+  Pacing,
   StackFrame,
+  Status,
   Variable,
   WorldEditParams,
 } from "./protocol";
@@ -52,7 +56,7 @@ export const api = {
     list: () => call("history.list", {}),
   },
   time: {
-    control: (p: { pause?: boolean; speed?: number; pacing?: string }) => call("time.control", p),
+    control: (p: { pause?: boolean; speed?: number; pacing?: Pacing }) => call("time.control", p),
     step: (p: { ticks?: number; until?: string } = {}) => {
       // `until: "event:<name>"` or `"tick:<n>"` becomes the host's {event} / {tick} object.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -65,7 +69,8 @@ export const api = {
     },
   },
   play: {
-    start: () => call("play.start", {}),
+    /** Play at `speed`; without it the fork runs at 1, whatever the edit world's speed. */
+    start: (speed?: number) => call("play.start", speed === undefined ? {} : { speed }),
     stop: () => call("play.stop", {}),
   },
   scripts: {
@@ -81,12 +86,15 @@ export const api = {
   },
   assets: {
     list: (dir?: string) => call("assets.list", dir ? { dir } : {}),
-    import: (path: string) => call("assets.import", { path }, 120000),
+    upload: (p: { path: string; data: string; offset?: number; done?: boolean; overwrite?: boolean }) => call("assets.upload", p, 120000),
   },
   events: {
-    since: async (seq: number, limit?: number) =>
-      listOf(await call("events.since", limit ? { seq, limit } : { seq }), "events"),
-    why: async (seq: number) => listOf(await call("events.why", { seq }), "chain"),
+    /** The events after stream number `seq`, oldest first, at most `limit` of them; with `seq`
+     * undefined the newest `limit` instead (what a page shows first: the host's ring holds more
+     * than one call returns, and `seq: 0` would give its oldest). */
+    since: async (seq?: number, limit?: number) =>
+      listOf(await call("events.since", { ...(seq === undefined ? {} : { seq }), ...(limit ? { limit } : {}) }), "events"),
+    why: async (seq: number) => causeChain(await call("events.why", { seq })),
   },
   snapshots: {
     list: async () => listOf(await call("snapshots.list", {}), "snapshots"),
@@ -137,6 +145,45 @@ export const api = {
     frame: (ticks?: number) => call("profile.frame", ticks === undefined ? {} : { ticks }),
   },
 };
+
+/** The host's `events.why` (the event and its causes, nearest first) as the chain the Events panel
+ * shows: oldest first, ending with the event itself. */
+export function causeChain(raw: HostWhy): CauseChain {
+  return { chain: [...raw.causes].reverse().concat(raw.event), complete: raw.complete };
+}
+
+/** The real-time speed of the world a status describes, or null when its ticks are stepped (or no
+ * status came yet). */
+export function speedOf(status: Status | null | undefined): number | null {
+  const pacing = status?.pacing;
+  return typeof pacing === "object" && pacing !== null ? (pacing.real_time?.speed ?? null) : null;
+}
+
+/** Whether the world a status describes is poisoned: a tick stopped halfway, so the host runs no
+ * further tick of it and refuses a step until Stop or a restore. The pushed status says `halted`,
+ * the game thread's own also the tick in `poisoned`. */
+export function haltedOf(status: Status | null | undefined): boolean {
+  return status?.halted === true || (status?.poisoned ?? null) !== null;
+}
+
+/** What the editor says of a poisoned world: where it stopped and the way out of it. The host's
+ * own error for the tick is a line of its `log` (threads.md 8). */
+export function haltNotice(status: Status): { title: string; body: string } {
+  // The failed tick: the game thread names it, and the clock of a halted world stands in it (the
+  // pushed status has only that).
+  const at = typeof status.poisoned === "number" ? status.poisoned : status.tick;
+  const play = status.mode === "play";
+  return {
+    title: `${play ? "Play" : "The edit world"} halted at tick ${at}`,
+    body: `A tick stopped halfway (the Console has the host's error), so this world runs no further tick. ${play ? "Stop returns to the edit world." : "Restore a snapshot (Timeline) to run it again."}`,
+  };
+}
+
+/** The first eight digits of a status's world hash, or a dash where it has none (a poisoned world's
+ * status from the game thread carries `world_hash: null`). */
+export function shortHash(status: Status | null | undefined): string {
+  return typeof status?.world_hash === "string" ? status.world_hash.slice(0, 8) : "\u2014";
+}
 
 // ---- The debugger's as-built shapes (docs/spec/debugger.md 7) -------------------------------------
 

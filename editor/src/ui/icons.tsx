@@ -32,6 +32,7 @@ import {
   Weight,
   type LucideIcon,
 } from "lucide-react";
+import { sameVariant } from "../host/schema";
 
 const COMPONENT_ICONS: Record<string, LucideIcon> = {
   Transform: Move3d,
@@ -68,7 +69,7 @@ export function entityKind(components: string[], lightKind?: string): { icon: Lu
     case "Camera":
       return { icon: Camera, tone: "tone-camera" };
     case "Light":
-      return { icon: lightKind === "Directional" ? Sun : Lightbulb, tone: "tone-light" };
+      return { icon: sameVariant(lightKind, "directional") ? Sun : Lightbulb, tone: "tone-light" };
     case "Boat":
       return { icon: Sailboat, tone: "tone-actor" };
     case "Sea":

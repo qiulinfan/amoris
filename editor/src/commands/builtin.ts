@@ -46,7 +46,7 @@ import {
   CirclePlay,
   Unplug,
 } from "lucide-react";
-import { api, host } from "../host/api";
+import { api, host, speedOf } from "../host/api";
 import { clearAllBreakpoints, pauseScripts, resume, step } from "../actions/debug";
 import { applyScripts, saveActiveScript, toggleBreakpointAtCursor } from "../actions/scripts";
 import { play, saveProject, setSpeed, stepTick, stop, togglePause, togglePlay } from "../actions/time";
@@ -206,7 +206,7 @@ export function registerBuiltinCommands() {
       title: `Speed ${s}×`,
       category: "Game" as const,
       icon: Gauge,
-      checked: () => (useSession.getState().status?.speed ?? 1) === s,
+      checked: () => speedOf(useSession.getState().status) === s,
       enabled: connected,
       run: () => void setSpeed(s),
     })),

@@ -1,10 +1,11 @@
 // Game events as a table (tick, name, subject, data) with filtering; selecting one asks the host
-// why it happened (`events.why`) and shows the cause chain, oldest first.
+// why it happened (`events.why`) and shows the cause chain, oldest first, and whether the host
+// still held all of it.
 
 import { ArrowDownToLine, Ban, GitBranch, Zap } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../host/api";
-import type { GameEvent } from "../../host/protocol";
+import type { CauseChain, GameEvent } from "../../host/protocol";
 import { reportError } from "../../actions/report";
 import { useEvents } from "../../state/events";
 import { useSelection } from "../../state/selection";
@@ -34,7 +35,7 @@ function Subject({ id }: { id: number | null }) {
   );
 }
 
-function Why({ chain, selected }: { chain: GameEvent[] | null; selected: GameEvent | undefined }) {
+function Why({ why, selected }: { why: CauseChain | null; selected: GameEvent | undefined }) {
   if (!selected) return <EmptyState icon={GitBranch} title="Select an event">Its cause chain (events.why) appears here.</EmptyState>;
   return (
     <div className="why">
@@ -46,13 +47,11 @@ function Why({ chain, selected }: { chain: GameEvent[] | null; selected: GameEve
         </span>
       </div>
       <div className="why-title">Why (cause chain)</div>
-      {!chain ? (
-        <div className="muted pad">Asking the host…</div>
-      ) : chain.length <= 1 ? (
-        <div className="muted pad">No recorded cause: this event started its chain.</div>
-      ) : (
+      {!why && <div className="muted pad">Asking the host…</div>}
+      {why && why.complete && why.chain.length <= 1 && <div className="muted pad">No recorded cause: this event started its chain.</div>}
+      {why && why.chain.length > 1 && (
         <ol className="chain">
-          {chain.map((e, i) => (
+          {why.chain.map((e, i) => (
             <li key={e.seq} className={cx(e.seq === selected.seq && "is-self")} onClick={() => void select(e)}>
               <span className="chain-step">{i + 1}</span>
               <span className="ev-dot" style={{ background: `hsl(${hue(e.name)} 70% 60%)` }} />
@@ -66,6 +65,7 @@ function Why({ chain, selected }: { chain: GameEvent[] | null; selected: GameEve
           ))}
         </ol>
       )}
+      {why && !why.complete && <div className="muted pad">Earlier causes have left the host's event ring.</div>}
       <div className="why-title">Data</div>
       <pre className="why-data">{JSON.stringify(selected.data, null, 2)}</pre>
     </div>
@@ -75,11 +75,12 @@ function Why({ chain, selected }: { chain: GameEvent[] | null; selected: GameEve
 async function select(e: GameEvent) {
   useEvents.getState().select(e.seq, null);
   try {
-    const chain = await api.events.why(e.seq);
-    if (useEvents.getState().selected === e.seq) useEvents.getState().select(e.seq, chain);
+    const why = await api.events.why(e.seq);
+    if (useEvents.getState().selected === e.seq) useEvents.getState().select(e.seq, why);
   } catch (err) {
     reportError(err, "events.why");
-    useEvents.getState().select(e.seq, [e]);
+    // The event alone; its causes, if it names one, could not be read.
+    useEvents.getState().select(e.seq, { chain: [e], complete: e.cause === null });
   }
 }
 
@@ -139,7 +140,7 @@ export function EventsPanel() {
                 <span className="ev-name">
                   <span className="ev-dot" style={{ background: `hsl(${hue(e.name)} 70% 60%)` }} />
                   {e.name}
-                  {e.cause !== null && <GitBranch size={11} className="caused" data-tip={`caused by #${e.cause}`} />}
+                  {e.cause !== null && <GitBranch size={11} className="caused" data-tip="Caused by an earlier event: select the row for the chain" />}
                 </span>
                 <span>
                   <Subject id={e.subject} />
@@ -149,7 +150,7 @@ export function EventsPanel() {
             ))}
           </div>
         </div>
-        <Why chain={why} selected={sel} />
+        <Why why={why} selected={sel} />
       </SplitPane>
     </PanelShell>
   );

@@ -1,5 +1,6 @@
 // A colour stored as linear RGB(A) 0..1 (the renderer's convention), shown and picked in sRGB.
 
+import { useRef } from "react";
 import { NumberField, type EditPhase } from "./NumberField";
 
 const toSrgb = (c: number) => (c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055);
@@ -22,32 +23,58 @@ export function hexToLinear(hex: string): number[] {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((c) => Math.round(toLinear(c / 255) * 10000) / 10000);
 }
 
-export function ColorField({ values, onChange, disabled }: { values: number[]; onChange(v: number[], phase: EditPhase): void; disabled?: boolean }) {
+/** `part` says what changed: the colour (red, green and blue at once) or its alpha. `mixed`: which
+ * of the two differ across a multi-selection, shown as a dash. */
+export function ColorField({
+  values,
+  onChange,
+  disabled,
+  mixed,
+}: {
+  values: number[];
+  onChange(v: number[], phase: EditPhase, part: "rgb" | "alpha"): void;
+  disabled?: boolean;
+  mixed?: { rgb: boolean; alpha: boolean };
+}) {
   const hex = linearToHex(values);
   const alpha = values.length === 4 ? values[3]! : undefined;
+  // Whether a colour was picked since the swatch took the focus. Only then does leaving it commit:
+  // untouched, it holds the stored colour rounded to its hex, and writing that back would change
+  // the colour a little and add an undo entry for an edit nobody made.
+  const picked = useRef(false);
+  const rgba = (text: string) => [...hexToLinear(text), ...(alpha !== undefined ? [alpha] : [])];
   return (
     <div className="color-field">
-      <label className="swatch" style={{ "--swatch": hex, "--alpha": alpha ?? 1 } as React.CSSProperties} data-tip="Pick a colour (sRGB; stored linear)">
+      <label className={mixed?.rgb ? "swatch is-mixed" : "swatch"} style={{ "--swatch": hex, "--alpha": alpha ?? 1 } as React.CSSProperties} data-tip="Pick a colour (sRGB; stored linear)">
         <input
           type="color"
           value={hex}
           disabled={disabled}
-          onChange={(e) => onChange([...hexToLinear(e.target.value), ...(alpha !== undefined ? [alpha] : [])], "live")}
-          onBlur={(e) => onChange([...hexToLinear(e.target.value), ...(alpha !== undefined ? [alpha] : [])], "commit")}
+          onFocus={() => (picked.current = false)}
+          onChange={(e) => {
+            picked.current = true;
+            onChange(rgba(e.target.value), "live", "rgb");
+          }}
+          onBlur={(e) => {
+            if (!picked.current) return;
+            picked.current = false;
+            onChange(rgba(e.target.value), "commit", "rgb");
+          }}
         />
       </label>
       <input
         className="hex-input"
-        defaultValue={hex.toUpperCase()}
-        key={hex}
+        defaultValue={mixed?.rgb ? "" : hex.toUpperCase()}
+        placeholder={mixed?.rgb ? "—" : undefined}
+        key={mixed?.rgb ? "mixed" : hex}
         disabled={disabled}
         spellCheck={false}
         onKeyDown={(e) => {
           if (e.key === "Enter") e.currentTarget.blur();
         }}
         onBlur={(e) => {
-          if (/^#?[0-9a-f]{6}$/i.test(e.target.value) && e.target.value.toLowerCase().replace("#", "") !== hex.slice(1)) {
-            onChange([...hexToLinear(e.target.value.startsWith("#") ? e.target.value : `#${e.target.value}`), ...(alpha !== undefined ? [alpha] : [])], "commit");
+          if (/^#?[0-9a-f]{6}$/i.test(e.target.value) && (mixed?.rgb || e.target.value.toLowerCase().replace("#", "") !== hex.slice(1))) {
+            onChange(rgba(e.target.value), "commit", "rgb");
           }
         }}
       />
@@ -59,7 +86,8 @@ export function ColorField({ values, onChange, disabled }: { values: number[]; o
           handle="A"
           handleClass="axis-w"
           disabled={disabled}
-          onChange={(a, phase) => onChange([...values.slice(0, 3), a], phase)}
+          mixed={mixed?.alpha}
+          onChange={(a, phase) => onChange([...values.slice(0, 3), a], phase, "alpha")}
         />
       )}
     </div>

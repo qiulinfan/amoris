@@ -67,6 +67,17 @@ export function formatKeys(binding: string): string {
   return keyCaps(binding).join(isMac ? "" : "+");
 }
 
+/**
+ * Whether the focused element takes the key `combo` (in `eventKey`'s form) itself, so that only a
+ * global command may run on it. A text field takes every key. A select has no text: it takes plain
+ * keys (arrows, letters that find an option, Enter, Space) and nothing with Mod, so Mod+Z right
+ * after choosing a value undoes the choice instead of doing nothing.
+ */
+export function ownsKey(target: EventTarget | null, combo: string): boolean {
+  if ((target as HTMLElement | null)?.tagName === "SELECT") return !combo.split("+").includes("Mod");
+  return isEditable(target);
+}
+
 export function isEditable(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
   if (!el || !el.tagName) return false;

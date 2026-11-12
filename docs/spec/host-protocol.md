@@ -62,10 +62,10 @@ nothing. A socket more than 1,024 pushes behind gets `{"event": "lagged", "data"
 
 | Topic | Data | When |
 |---|---|---|
-| `status` | `{tick, t_s, paused, pacing, halted, behind_ms, mode: "edit"|"play", epoch, world_hash, entities, tps, state, version}` | at most 10 Hz when it changed, else every second |
+| `status` | `{tick, t_s, paused, pacing, halted, behind_ms, mode: "edit"|"play", epoch, world_hash, entities, tps, state, version}`; `pacing` is `"stepped"` or `{"real_time": {"speed": x}}`, the pacing of the world shown (each world has its own); `paused` and `pacing` are the game's now, also after a `time.control` that no tick follows (threads.md 4.3); `halted` is true while the world is poisoned (a tick stopped halfway: no tick runs until Stop or a restore), and `world_hash` is then the last publication's | at most 10 Hz when it changed, else every second |
 | `world.changed` | `{tick, spawned: [id], despawned: [id], changed: [[id, component]], truncated?}`, or `{tick, reset: true, epoch}` when the world was replaced (restore, Play, Stop) | after a tick or write that changed something, coalesced to 10 Hz |
 | `events` | `[{seq, id, tick, name, subject, data, cause}]` (`seq` the stream number, `id` and `cause` the world's event numbers) | game events as they are emitted, every 50 ms |
-| `log` | `{seq, level, source, message, file?, line?, tick?}` | one per line: script `console.*`, failed system runs |
+| `log` | `{seq, level, source, message, file?, line?, tick?}` | one per line: script `console.*`, failed system runs, the error of a tick that poisoned the world |
 | `history` | `{undo: [label], redo: [label], entries: {undo: [entry], redo: [entry]}}` (as `history.list`) | after any edit, undo, redo, restore, Play or Stop that changed it |
 | `debug` | `{state: "paused"|"running", reason?, location?: {file, line, column}, frames?}` | debugger state changes |
 | `profile` | `{tick, epoch, ticks, held, missed, tick_ms, tick_max_ms, busy_ms, systems: [{name, ms, max_ms}], phases: [{name, ms, max_ms}]}`: the ticks since the last push, ms per tick (below) | 4 Hz while subscribed, also when no tick ran (`ticks: 0`) |
@@ -93,7 +93,7 @@ Each method is a command of the catalog (`GET /api/catalog` is authoritative). K
 | Method | Params | Result |
 |---|---|---|
 | `catalog.list` | `{}` | the catalog |
-| `status` | `{}` | status (section 3) with `bundle`, `writes`, `poisoned` |
+| `status` | `{}` | status (section 3) with `bundle`, `writes`, `poisoned` (the tick that poisoned the world, else null); `world_hash` is null while the world is poisoned. `time.control`, `play.start` and `play.stop` answer this form too |
 | `project.info` | `{}` | `{name, root, rate, scenes, scripts, assets}` |
 | `project.save` | `{}` | `{files, entities}` (the edit world, even during Play) |
 | `world.tree` | `{root?, depth?, filter?, with?, limit?}` | `[{id, name, components: [name], children: [...], more?}]`: nested by `Parent`, roots and children in ascending id order; `depth` at most 48 levels, and an entity whose children it left out carries their number in `more` ([server.md](server.md) 3) |
@@ -103,7 +103,7 @@ Each method is a command of the catalog (`GET /api/catalog` is authoritative). K
 | `world.edit` | `{ops: [op], label?, group?}` | `{tick, applied, spawned: [id], results, label}`; all or nothing; edits of one `group` in a row from one caller are one undo entry |
 | `history.undo` / `history.redo` | `{group?}` / `{}` | as `world.edit`, with the entry's `label`; an undo with `group` only when the next entry is the whole of that group (server.md 3.1) |
 | `history.list` | `{}` | `{undo, redo, entries}`: each stack most recent last, each entry `{label, source, group?, session?}` (server.md 3.1) |
-| `time.control` | `{pause?, speed?, pacing?}` | status |
+| `time.control` | `{pause?, speed?, pacing?}` | status; a refused call (a speed outside (0, 1000]) changes nothing |
 | `time.step` | `{ticks?, until?: {event?, subject?, tick?}, watch?: {entity, component, field, op?, value?}, sample?: {fields: ["E.C.f"], every?}, trace?: {entity, component, field?}}` | `{tick, world_hash, errors, stopped_by?, samples?, writes?}` (`writes`: every write that changed the traced field, tick by tick, debugger.md 13); a debugger stop ends the step and answers at once with `paused: true` (server.md 3.2, 3.4); a step queued behind it answers `debug.paused {queued: true}` and runs after the resume |
 | `play.start` / `play.stop` | `{speed?, paused?}` / `{}` | status (Play runs a fork of the edit world; Stop discards it) |
 | `scripts.list` | `{}` | `[{path, bytes, diagnostics}]` |
@@ -113,7 +113,7 @@ Each method is a command of the catalog (`GET /api/catalog` is authoritative). K
 | `scripts.apply` | `{files?, force?, dry_run?}` | `{outcome, bundle, diagnostics, typecheck, ...}` (type check if `tsc` is installed, compile, hot swap at a boundary) |
 | `scripts.check` | `{}` | `{outcome, diagnostics, typecheck}` (no swap) |
 | `assets.list` | `{dir?}` | `[{path, kind, bytes}]` |
-| `assets.import` | `{path}` | `{asset, meshes, materials}` (not built yet) |
+| `assets.upload` | `{path, data, offset? = 0, done? = true, overwrite? = false}` | `{path, kind, bytes}` at the last part, `{path, received}` before it: a file into the project in base64 parts of at most 1 MiB (server.md 3) |
 | `events.since` | `{seq?, limit?, name?}` | `{events, last, missed}` |
 | `events.why` | `{seq}` | `{event, causes, complete}`: the cause chain |
 | `log.since` | `{seq?, limit?}` | `{lines, last}` |
@@ -144,12 +144,16 @@ true}`); every other call that needs the game thread is refused at once with `de
 ```json
 {"spawn": {"name": "Crate", "prefab": {...}, "components": {"Transform": {...}, "Model": {...}}}}
 {"set": {"entity": 12, "component": "Transform", "value": {...}, "replace": false}}  // fields merge
+{"set": {"entity": 12, "component": "Name", "value": "Crate A"}}  // rename: Name's value is the name
 {"remove": {"entity": 12, "component": "Model"}}
 {"destroy": {"entity": 12}}
 ```
 
 Each is recorded as the runtime's `world_edit` with names resolved to ids; undo restores a destroyed
-entity under its id with every component (server.md 3.1).
+entity under its id with every component (server.md 3.1). A `set` of `Name` takes the name as a
+string of at most 64 bytes of UTF-8 and renames the entity (or names one without a name); a `remove`
+of `Name` leaves it unnamed (`name: null`, found by its id alone). Both are undoable, and the later
+ops of the call find entities by the names the earlier ones leave (server.md 3.1, Names).
 
 ## 5. The render feed (`/render`)
 
@@ -240,6 +244,30 @@ live and undoes at once), `set` of `Name` takes a string, the hierarchy is a `Pa
 the editor changes with this file. Adopted 2026-10-15: `group` and the history's sources (server.md
 3.1); entries carry their source instead of an `agent:` label prefix, which the editor still reads
 from a host without sources. The order stays this draft's (each stack most recent last): the editor
-reverses the redo stack itself. Adopted 2026-11-12: the hierarchy is the `Parent {parent}`
-component, set and removed with `world.edit`, and `world.tree` nests by it; a destroy takes the
-entities under the destroyed one, and an undo revives them all (server.md 3.1).
+reverses the redo stack itself. Adopted 2026-11-11: `set` of `Name` takes a string (section 4;
+server.md 3.1, Names); until then the host refused the editor's rename (`request.wrong_type`: the
+value had to be an object). Adopted 2026-11-12: the hierarchy is the `Parent {parent}` component,
+set and removed with `world.edit`, and `world.tree` nests by it; a destroy takes the entities under
+the destroyed one, and an undo revives them all (server.md 3.1).
+
+2026-11-12: the editor changed to the host's forms where its basic edits had been written against
+the mock's (editor.md 8, items 8 and 12): a light's `kind` in the registry's own spelling
+(`directional`, `point`, `spot`), the primitives' names as `Model.mesh` takes them (`cube`, not
+`primitive:cube`), a splat asset as `Splat {asset}`, `events.why` as `{event, causes, complete}`,
+the real-time speed from the status's `pacing`, and `play.start {speed}` for Play at the speed shown
+(a fork starts at 1 otherwise). The mock answers the same forms. The host changed in one place: a
+`time.control` that changes the pacing or the pause is published even when no tick follows
+(threads.md 4.3), so the `status` push no longer says the pacing and the pause of the last tick or
+write; the editor's transport reads both from it.
+
+2026-11-12, a poisoned world (editor.md 8, item 14): the status the game thread answers
+(`time.control`, `play.*`, `status`) carries `world_hash: null` and the failed tick in `poisoned`
+while a world is poisoned, and the editor, which had typed the hash as a string, went blank on it.
+The editor reads both forms now (`halted`, or `poisoned` set). The host changed in two places: the
+error of the tick that poisoned the world is a `log` line (in real time no `time.step` waits for
+it, so nothing had said why the world halted), and `time.control` checks `speed` and `pacing`
+before it applies either (a good `speed` beside a refused `pacing` had stayed applied).
+
+2026-11-12, files into the project (editor.md 6.3, 8 item 15): `assets.upload` replaces
+`assets.import {path}`, which the host never built and which needed the file on the host's disk.
+The editor uploads what is picked in the browser or dropped on the Assets panel.

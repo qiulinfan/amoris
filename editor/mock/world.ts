@@ -67,9 +67,14 @@ const DEFAULTS: Record<string, Record<string, unknown>> = {
   Velocity: { linear: [0, 0, 0], angular: [0, 0, 0] },
   RigidBody: { kind: "Dynamic", mass: 0, linear_damping: 0.1, angular_damping: 0.5, gravity_scale: 1, ccd: false },
   Collider: { shape: { Cuboid: { half_extents: [0.5, 0.5, 0.5] } }, density: 1000, friction: 0.5, restitution: 0.1, sensor: false },
-  Model: { mesh: "primitive:cube", color: [0.8, 0.8, 0.8, 1], scale: [1, 1, 1], cast_shadows: true, visible: true },
-  Light: { kind: "Point", color: [1, 0.95, 0.85], intensity: 800, range: 12, spot_angle_deg: 45, shadows: false },
-  Camera: { fov_deg: 60, near: 0.1, far: 1000, active: false },
+  // The visual components' defaults are the host's (amoris-assets' visual.rs), as the schemas say.
+  Model: {
+    cast_shadows: true, color: [1, 1, 1, 1], emissive: [0, 0, 0], ior: null, material: "", mesh: "cube", metallic: 0, roughness: 0.5,
+    scale: [1, 1, 1], transmission: null, visible: true,
+  },
+  Light: { color: [1, 0.96, 0.9], inner_deg: 25, intensity: 6, kind: "directional", outer_deg: 35, range: 20, shadows: true },
+  Camera: { active: true, exposure_ev: 0, far: 0, fov_deg: 60, near: 0.1 },
+  Splat: { asset: "", scale: 1, visible: true },
   Boat: {
     hoist: 0, sheet: 1, rudder: 0, hoist_now: 0, sheet_now: 1, rudder_now: 0, speed: 0, heading_deg: 0, heel_deg: 0,
     afloat: false, aground: false, awa_deg: 0, aws: 0, boom_deg: 0, drive: 0, trim: "Furled",
@@ -84,7 +89,23 @@ const DEFAULTS: Record<string, Record<string, unknown>> = {
   Cargo: { value: 1 },
 };
 
-function typeCheck(component: string, field: string, value: unknown, schema: Record<string, unknown>) {
+function typeCheck(component: string, field: string, value: unknown, schema: Record<string, unknown>, defs: Record<string, Record<string, unknown>>) {
+  // A `$ref` to an enum of documented values (`LightKind`): a value outside it is refused in the
+  // host's words, with what is allowed and the nearest of them. Other references are not checked.
+  if (typeof schema.$ref === "string") {
+    const alts = defs[schema.$ref.split("/").pop()!]?.oneOf as { const?: unknown }[] | undefined;
+    if (!alts?.length || !alts.every((a) => typeof a.const === "string")) return;
+    const allowed = alts.map((a) => a.const as string);
+    if (typeof value !== "string" || !allowed.includes(value)) {
+      throw new MockError("request.invalid_value", `'${field}' must be one of ${allowed.join(", ")}; got '${String(value)}'.`, {
+        allowed,
+        got: value,
+        path: `/${field}`,
+        suggestions: suggest(String(value), allowed),
+      });
+    }
+    return;
+  }
   const s = schema as { type?: unknown; minItems?: number; enum?: unknown[] };
   const types = Array.isArray(s.type) ? s.type : s.type ? [s.type] : [];
   const fail = (expected: string) =>
@@ -191,10 +212,12 @@ export class World {
   get(ref: EntityId | string, components?: string[]): Entity {
     const e = this.resolve(ref, "world.get");
     const out: Record<string, unknown> = {};
-    const wanted = components && components.length ? components : Object.keys(e.components).sort();
+    // As the host: every component the entity has, its `Name` among them, in name order.
+    const wanted = components && components.length ? components : [...Object.keys(e.components), "Name"].sort();
     for (const c of wanted) {
       if (!componentInfo(c)) throw unknownComponent(c);
-      if (c in e.components) out[c] = clone(e.components[c]);
+      if (c === "Name") out.Name = e.name;
+      else if (c in e.components) out[c] = clone(e.components[c]);
     }
     return { id: e.id, name: e.name, components: out };
   }
@@ -388,10 +411,11 @@ function checkValue(component: string, value: unknown, current: unknown, where: 
     throw new MockError("request.invalid_value", `${where}: ${component}'s value is an object of its fields.`, { component });
   }
   const props = (info.schema.properties ?? {}) as Record<string, Record<string, unknown>>;
+  const defs = (info.schema.$defs ?? {}) as Record<string, Record<string, unknown>>;
   for (const [field, v] of Object.entries(value)) {
     const s = props[field];
     if (!s) throw unknownField(field, Object.keys(props), component);
-    typeCheck(component, field, v, s);
+    typeCheck(component, field, v, s, defs);
   }
   const base = isObject(current) ? current : clone(DEFAULTS[component] ?? {});
   return { ...base, ...clone(value) };

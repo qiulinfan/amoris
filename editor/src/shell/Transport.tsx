@@ -3,6 +3,7 @@
 import { ChevronDown, Pause, Play, Square, StepForward } from "lucide-react";
 import { useState } from "react";
 import { setSpeed, stepTick, togglePause, togglePlay } from "../actions/time";
+import { haltedOf, speedOf } from "../host/api";
 import { useConnection } from "../state/connection";
 import { useProfile } from "../state/profile";
 import { useSession } from "../state/session";
@@ -23,7 +24,12 @@ export function Transport() {
   const [speedMenu, setSpeedMenu] = useState<{ x: number; y: number } | null>(null);
   const playing = status?.mode === "play";
   const paused = !!status?.paused;
-  const speed = status?.speed ?? 1;
+  // A poisoned world: the host runs no tick of it, so Pause, Resume and Step have nothing to do;
+  // Stop (in Play) or a restore is the way out.
+  const halted = haltedOf(status);
+  const haltedTip = playing ? "Halted: a tick stopped halfway, so this Play world runs no further tick. Stop returns to the edit world" : "Halted: a tick stopped halfway, so this world runs no further tick. Restore a snapshot to run it again";
+  // The real-time speed of the world shown (each world has its own); null while it is stepped.
+  const speed = speedOf(status);
   return (
     <div className="transport">
       <div className={cx("transport-buttons", playing && "is-playing")}>
@@ -37,8 +43,8 @@ export function Transport() {
           disabled={!online}
           onClick={() => void togglePlay()}
         />
-        <IconButton icon={Pause} label={paused && playing ? "Resume" : "Pause"} keys="Mod+Alt+P" size="lg" active={playing && paused} disabled={!online} onClick={() => void togglePause()} />
-        <IconButton icon={StepForward} label="Step one tick" keys="Mod+Alt+." size="lg" disabled={!online} onClick={() => void stepTick()} />
+        <IconButton icon={Pause} label={paused && playing ? "Resume" : "Pause"} keys="Mod+Alt+P" size="lg" active={playing && paused} disabled={!online || halted} onClick={() => void togglePause()} />
+        <IconButton icon={StepForward} label="Step one tick" keys="Mod+Alt+." size="lg" disabled={!online || halted} onClick={() => void stepTick()} />
       </div>
       <div className="transport-readout" data-tip="Tick · simulated time · ticks per second · cost of a tick">
         <span className="ro">
@@ -67,7 +73,7 @@ export function Transport() {
           setSpeedMenu({ x: r.left, y: r.bottom + 4 });
         }}
       >
-        {speed}× <ChevronDown size={11} />
+        {speed === null ? "stepped" : `${speed}×`} <ChevronDown size={11} />
       </button>
       {speedMenu && (
         <PopupMenu
@@ -77,9 +83,12 @@ export function Transport() {
           items={[0.25, 0.5, 1, 2, 4].map((s) => ({ label: `${s}×`, checked: s === speed, run: () => void setSpeed(s) }))}
         />
       )}
-      <span className={cx("mode-badge", playing ? "is-play" : "is-edit")} data-tip={playing ? "Play: a fork of the edit world; Stop discards it" : "Edit: changes go to the edit world and its undo history"}>
+      <span
+        className={cx("mode-badge", halted ? "is-halted" : playing ? "is-play" : "is-edit")}
+        data-tip={halted ? haltedTip : playing ? "Play: a fork of the edit world; Stop discards it" : "Edit: changes go to the edit world and its undo history"}
+      >
         <span className="mode-dot" />
-        {playing ? (paused ? "PAUSED" : "PLAY") : "EDIT"}
+        {halted ? "HALTED" : playing ? (paused ? "PAUSED" : "PLAY") : "EDIT"}
       </span>
     </div>
   );

@@ -1,5 +1,6 @@
 //! Methods the server answers itself (docs/spec/server.md, methods): the merged catalog, the event,
-//! log and profile streams `amoris-link` keeps for presenters, the project's asset files, the type check
+//! log and profile streams `amoris-link` keeps for presenters, the project's asset files (listed, and
+//! uploaded in parts by `assets.upload`), the type check
 //! stage of `scripts.apply` and `scripts.check`, the script guide (`scripts.guide`), and the
 //! plug-ins (`debug.*`, `capture`), which answer `*.not_available` until the integrator installs
 //! them.
@@ -73,6 +74,31 @@ struct AssetsList {
     /// A directory inside the project; default: the whole project.
     #[serde(default)]
     dir: Option<String>,
+}
+
+/// `assets.upload`'s parameters: a file sent into the project, in parts (server.md 3).
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct AssetsUpload {
+    /// Where the file goes: a path inside the project, such as `models/lighthouse.glb`.
+    path: String,
+    /// This part's bytes, base64 (the standard alphabet, padded). At most 1 MiB of bytes a part
+    /// keeps a call under the HTTP API's 2 MB body.
+    data: String,
+    /// Where this part starts in the file: 0 begins the upload (again), and each later part starts
+    /// where the parts before it ended.
+    #[serde(default)]
+    offset: u64,
+    /// Whether this is the last part (default true): the file is then moved into place.
+    #[serde(default = "yes")]
+    done: bool,
+    /// Whether a file already at `path` is replaced (default false: refused with `assets.exists`).
+    #[serde(default)]
+    overwrite: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// `scripts.apply`'s parameters as the server sees them (the runtime checks them strictly).
@@ -170,6 +196,15 @@ pub fn server_catalog() -> Vec<Value> {
             "read",
             "The project's files with their kind and size (served at /assets/<path>).",
             schema::<AssetsList>(),
+        ),
+        e(
+            "assets.upload",
+            "request",
+            "Writes a file into the project (an asset from the editor's browser or an agent): its \
+             bytes in base64 parts {path, data, offset, done}, offset 0 first, each part at most \
+             1 MiB; the last part (done, the default) moves the file into place and answers \
+             {path, kind, bytes}. A file already at path is replaced only with overwrite.",
+            schema::<AssetsUpload>(),
         ),
         e(
             "scripts.check",
@@ -309,6 +344,47 @@ fn not_available(what: &str, method: &str) -> Problem {
 
 fn usize_of(n: Option<u32>, default: usize) -> usize {
     n.map_or(default, |n| usize::try_from(n).unwrap_or(usize::MAX))
+}
+
+/// The most bytes one `assets.upload` part holds (1 MiB): its base64 keeps a call under the HTTP
+/// API's 2 MB body (axum's default) and a WebSocket message well under its 16 MB frame.
+pub const UPLOAD_PART: usize = 1 << 20;
+
+/// Decodes base64 (RFC 4648's standard alphabet, padded). Written here rather than taken from a
+/// crate: a new dependency changes `Cargo.lock`, which the resident water's kernel key hashes, and
+/// with it every committed viewport build (AGENTS.md, the browser).
+fn base64(text: &str) -> Result<Vec<u8>, String> {
+    let digit = |c: u8| -> Option<u32> {
+        Some(match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        } as u32)
+    };
+    let t = text.as_bytes();
+    if !t.len().is_multiple_of(4) {
+        return Err(format!("its length {} is not a multiple of 4", t.len()));
+    }
+    let mut out = Vec::with_capacity(t.len() / 4 * 3);
+    for (i, quad) in t.chunks(4).enumerate() {
+        let last = (i + 1) * 4 == t.len();
+        let pad = quad.iter().rev().take_while(|&&c| c == b'=').count();
+        if pad > 2 || (pad > 0 && !last) {
+            return Err(format!("'=' inside the text, at {}", i * 4));
+        }
+        let mut n = 0u32;
+        for (k, &c) in quad[..4 - pad].iter().enumerate() {
+            let d = digit(c)
+                .ok_or_else(|| format!("'{}' at {} is not a base64 digit", c as char, i * 4 + k))?;
+            n |= d << (18 - 6 * k);
+        }
+        let b = n.to_be_bytes();
+        out.extend_from_slice(&b[1..4 - pad]);
+    }
+    Ok(out)
 }
 
 /// A file's kind by its extension.
@@ -499,6 +575,7 @@ impl Host {
                 crate::push::profile_of(self, reader.profile_last(n))
             }),
             "assets.list" => decode::<AssetsList>(&params, method).and_then(|p| self.assets(p)),
+            "assets.upload" => decode::<AssetsUpload>(&params, method).and_then(|p| self.upload(p)),
             "scripts.apply" => match decode::<ScriptsApply>(&params, method) {
                 Ok(_) => {
                     // The game compiles, swaps and writes the declarations of what it loaded in
@@ -620,6 +697,117 @@ impl Host {
         ))
     }
 
+    /// `assets.upload`: appends a part to the upload's staging file under `.amoris/uploads/` (a dot
+    /// directory, so neither listed nor served), and on the last part moves it to `path`.
+    fn upload(&self, p: AssetsUpload) -> Result<Value, Problem> {
+        use std::io::Write as _;
+        let invalid = |field: &str, message: String| {
+            Problem::new(
+                "request.invalid_value",
+                message,
+                detail([("path", json!(format!("/{field}")))]),
+            )
+        };
+        let failed = |what: &str, e: std::io::Error| {
+            Problem::new(
+                "assets.write_failed",
+                format!("Could not {what} for '{}': {e}.", p.path),
+                detail([("path", json!(p.path))]),
+            )
+        };
+        if !inside(&p.path) || p.path.ends_with('/') {
+            return Err(invalid(
+                "path",
+                format!("'{}' is not a file path inside the project.", p.path),
+            ));
+        }
+        let bytes = base64(&p.data)
+            .map_err(|e| invalid("data", format!("The data is not base64: {e}.")))?;
+        if bytes.len() > UPLOAD_PART {
+            return Err(invalid(
+                "data",
+                format!(
+                    "A part holds at most {UPLOAD_PART} bytes; this one holds {}.",
+                    bytes.len()
+                ),
+            ));
+        }
+        let root = &self.0.project;
+        let dest = root.join(&p.path);
+        let exists = || {
+            Problem::new(
+                "assets.exists",
+                format!(
+                    "The project already has '{}'; upload with overwrite to replace it.",
+                    p.path
+                ),
+                detail([("path", json!(p.path))]),
+            )
+        };
+        if !p.overwrite && dest.exists() {
+            return Err(exists());
+        }
+        let staging = root.join(".amoris/uploads");
+        std::fs::create_dir_all(&staging).map_err(|e| failed("make the upload directory", e))?;
+        let part = staging.join(format!(
+            "{}.part",
+            p.path.replace('%', "%25").replace('/', "%2F")
+        ));
+        let had = if p.offset == 0 {
+            0
+        } else {
+            std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0)
+        };
+        if had != p.offset {
+            return Err(Problem::new(
+                "assets.upload_offset",
+                format!(
+                    "This part of '{}' starts at {}, but the parts received end at {had}:                      upload from offset {had}, or from 0 again.",
+                    p.path, p.offset
+                ),
+                detail([
+                    ("path", json!(p.path)),
+                    ("expected", json!(had)),
+                    ("got", json!(p.offset)),
+                ]),
+            ));
+        }
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(p.offset != 0)
+            .truncate(p.offset == 0)
+            .open(&part)
+            .map_err(|e| failed("open the upload", e))?;
+        f.write_all(&bytes)
+            .map_err(|e| failed("write the upload", e))?;
+        drop(f);
+        let received = p.offset + bytes.len() as u64;
+        if !p.done {
+            return Ok(json!({"path": p.path, "received": received}));
+        }
+        let parent = dest.parent().unwrap_or(root);
+        std::fs::create_dir_all(parent).map_err(|e| failed("make the directory", e))?;
+        // The directory, links resolved, must still be inside the project.
+        let inside_root = match (parent.canonicalize(), root.canonicalize()) {
+            (Ok(d), Ok(r)) => d.starts_with(r),
+            _ => false,
+        };
+        if !inside_root {
+            let _ = std::fs::remove_file(&part);
+            return Err(invalid(
+                "path",
+                format!("'{}' leads out of the project through a link.", p.path),
+            ));
+        }
+        if !p.overwrite && dest.exists() {
+            let _ = std::fs::remove_file(&part);
+            return Err(exists());
+        }
+        std::fs::rename(&part, &dest).map_err(|e| failed("move the upload into place", e))?;
+        Ok(json!({"path": p.path, "kind": kind_of(&p.path), "bytes": received}))
+    }
+
     async fn docs(&self, query: &str, limit: usize) -> Result<Value, Problem> {
         let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
         let score = |text: &str| {
@@ -703,5 +891,24 @@ fn merge_typecheck(r: Result<Value, Problem>, tc: Value) -> Result<Value, Proble
             }
             Err(p)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::base64;
+
+    #[test]
+    fn base64_decodes_the_standard_alphabet_and_refuses_the_rest() {
+        assert_eq!(base64("").unwrap(), b"");
+        assert_eq!(base64("Zg==").unwrap(), b"f");
+        assert_eq!(base64("Zm8=").unwrap(), b"fo");
+        assert_eq!(base64("Zm9v").unwrap(), b"foo");
+        assert_eq!(base64("Zm9vYmFy").unwrap(), b"foobar");
+        assert_eq!(base64("AP8/+w==").unwrap(), [0x00, 0xff, 0x3f, 0xfb]);
+        assert!(base64("Zm9").is_err());
+        assert!(base64("Zg==Zm9v").is_err());
+        assert!(base64("Zm9-").is_err());
+        assert!(base64("Z===").is_err());
     }
 }

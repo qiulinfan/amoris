@@ -32,19 +32,32 @@ export interface WireEvent {
 
 // ---- Pushed events (section 3) ------------------------------------------------------------------
 
+/** How a world's ticks are paced: only when a `time.step` asks for them, or after the loop's clock
+ * at `speed` times real time. Each world has its own (server.md 3.3: Play's fork starts at 1 unless
+ * `play.start` names a speed, and the edit world's is parked meanwhile). */
+export type Pacing = "stepped" | { real_time: { speed: number } };
+
 export interface Status {
   tick: number;
   t_s: number;
   paused: boolean;
-  pacing: string;
+  /** The pacing of the world shown; the real-time speed is read with `speedOf` (api.ts). */
+  pacing: Pacing;
   mode: "edit" | "play";
-  world_hash: string;
+  /** Null from the game thread's own status (`time.control`, `play.*`, a restore) while the world
+   * is poisoned: a world stopped halfway through a tick has no hash. The pushed status repeats the
+   * last publication's. */
+  world_hash: string | null;
+  /** The world is poisoned: a tick stopped halfway, and none runs until Stop or a restore
+   * (threads.md 8). Read with `haltedOf` (api.ts). */
+  halted?: boolean;
+  /** The tick that poisoned the world (the game thread's own status only). */
+  poisoned?: number | null;
   entities: number;
   /** Simulation ticks per second over the last second (`fps` repeats it for older editors). */
   tps?: number;
   fps?: number;
   tick_ms?: number;
-  speed?: number;
   /** The scripts' bundle hash the world runs (the game thread's status: `time.control`, `play.*`). */
   bundle?: string;
   /** `"breakpoint"` while the debugger holds the game (the `status` method answers from the last publication then). */
@@ -86,12 +99,31 @@ export interface WorldReset {
 export type WorldChanged = WorldDiff | WorldReset;
 
 export interface GameEvent {
+  /** The stream's number, from 1 per host run: what `events.since` and `events.why` take. */
   seq: number;
+  /** The world's own event number, which `cause` names; it starts again in each Play, so it is
+   * not `seq` (absent from hosts before the stream had both). */
+  id?: number;
   tick: number;
   name: string;
   subject: EntityId | null;
   data: unknown;
+  /** The `id` of the event that led to this one. */
   cause: number | null;
+}
+
+/** `events.why` as the host answers it: the event, the events that caused it nearest first, and
+ * whether the chain reached its start (false when a cause has left the host's ring). */
+export interface HostWhy {
+  event: GameEvent;
+  causes: GameEvent[];
+  complete: boolean;
+}
+
+/** A cause chain as the Events panel shows it: oldest first, ending with the event itself. */
+export interface CauseChain {
+  chain: GameEvent[];
+  complete: boolean;
 }
 
 export type LogLevel = "error" | "warn" | "info" | "debug" | "trace";
@@ -475,7 +507,7 @@ export interface Methods {
   "history.undo": [{ group?: string }, { label: string | null }];
   "history.redo": [Record<string, never>, { label: string | null }];
   "history.list": [Record<string, never>, HistoryState];
-  "time.control": [{ pause?: boolean; speed?: number; pacing?: string }, Status];
+  "time.control": [{ pause?: boolean; speed?: number; pacing?: Pacing }, Status];
   "time.step": [
     { ticks?: number; until?: string; watch?: unknown; sample?: { fields: string[]; every?: number } },
     {
@@ -487,7 +519,8 @@ export interface Methods {
       samples?: { columns: string[]; rows: unknown[][]; every: number };
     },
   ];
-  "play.start": [Record<string, never>, Status];
+  /** The fork runs at `speed` (1 when absent), whatever the edit world's speed. */
+  "play.start": [{ speed?: number; paused?: boolean }, Status];
   "play.stop": [Record<string, never>, Status];
   "scripts.list": [Record<string, never>, ScriptInfo[]];
   "scripts.read": [
@@ -499,9 +532,13 @@ export interface Methods {
   "scripts.apply": [{ paths?: string[] }, { bundle: string | null; diagnostics: Diagnostic[] }];
   "scripts.types": [{ text?: boolean; tsconfig?: boolean }, ScriptTypes];
   "assets.list": [{ dir?: string }, AssetInfo[]];
-  "assets.import": [{ path: string }, { asset: string; meshes: number; materials: number }];
-  "events.since": [{ seq: number; limit?: number }, GameEvent[]];
-  "events.why": [{ seq: number }, GameEvent[]];
+  "assets.upload": [
+    { path: string; data: string; offset?: number; done?: boolean; overwrite?: boolean },
+    { path: string; kind: string; bytes: number } | { path: string; received: number },
+  ];
+  /** Without `seq`, the newest `limit` events (100 by default). */
+  "events.since": [{ seq?: number; limit?: number; name?: string }, { events: GameEvent[]; last: number; missed: number }];
+  "events.why": [{ seq: number }, HostWhy];
   "snapshots.list": [Record<string, never>, SnapshotInfo[]];
   /** Keeps the applied scripts unless `bundle: "snapshot"` (server.md 3.3). */
   "snapshots.restore": [{ tick: number; bundle?: RestoreBundle }, Status & { restored?: number; scripts?: RestoredScripts }];

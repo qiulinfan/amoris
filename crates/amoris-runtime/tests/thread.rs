@@ -206,6 +206,26 @@ fn time_control_refuses_speeds_it_cannot_run() {
     let s = dev.call("time_control", json!({})).unwrap().into_json();
     assert_eq!(s["pacing"], json!("stepped"), "{s}");
     assert_eq!(s["paused"], json!(false), "{s}");
+    // `speed` and `pacing` in one call are both checked before either is applied: a good speed
+    // beside a refused pacing does not stay.
+    let e = dev
+        .call(
+            "time_control",
+            json!({"speed": 3.0, "pacing": {"real_time": {"speed": 0.0}}}),
+        )
+        .unwrap_err();
+    assert_eq!(e.code, "request.out_of_range", "{e:#?}");
+    let s = dev.call("time_control", json!({})).unwrap().into_json();
+    assert_eq!(s["pacing"], json!("stepped"), "{s}");
+    // Both good: `pacing` is applied after `speed`.
+    let s = dev
+        .call(
+            "time_control",
+            json!({"pause": true, "speed": 3.0, "pacing": {"real_time": {"speed": 2.0}}}),
+        )
+        .unwrap()
+        .into_json();
+    assert_eq!(s["pacing"], json!({"real_time": {"speed": 2.0}}), "{s}");
     let options = ThreadOptions {
         pacing: amoris_runtime::thread::Pacing::RealTime { speed: -1.0 },
         ..ThreadOptions::new(clock())
@@ -214,6 +234,67 @@ fn time_control_refuses_speeds_it_cannot_run() {
         .err()
         .expect("refused");
     assert_eq!(e.code, "request.out_of_range");
+    drop(dev);
+    h.shutdown(2000).unwrap();
+}
+
+/// threads.md 4.3: a command that changes only how time runs (the pacing, a pause) is published
+/// when no tick follows it, as the same world with the new time status, so a reader (the server's
+/// status push) does not go on saying the pacing and the pause of before it. A command that
+/// changes neither publishes nothing.
+#[test]
+fn a_time_control_publishes_the_time_status_it_changed() {
+    use amoris_link::PacingStatus;
+    let h = sailing();
+    let reader = h.reader();
+    let mut dev = h.developer();
+    let wait_for = |what: &str, test: &dyn Fn(&amoris_link::TimeStatus) -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !test(&reader.latest().time) && Instant::now() < deadline {
+            reader.wait_newer(reader.latest().version, 100);
+        }
+        let latest = reader.latest();
+        assert!(test(&latest.time), "{what}: {:?}", latest.time);
+        latest
+    };
+    let first = reader.latest();
+    assert_eq!(first.time.pacing, PacingStatus::Stepped);
+    assert!(!first.time.paused);
+    // The speed of a paused world: nothing ticks, and the publication says the new pacing.
+    dev.call("time_control", json!({"pause": true, "speed": 2.0}))
+        .unwrap();
+    let paced = wait_for("real time at 2, paused", &|t| {
+        t.pacing == PacingStatus::RealTime { speed: 2.0 } && t.paused
+    });
+    assert!(paced.version > first.version);
+    assert_eq!(
+        (paced.state(), paced.snapshot.world_hash()),
+        (first.state(), first.snapshot.world_hash()),
+        "the same world"
+    );
+    // A call that changes nothing publishes nothing (the second call answers after the first
+    // one's boundary has finished).
+    dev.call("time_control", json!({})).unwrap();
+    dev.call("time_control", json!({"pause": true})).unwrap();
+    dev.call("status", json!({})).unwrap();
+    assert_eq!(reader.latest().version, paced.version);
+    // Running, then paused: the publication after the pause says paused, at the tick it stands.
+    dev.call("time_control", json!({"pause": false, "speed": 8.0}))
+        .unwrap();
+    wait_for("running", &|t| t.tick >= 3 && !t.paused);
+    let s = dev
+        .call("time_control", json!({"pause": true}))
+        .unwrap()
+        .into_json();
+    let held = wait_for("paused", &|t| t.paused);
+    assert_eq!(json!(held.time.tick), s["tick"], "{:?}", held.time);
+    assert_eq!(held.time.pacing, PacingStatus::RealTime { speed: 8.0 });
+    // And stepped again.
+    dev.call("time_control", json!({"pacing": "stepped", "pause": false}))
+        .unwrap();
+    wait_for("stepped", &|t| {
+        t.pacing == PacingStatus::Stepped && !t.paused
+    });
     drop(dev);
     h.shutdown(2000).unwrap();
 }
@@ -246,6 +327,15 @@ fn a_poisoned_world_halts_real_time_and_records_one_fault() {
     assert!(latest.time.halted, "{:?}", latest.time);
     assert!(latest.time.paused, "{:?}", latest.time);
     assert_eq!(latest.state().0, 9);
+    // No step waited for the tick's error: the log stream says why the world halted.
+    let mut next = 0;
+    let lines = reader.logs(&mut next, usize::MAX);
+    let faults: Vec<_> = lines
+        .iter()
+        .filter(|l| l.level == "error" && l.message.starts_with("sim.internal: "))
+        .collect();
+    assert_eq!(faults.len(), 1, "{lines:#?}");
+    assert_eq!(faults[0].tick, Some(10), "{lines:#?}");
     // At 8x a tick is due every 2 ms: a model still asking would fault on each.
     std::thread::sleep(Duration::from_millis(200));
     let s = dev
@@ -259,6 +349,14 @@ fn a_poisoned_world_halts_real_time_and_records_one_fault() {
         s["paused"],
         json!(true),
         "a resume asks once and halts again: {s}"
+    );
+    // The refused resume is logged too, with the tick that poisoned the world.
+    let refused = reader.logs(&mut next, usize::MAX);
+    assert!(
+        refused.iter().any(|l| l.level == "error"
+            && l.message.starts_with("sim.world_poisoned: ")
+            && l.tick == Some(10)),
+        "{refused:#?}"
     );
     assert_eq!(
         dev.call("step", json!({"ticks": 1})).unwrap_err().code,

@@ -9,6 +9,7 @@ import { TopBar } from "./shell/TopBar";
 import { StatusBar } from "./shell/StatusBar";
 import { CommandPalette } from "./shell/CommandPalette";
 import { AboutDialog, PromptDialog, ShortcutsDialog } from "./shell/Dialogs";
+import { Boundary } from "./ui/Boundary";
 import { ContextMenuHost } from "./ui/Menu";
 import { Toasts } from "./ui/Toasts";
 import { TooltipHost } from "./ui/Tooltip";
@@ -22,18 +23,26 @@ export function App() {
   }, [mode]);
   return (
     <div className={cx("app", mode === "play" && "mode-play", paused && "is-debug-paused")}>
-      <TopBar />
+      {/* Each part fails alone: a status a bar cannot draw leaves the panels and the transport up
+          (every dock panel has a boundary of its own, layout/DockLayout.tsx). */}
+      <Boundary name="The top bar">
+        <TopBar />
+      </Boundary>
       <main className="app-main">
         <DockLayout />
       </main>
-      <StatusBar />
-      <ContextMenuHost />
-      <CommandPalette />
-      <PromptDialog />
-      <ShortcutsDialog />
-      <AboutDialog />
-      <Toasts />
-      <TooltipHost />
+      <Boundary name="The status bar">
+        <StatusBar />
+      </Boundary>
+      <Boundary name="An overlay">
+        <ContextMenuHost />
+        <CommandPalette />
+        <PromptDialog />
+        <ShortcutsDialog />
+        <AboutDialog />
+        <Toasts />
+        <TooltipHost />
+      </Boundary>
     </div>
   );
 }

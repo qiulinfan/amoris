@@ -43,7 +43,7 @@ amoris mcp samples/sailing     # MCP over stdio (uses the running host if there 
  editor (/ws)   CLI, tests (/api/call)   MCP clients (/mcp, stdio)
         \              |                    /
          amoris-server: Host::call(via, method, params)
-           |  answered here: catalog, events.*, log.since, profile.frame, assets.list,
+           |  answered here: catalog, events.*, log.since, profile.frame, assets.*,
            |  docs.search, scripts.guide, the type check stage, debug.* and capture (plug-ins)
            v
    amoris-link: GameClient per source (Editor; one Developer for the API; one per MCP session)
@@ -76,7 +76,7 @@ files).
 | Method | Kind | Params | Result |
 |---|---|---|---|
 | `catalog.list` | read | `{}` | the catalog |
-| `status` | read | `{}` | `{tick, t_s, pacing, paused, halted, behind_ms, mode, epoch, world_hash, entities, bundle, writes, poisoned, steps_due, kept, tainted}`; while the debugger holds the game, from the last publication with `state: "breakpoint"` and `paused_at` (3.4) |
+| `status` | read | `{}` | `{tick, t_s, pacing, paused, halted, behind_ms, mode, epoch, world_hash, entities, bundle, writes, poisoned, steps_due, kept, tainted}`; `poisoned` is the tick that stopped halfway, else null, and while it is set `halted` is true and `world_hash` is null (a world between boundaries has no hash); while the debugger holds the game, from the last publication with `state: "breakpoint"` and `paused_at` (3.4) |
 | `project.info` | read | `{}` | `{name, root, rate, scenes, scripts, assets}` |
 | `project.save` | request | `{}` | `{files: ["scene.json"], entities}`: the edit world, one entity per line, every component whole, entity ids as places in the file (simulation.md 7.4) |
 | `world.tree` | read | `{root?, depth?, filter?, with?, limit?}` | `[{id, name, components: [name], children: [...], more?}]`: the roots (entities without a live parent) with their children nested by `Parent`, roots and children in ascending id order; `root` lists one entity with what is under it; `depth` is the levels below the roots, by default and at most 48, and an entity whose children it left out carries their number in `more` (read on with `root`); `filter` and `with` list what matches with the entities it is under; `limit` counts listed entities, a parent before its children |
@@ -88,7 +88,7 @@ files).
 | `scene.load` | write | `{path, mode? = "replace"}` | `{path, mode, spawned, first, despawned}`: another scene file of the project spawned at this boundary, replacing the world's entities or beside them; not undoable, clears the history; recorded as `scene_load {path, mode, scene}` with the scene's bytes as the recording's data (simulation.md 7.6) |
 | `history.list` | read | `{}` | `{undo: [label], redo: [label], entries: {undo: [entry], redo: [entry]}}`: each stack most recent last (the next to undo or redo last), `entries` the same entries in the same order as `{label, source, group?, session?}` (3.1) |
 | `history.undo` / `history.redo` | write | `{group?}` / `{}` | as `world.edit`, with the entry's `label`; an undo with `group` only when the next entry is the whole of that group, else `history.group` (3.1) |
-| `time.control` (`time_control`) | control | `{pause?, speed?, pacing?}` | `status` |
+| `time.control` (`time_control`) | control | `{pause?, speed?, pacing?}` | `status`; `speed` is real time at that speed, `pacing` the pacing itself (it wins when both are given); both are checked before either is applied, so a refused call changes nothing |
 | `time.step` (`step`) | control | `{ticks?, until?, watch?, sample?, trace?}` | `{tick, world_hash, errors, stopped_by?, samples?, writes?}` (`writes`: the write trace, debugger.md 13); at a debugger stop `{tick, world_hash: null, errors: [], paused: true, stopped_by}` (3.2, 3.4) |
 | `play.start` | control | `{speed? = 1, paused?}` | `status` (mode `play`) |
 | `play.stop` | control | `{}` | `status` (mode `edit`) |
@@ -112,6 +112,7 @@ files).
 | `log.since` | read (server) | `{seq?, limit? = 100}` | `{lines: [log line], last}` |
 | `profile.frame` | read (server) | `{ticks? = 60}` (at most 600) | the `profile` summary (4) of the last `ticks` ticks profiled |
 | `assets.list` | read (server) | `{dir?}` | `[{path, kind, bytes}]`, served at `/assets/<path>` |
+| `assets.upload` | request (server) | `{path, data, offset? = 0, done? = true, overwrite? = false}` | `{path, received}` for a part before the last, `{path, kind, bytes}` for the last: a file into the project, its bytes in base64 parts (RFC 4648's standard alphabet, padded) of at most 1 MiB (`UPLOAD_PART`), so a part's call fits the HTTP API's 2 MB body. Offset 0 begins (again) a staging file under `.amoris/uploads/`, each later part must start where the received ones end (else `assets.upload_offset {path, expected, got}`), and the last part moves it to `path`, creating its directories. Refused, changing nothing: a `path` not inside the project (`..`, a root, a dot file or directory, a trailing `/`, a directory that a link leads out of the project) or `data` that is not base64 or holds over 1 MiB (`request.invalid_value`), and a file already at `path` without `overwrite` (`assets.exists`) |
 | `docs.search` | read (server) | `{query, limit? = 10}` | `[{command, doc}`, `{component, doc, fields}` or `{guide, read}]` (a matching section of `scripts.guide`) |
 | `debug.*` | (server) | per amoris-debug (debugger.md 7), one catalog entry each with its schema | `debug.not_available` until a `DebugHub` is installed; `debug.rewind {tick, bundle?}` and `debug.writes {entity, component, field?, ticks?}` (debugger.md 13) are the server's own |
 | `capture` | read (server) | `{position?, look_at? \| rotation?, fov_deg? = 60, width? = 1280, height? = 720, frames? = 0}` (no `position`: the scene's camera; `look_at` defaults to the origin; `rotation` a quaternion `[x, y, z, w]`; `frames` at most 1,200) | `{path, width, height, tick, instances, gpu_ms, pending_assets, spray}`: a PNG under `.amoris/captures/` (amoris-app's `present.rs`); `capture.not_available` until a `CaptureHub` is installed |
@@ -125,9 +126,10 @@ refuses them with `command.thread_only`.
 
 Ops are externally tagged: `{"spawn": {name?, prefab?, components?}}`,
 `{"set": {entity, component, value, replace?}}` (fields merge; keys may be paths, `position.1`;
-`replace` writes the value whole), `{"remove": {entity, component}}`, `{"destroy": {entity}}`. An
-entity is an id, a name or `Name#id`. The call is checked whole against the world as the earlier ops
-leave it, then applied at one boundary; a refusal names the op as written (`/ops/1/set/entity`).
+`replace` writes the value whole; for `Name` the value is the name, a string: Names, below),
+`{"remove": {entity, component}}`, `{"destroy": {entity}}`. An entity is an id, a name or `Name#id`.
+The call is checked whole against the world as the earlier ops leave it, then applied at one
+boundary; a refusal names the op as written (`/ops/1/set/entity`).
 
 The hierarchy (2026-11-12; simulation.md 7.1 and 7.3): an entity is placed under another by a `set`
 of `Parent {parent}` (the parent's id), taken out by a `remove` of it, and spawned under one by
@@ -198,6 +200,40 @@ nothing changes; the editor then writes the dragged fields back instead (editor.
 The server pushes `history` only when it differs from the last one it pushed (amoris-server
 `push_history`): the steps of a streamed drag merge into its entry and leave the list as it was,
 so a drag pushes it once, when its entry appears.
+
+Names (2026-11-11, editor.md 8 item 2): `Name` is the entity's name and the one component whose
+`value` is a string, of at most 64 bytes of UTF-8 (`Name::new`); the catalog's schema of a `set`'s
+`value` is the object of fields or that string (`SetValue`). A `set` of `Name` renames the entity,
+or names one that had none; a name is written whole, so `replace` changes nothing. An object given
+for `Name`, or a string given for another component an edit writes, is `request.wrong_type` at the
+op's `value` (`/ops/0/set/value`; a value that is neither is refused there by the shape,
+`object or string`), and a longer name is `sim.name_too_long` with `path` the same place; nothing is
+applied. A `remove` of `Name` leaves the entity unnamed, as one spawned without `name`: `world.tree`
+and `world.get` answer `name: null`, and only its id finds it. Either is one history entry whose
+undo and redo put the names back (the undo of a first naming removes the name, so the world hashes
+as before it), and is recorded as `world_edit` with the entity's id and the same value, so
+recordings made before, which hold objects only, decode as they did.
+
+The later ops of a call find entities by the names its earlier ops leave, as their `entity` and
+through an entity field of a project component: after a rename the new name finds the entity and
+the old one is `sim.entity_not_found`, unless another entity carries it by then (two entities can
+swap names in one call); a name two entities share by then is `request.ambiguous_ref` (`Name#id` or
+the id says which), and a removed name finds nothing. An entity an earlier op destroys keeps its
+name until the call is applied: naming it is refused with `destroyed_by`, and a name it shares
+stays ambiguous. An entity the call spawns still cannot be named by a later op. In every case an
+op's `entity`, or an entity field of a scene or an edit, that finds no entity says where it was
+written (`path`: `/ops/1/set/entity`, `/ops/1/set/value/take`). The recorded forms hold ids, so a
+replay looks no name up.
+
+What an edit cannot write (2026-11-11): a spawn takes its name as `name`, and `Name` among its
+`components` is refused (`request.invalid_value` at `ops[0].spawn.components.Name`). The registry's
+other components that are neither engine components with a JSON form nor project components are
+state the engine keeps itself (a seat's `Controls`, an observer's `ObserverMemory` and
+`ObserverEvents`): a `set`, a `remove` or a spawn naming one is `request.invalid_value` at the op's
+`component` (a spawn's `components.<Name>`), in a scene too. Until then each of these, `Name`
+included, was answered `sim.component_unknown` with the registry suggesting the very name ("There
+is no component 'Name'; did you mean [\"Name\"]?"); an edit or a scene now answers that code only
+for a name the registry does not hold.
 
 ### 3.2 `time.step` stop conditions
 
@@ -306,7 +342,7 @@ read`, and the CLI had no read timeout, so 28 calls in 11 runs hung until the ag
   section, which equals what the game's own reads answer (`paused_host.rs` compares them call by
   call). `catalog.list` (fetched before serving), `docs.search` (component schemas from the
   publication's registry), `events.*`, `log.since`, `profile.frame`, `assets.list`,
-  `scripts.guide` and `debug.*` never need the game.
+  `assets.upload`, `scripts.guide` and `debug.*` never need the game.
 - **`play.stop` in Play ends Play wherever the debugger holds it.** Stop drops the fork, held tick
   and all, so the server has the debugger pass over every pause (amoris-debug `DebugHub::pass`,
   the server's `DebugHub::pass`) from the moment it sees one until the Stop lands: the held tick
@@ -353,10 +389,10 @@ always). A socket that falls more than 1,024 pushes behind gets
 
 | Topic | Data | When |
 |---|---|---|
-| `status` | `{tick, t_s, paused, pacing, halted, behind_ms, mode, epoch, world_hash, entities, tps, state, version}` | on connect; every 100 ms if it changed, else every second |
+| `status` | `{tick, t_s, paused, pacing, halted, behind_ms, mode, epoch, world_hash, entities, tps, state, version}`: the last publication's, which a `time.control` that changes the pacing or the pause brings up to date even when no tick follows (threads.md 4.3). For a poisoned world `halted` is true and `world_hash` is still the last publication's, where the `status` method's is null | on connect; every 100 ms if it changed, else every second |
 | `world.changed` | `{tick, spawned, despawned, changed: [[id, component]], truncated?}`, or `{tick, reset: true, epoch}` | every 100 ms when publications came, coalesced; a reset when the world was replaced (it covers changes in the same 100 ms) |
 | `events` | `[{seq, id, tick, name, subject, cause, data}]` | every 50 ms, at most 500 per push |
-| `log` | `{seq, level, source, message, file?, line?, tick?}` | one per line: script `console.*`, failed system runs |
+| `log` | `{seq, level, source, message, file?, line?, tick?}` | one per line: script `console.*`, failed system runs, and the error of a tick that poisoned the world (`<code>: <message>` at level `error`, with that tick; threads.md 8) |
 | `history` | `{undo, redo, entries}` (`history.list`'s answer, with sessions) | after `world.edit`, undo, redo, restore, Play, Stop, when it changed (3.1) |
 | `agent` | `{session, kind: "call"/"result", method, ok?, summary}` | each MCP call and its result |
 | `debug` | debugger.md 7's state on a pause, `{state: "running"}` on a resume | pushed by `amoris serve`'s debugger (amoris-app `forward_debug_events`); script console lines and failed calls the debugger saw go to `log` |
@@ -581,6 +617,17 @@ tick out, and that the held host answers every nested `world.tree` as the game d
 reader alone turns nothing on) and that Play starts the ring again; amoris-link's `profile` tests
 the summaries, the rows' order, the world's ticks only, and that a reader holding the ring never
 stops the game thread.
+
+Names (3.1; 2026-11-11, macOS): `crates/amoris-runtime/tests/edits.rs` tests the rename in both
+forms with its recorded form, the refusals with their paths, the removal of a name, the names the
+later ops of a call see and what an edit cannot write, and `tests/history.rs` that a rename is one
+entry whose undo and redo put the names back, also for an entity that had none and for renames of
+one group; each records and replays. `edit.rs`'s unit test decodes a canonical `world_edit` as
+recordings held it before. amoris-app's `tests/history_host.rs` renames through `Host::call` (the
+catalog's schema, the publication's `Name` rows, an MCP session, undo and redo), and the smoke test
+renames over `/ws` as the editor does (the `world.changed` push naming `[id, "Name"]`, the tree by
+the new name, a name of 66 bytes refused at `/ops/0/set/value`, the undo) and reads the string
+form in `/api/catalog`.
 
 ## 11. Open
 

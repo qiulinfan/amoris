@@ -52,6 +52,10 @@ export function NumberField({
   const [scrubbing, setScrubbing] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const committed = useRef(false);
+  // Whether the text was typed into since the field took the focus. Only then is it the user's:
+  // untouched, it is the value from when the field was focused, which an edit from elsewhere (the
+  // gizmo, another client, a tick in Play) may have replaced since.
+  const typed = useRef(false);
   const drag = useRef<{ start: number; acc: number; moved: boolean; last: number } | null>(null);
 
   const perPixel = step ?? (integer ? 0.1 : min !== undefined && max !== undefined && max - min <= 2 ? (max - min) / 300 : 0.02);
@@ -116,14 +120,17 @@ export function NumberField({
 
   const commitText = () => {
     if (text === null) return;
-    if (committed.current) {
+    if (committed.current || !typed.current) {
+      // Committed already, or nothing was typed: leaving the field writes nothing. Committing the
+      // untouched text would write the value of the moment of the focus back over a newer one.
       setText(null);
       return;
     }
     committed.current = true;
     const v = evaluateNumber(text);
     setText(null);
-    if (v !== null && v !== value) onChange(fix(v), "commit");
+    // A mixed field takes any value typed, the primary's own too: it sets every selected entity.
+    if (v !== null && (mixed || v !== value)) onChange(fix(v), "commit");
   };
 
   // Fewer decimals for larger numbers, so vectors fit narrow columns; the input shows all on focus.
@@ -146,11 +153,20 @@ export function NumberField({
         inputMode="decimal"
         onFocus={(e) => {
           committed.current = false;
+          typed.current = false;
           setText(mixed ? "" : String(Math.round(value * 1e6) / 1e6));
-          requestAnimationFrame(() => e.target.select());
+          // Selected on the next frame, after the click that focused it has placed its caret. A
+          // frame can come late: by then Enter may have committed and blurred the field, and
+          // selecting a blurred input focuses it again with the value from before the edit, which
+          // its next blur would commit back as a second edit.
+          const el = e.target;
+          requestAnimationFrame(() => {
+            if (document.activeElement === el) el.select();
+          });
         }}
         onChange={(e) => {
           committed.current = false;
+          typed.current = true;
           setText(e.target.value);
         }}
         onBlur={commitText}

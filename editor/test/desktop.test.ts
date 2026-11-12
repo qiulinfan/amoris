@@ -17,7 +17,7 @@ test("native close guard follows unsaved buffers and the edit world across Play,
     },
   } });
   const status = (hash: string, mode: "edit" | "play" = "edit"): Status => ({
-    world_hash: hash, mode, tick: 0, t_s: 0, paused: true, pacing: "paused", entities: 1,
+    world_hash: hash, mode, tick: 0, t_s: 0, paused: true, pacing: "stepped", entities: 1,
   });
   installDesktop();
   useSession.getState().setStatus(status("opened"));
