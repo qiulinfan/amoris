@@ -236,11 +236,15 @@ export function fieldSpec(name: string, schema: JsonSchema, root: JsonSchema, de
   };
 }
 
-/** The editable fields of a component, or null when its value is not an object (`Name`). */
+/**
+ * The editable fields of a component, or null when its value is not an object (`Name`, a string).
+ * An object without fields (a marker such as `Occluder`, whose schema is `{type: "object"}` with no
+ * `properties`) has none: its value is `{}`.
+ */
 export function componentFields(info: ComponentInfo): FieldSpec[] | null {
   const root = info.schema as JsonSchema;
   const props = root.properties;
-  if (!props) return null;
+  if (!props) return types(root).includes("object") ? [] : null;
   return Object.keys(props).map((k) => fieldSpec(k, props[k]!, root));
 }
 
@@ -281,7 +285,8 @@ export function defaultFor(kind: FieldKind): unknown {
   }
 }
 
-/** A whole component value from its schema, for "Add component". */
+/** A whole component value from its schema, for "Add component": the fields' defaults (`{}` for a
+ * component without fields), or `""` for one whose value is a string. */
 export function defaultComponent(info: ComponentInfo): unknown {
   const fields = componentFields(info);
   if (!fields) return "";
@@ -292,6 +297,50 @@ export function defaultComponent(info: ComponentInfo): unknown {
       return [f.name, d !== undefined ? d : defaultFor(f.kind)];
     }),
   );
+}
+
+/**
+ * Whether a wire value names the variant `meaning`, whatever spelling its registry chose:
+ * `directional`, `Directional` and `DIRECTIONAL` are one variant, `real_time` and `RealTime` too.
+ * For reading an enum's value; a value to send comes from `enumValue`.
+ */
+export function sameVariant(value: unknown, meaning: string): boolean {
+  const fold = (s: string) => s.toLowerCase().replace(/[_\-\s]/g, "");
+  return typeof value === "string" && fold(value) === fold(meaning);
+}
+
+/**
+ * The registry's own spelling of the value of an enum field that means `meaning` (`point` where the
+ * host says `point`, `Point` where it says so), or null when the component, the field or the value
+ * is missing. Enum values the editor sends are read here, never written as literals.
+ */
+export function enumValue(info: ComponentInfo | undefined, field: string, meaning: string): string | null {
+  if (!info) return null;
+  let kind = componentFields(info)?.find((f) => f.name === field)?.kind;
+  if (kind?.kind === "nullable") kind = kind.inner;
+  if (kind?.kind === "enum") return kind.options.find((o) => sameVariant(o.value, meaning))?.value ?? null;
+  if (kind?.kind === "variant") return kind.variants.find((v) => v.payload === null && sameVariant(v.name, meaning))?.name ?? null;
+  return null;
+}
+
+/**
+ * The components a search finds, the best match first: the name itself, then names that start with
+ * the text, names that contain it, and last those whose doc alone mentions it, each group in the
+ * list's order. So Enter on a typed name adds that component, not one whose doc speaks of it.
+ */
+export function searchComponents<T extends { name: string; doc: string }>(list: T[], q: string): T[] {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return list;
+  const rank = (c: T): number => {
+    const name = c.name.toLowerCase();
+    if (name === needle) return 0;
+    if (name.startsWith(needle)) return 1;
+    if (name.includes(needle)) return 2;
+    return c.doc.toLowerCase().includes(needle) ? 3 : 4;
+  };
+  const groups: T[][] = [[], [], [], []];
+  for (const c of list) groups[rank(c)]?.push(c);
+  return groups.flat();
 }
 
 /** Reads a vector-like value (array or {x,y,z,w}/{r,g,b,a} object) as numbers. */

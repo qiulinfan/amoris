@@ -113,12 +113,14 @@ export function ComponentCard({ info, ids, value }: { info: ComponentInfo; ids: 
       </header>
       {open && (
         <div className="card-body">
-          {fields ? (
+          {!fields ? (
+            <div className="card-note">This component's value is not an object.</div>
+          ) : fields.length === 0 ? (
+            <div className="card-note">This component has no fields: it marks the entity.</div>
+          ) : (
             fields.map((f) => (
               <FieldRow key={f.name} spec={f} value={obj[f.name]} onChange={(v, phase) => change(f.name, v, phase)} onCancel={() => cancel(f.name)} />
             ))
-          ) : (
-            <div className="card-note">This component's value is not an object.</div>
           )}
         </div>
       )}

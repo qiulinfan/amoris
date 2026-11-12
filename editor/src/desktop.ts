@@ -36,7 +36,8 @@ export function installDesktop() {
   desktop.onCommand(runCommand);
   useScripts.subscribe(reportModified);
   useSession.subscribe(({ status }) => {
-    if (status?.mode === "edit") {
+    // A poisoned world's status has no hash: it says nothing of whether the scene changed.
+    if (status?.mode === "edit" && status.world_hash !== null) {
       editHash = status.world_hash;
       savedEditHash ??= editHash;
     }

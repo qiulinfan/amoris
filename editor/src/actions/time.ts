@@ -1,17 +1,20 @@
 // The transport: Play forks the edit world, Stop discards the fork, Pause and Step drive time.
 
-import { api } from "../host/api";
+import { api, haltNotice, haltedOf, speedOf } from "../host/api";
 import { refreshSnapshots } from "../host/sync";
 import { logLocal } from "../state/logs";
 import { useSession } from "../state/session";
+import { useUi } from "../state/ui";
 import { attempt } from "./report";
 import { applyScripts } from "./scripts";
 import { desktopEditHash, markDesktopSceneSaved } from "../desktop";
 
 const status = () => useSession.getState().status;
 
+/** Play, at the speed the transport shows: the host starts a fork at 1 unless told (server.md 3.3). */
 export async function play() {
-  const s = await attempt(api.play.start(), "Play");
+  const speed = speedOf(status());
+  const s = await attempt(api.play.start(speed === null || speed === 1 ? undefined : speed), "Play");
   if (s) useSession.getState().setStatus(s);
   void refreshSnapshots();
 }
@@ -40,9 +43,19 @@ export async function togglePlay() {
   else await play();
 }
 
+/** Whether the world shown is poisoned, saying so: the host runs no tick of it (a resume halts
+ * again, a step is refused), so Pause, Resume and Step ask for nothing then. Their buttons are
+ * disabled; this is for their keys and the palette. */
+function halted(): boolean {
+  const st = status();
+  if (!st || !haltedOf(st)) return false;
+  useUi.getState().toast({ kind: "warn", ...haltNotice(st) });
+  return true;
+}
+
 export async function togglePause() {
   const st = status();
-  if (!st) return;
+  if (!st || halted()) return;
   if (st.mode === "edit") {
     await play();
     await setPaused(true);
@@ -59,7 +72,7 @@ export async function setPaused(pause: boolean) {
 /** One tick. From Edit, starts Play paused first (as Unity's Step does). */
 export async function stepTick(ticks = 1) {
   const st = status();
-  if (!st) return;
+  if (!st || halted()) return;
   if (st.mode === "edit") {
     await play();
     await setPaused(true);

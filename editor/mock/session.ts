@@ -13,13 +13,37 @@ import { ASSETS } from "./assets";
 
 export type Broadcast = (topic: string, data: unknown) => void;
 
+/** An event as the host's stream holds it: `seq` the stream's number, `id` the world's own event
+ * number, which `cause` names (the mock numbers both alike). */
 export interface GameEvent {
   seq: number;
+  id: number;
   tick: number;
   name: string;
   subject: number | null;
   data: Record<string, unknown>;
   cause: number | null;
+}
+
+/** How a world's ticks are paced, as the host's status says it. */
+export type Pacing = "stepped" | { real_time: { speed: number } };
+
+/** The most ticks one frame of the mock's loop runs, whatever the speed. */
+const MAX_TICKS_A_FRAME = 64;
+
+/** A pacing the host would take: `speed` above 0 and at most 1000. */
+function checkPacing(pacing: Pacing): Pacing {
+  if (pacing === "stepped") return pacing;
+  const speed = pacing.real_time.speed;
+  if (!(Number.isFinite(speed) && speed > 0 && speed <= 1000)) {
+    throw new MockError("request.out_of_range", `'speed' must be above 0 and at most 1000; got ${speed}.`, {
+      got: speed,
+      max: 1000,
+      min_exclusive: 0,
+      path: "/pacing/real_time/speed",
+    });
+  }
+  return pacing;
 }
 
 interface Snapshot {
@@ -39,8 +63,10 @@ export class Session {
   tick = 0;
   t = 0;
   paused = true;
-  speed = 1;
-  pacing: "realtime" | "fast" = "realtime";
+  /** Each world has its own pacing, as on the host: the edit world's stays what it was set to
+   * while Play's fork runs at the speed `play.start` gave it. */
+  private editPacing: Pacing = { real_time: { speed: 1 } };
+  private playPacing: Pacing = { real_time: { speed: 1 } };
   started = false; // the "start" systems ran in this Play
   scripts = new Scripts();
   events: GameEvent[] = [];
@@ -74,6 +100,16 @@ export class Session {
     return this.playWorld ? "play" : "edit";
   }
 
+  /** The pacing of the world shown. */
+  get pacing(): Pacing {
+    return this.playWorld ? this.playPacing : this.editPacing;
+  }
+
+  private setPacing(pacing: Pacing) {
+    if (this.playWorld) this.playPacing = pacing;
+    else this.editPacing = pacing;
+  }
+
   /** The world shown, as the host counts it: Play, Stop and a restore each replace it. */
   private epoch = 0;
 
@@ -83,7 +119,8 @@ export class Session {
       t_s: Math.round(this.t * 1000) / 1000,
       paused: this.paused || this.debugger.paused !== null,
       pacing: this.pacing,
-      speed: this.speed,
+      // The host's `halted` (a world poisoned by a tick that failed halfway): the mock's never is.
+      halted: false,
       mode: this.mode,
       world_hash: this.world.hash(),
       epoch: this.epoch,
@@ -108,12 +145,13 @@ export class Session {
         const all = [...this.events, ...batch];
         for (let i = all.length - 1; i >= 0; i--) {
           if (all[i]!.name === ev.causeName && all[i]!.subject === ev.subject) {
-            cause = all[i]!.seq;
+            cause = all[i]!.id;
             break;
           }
         }
       }
-      batch.push({ seq: ++this.seq, tick: this.tick, name: ev.name, subject: ev.subject, data: ev.data, cause });
+      const seq = ++this.seq;
+      batch.push({ seq, id: seq, tick: this.tick, name: ev.name, subject: ev.subject, data: ev.data, cause });
     }
     this.events.push(...batch);
     if (this.events.length > 20000) this.events.splice(0, this.events.length - 20000);
@@ -189,9 +227,12 @@ export class Session {
   /** The real-time loop: called every 1/60 s of wall time. */
   frame() {
     this.fps = 58.5 + this.noise() * 3;
-    if (this.mode !== "play" || this.paused || this.debugger.paused) return;
-    const ticks = this.pacing === "fast" ? 8 : Math.max(1, Math.round(this.speed));
-    const every = this.speed < 1 ? Math.round(1 / this.speed) : 1;
+    const pacing = this.pacing;
+    // Stepped: ticks run only when a `time.step` asks for them.
+    if (this.mode !== "play" || this.paused || this.debugger.paused || pacing === "stepped") return;
+    const speed = pacing.real_time.speed;
+    const ticks = Math.min(MAX_TICKS_A_FRAME, Math.max(1, Math.round(speed)));
+    const every = speed < 1 ? Math.round(1 / speed) : 1;
     if (every > 1 && Math.floor(performance.now() / 16.67) % every !== 0) return;
     for (let i = 0; i < ticks; i++) if (!this.stepOnce()) break;
   }
@@ -415,16 +456,20 @@ export class Session {
     },
     "history.list": () => this.world.history(),
     "time.control": (p) => {
+      // As the host: `speed` is real time at that speed, `pacing` the pacing itself, of the world
+      // shown; both are checked before anything changes.
+      const speed = typeof p.speed === "number" ? checkPacing({ real_time: { speed: p.speed } }) : undefined;
+      const pacing = p.pacing !== undefined && p.pacing !== null ? checkPacing(pacingOf(p.pacing)) : undefined;
+      if (this.mode === "edit" && p.pause === false) throw new MockError("time.edit_mode", "The edit world does not run; press Play.");
+      if (speed) this.setPacing(speed);
+      if (pacing) this.setPacing(pacing);
       if (typeof p.pause === "boolean") {
-        if (this.mode === "edit" && !p.pause) throw new MockError("time.edit_mode", "The edit world does not run; press Play.");
         this.paused = p.pause;
         if (!p.pause && this.debugger.paused) {
           this.debugger.resume();
           this.broadcast("debug", { state: "running" });
         }
       }
-      if (typeof p.speed === "number") this.speed = p.speed;
-      if (p.pacing === "realtime" || p.pacing === "fast") this.pacing = p.pacing;
       return this.status();
     },
     "time.step": (p) => {
@@ -446,14 +491,17 @@ export class Session {
       }
       return { tick: this.tick, ...(stopped_by ? { stopped_by } : {}) };
     },
-    "play.start": () => {
+    "play.start": (p) => {
       if (this.playWorld) throw new MockError("play.already", "Play is already running; Stop first.");
+      // As the host: the fork runs at `speed`, 1 when absent, whatever the edit world's speed.
+      const pacing = checkPacing({ real_time: { speed: typeof p.speed === "number" ? p.speed : 1 } });
       this.playWorld = this.editWorld.clone();
+      this.playPacing = pacing;
       this.epoch++;
       this.tick = 0;
       this.t = 0;
       this.started = false;
-      this.paused = false;
+      this.paused = p.paused === true;
       this.snapshots = [];
       this.keepSnapshot();
       this.broadcast("history", this.world.history());
@@ -503,17 +551,36 @@ export class Session {
       this.log({ level: "info", source: "assets", message: `Imported ${path} → assets/${dest}` });
       return { asset: dest, meshes: kind === "model" ? 1 : 0, materials: kind === "model" ? 1 : 0 };
     },
-    "events.since": (p) => this.events.filter((e) => e.seq > Number(p.seq)).slice(0, Number(p.limit ?? 1000)),
+    // As the host: after `seq` the first `limit` events, without it the newest `limit` (100 by
+    // default); `last` is the newest event's stream number. The mock keeps every event, so none is
+    // missed.
+    "events.since": (p) => {
+      const limit = typeof p.limit === "number" ? p.limit : 100;
+      const events = typeof p.seq === "number" ? this.events.filter((e) => e.seq > Number(p.seq)).slice(0, limit) : this.events.slice(Math.max(0, this.events.length - limit));
+      return { events, last: this.events.at(-1)?.seq ?? (typeof p.seq === "number" ? p.seq : 0), missed: 0 };
+    },
+    // As the host: the event and the events that caused it, nearest first, each the latest earlier
+    // event with the cause's `id`.
     "events.why": (p) => {
-      const chain: GameEvent[] = [];
-      let cur = this.events.find((e) => e.seq === Number(p.seq));
-      if (!cur) throw new MockError("events.not_found", `No kept event has seq ${p.seq}.`, { seq: p.seq });
-      while (cur) {
-        chain.unshift(cur);
-        const cause: number | null = cur.cause;
-        cur = cause === null ? undefined : this.events.find((e) => e.seq === cause);
+      const at = this.events.findIndex((e) => e.seq === Number(p.seq));
+      if (at < 0) {
+        throw new MockError("events.not_found", `No event with stream number ${p.seq} is held.`, { seq: p.seq, oldest: this.events[0]?.seq ?? null, newest: this.events.at(-1)?.seq ?? null });
       }
-      return chain;
+      const event = this.events[at]!;
+      const causes: GameEvent[] = [];
+      let complete = true;
+      let upto = at;
+      for (let cause = event.cause; cause !== null && causes.length < 64; ) {
+        const i = this.events.slice(0, upto).findLastIndex((e) => e.id === cause);
+        if (i < 0) {
+          complete = false;
+          break;
+        }
+        causes.push(this.events[i]!);
+        cause = this.events[i]!.cause;
+        upto = i;
+      }
+      return { event, causes, complete };
     },
     "snapshots.list": () => this.snapshots.map((s) => ({ tick: s.tick, t_s: Math.round(s.t_s * 1000) / 1000, hash: s.hash })),
     "snapshots.restore": (p) => {
@@ -597,6 +664,20 @@ export class Session {
     "profile.frame": (p) => this.profile(Math.min(600, Math.max(1, Number(p.ticks ?? 60)))),
   };
 
+}
+
+/** `time.control`'s `pacing`: `"stepped"` or `{real_time: {speed}}`, refused otherwise as the host
+ * refuses it. */
+function pacingOf(raw: unknown): Pacing {
+  if (raw === "stepped") return raw;
+  const speed = isObject(raw) && isObject(raw.real_time) ? raw.real_time.speed : undefined;
+  if (typeof speed === "number") return { real_time: { speed } };
+  throw new MockError("request.invalid_value", `'pacing' must be one of stepped; got ${typeof raw === "string" ? `'${raw}'` : JSON.stringify(raw)}.`, {
+    allowed: ["stepped"],
+    got: raw,
+    path: "/pacing",
+    suggestions: [],
+  });
 }
 
 /** Milliseconds to the tenth of a microsecond, as the host rounds them. */

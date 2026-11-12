@@ -8,6 +8,7 @@ import { useMemo } from "react";
 import { bindDock } from "./dock";
 import { PANEL_BY_ID, PANELS, type Area } from "./panels";
 import { logLocal } from "../state/logs";
+import { Boundary } from "../ui/Boundary";
 
 const LAYOUT_KEY = "amoris.editor.layout.v1";
 
@@ -98,7 +99,9 @@ export function DockLayout() {
           const C = p.component;
           const Wrapped = (_props: IDockviewPanelProps) => (
             <div className={`dock-panel panel-${p.id}`}>
-              <C />
+              <Boundary name={`The ${p.title} panel`}>
+                <C />
+              </Boundary>
             </div>
           );
           Wrapped.displayName = `Panel(${p.id})`;

@@ -1,6 +1,6 @@
 import { Bot, Bug, CircleAlert, Cpu, Hash, MousePointer2, TriangleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
-import { host } from "../host/api";
+import { haltedOf, host, shortHash } from "../host/api";
 import { openPanel } from "../layout/dock";
 import { useAgent } from "../state/agent";
 import { useConnection } from "../state/connection";
@@ -71,8 +71,8 @@ export function StatusBar() {
       {status && (
         <>
           <span className="sb-item">{status.entities} entities</span>
-          <span className="sb-item mono" data-tip="World hash (canonical encoding)">
-            <Hash size={12} /> {status.world_hash.slice(0, 8)}
+          <span className="sb-item mono" data-tip={haltedOf(status) && status.world_hash === null ? "No world hash: the world stopped halfway through a tick" : "World hash (canonical encoding)"}>
+            <Hash size={12} /> {shortHash(status)}
           </span>
         </>
       )}

@@ -30,6 +30,12 @@ export function lookAt(eye: V3, target: V3): Q4 {
   return [cy * sx, cx * sy, -sy * sx, cy * cx];
 }
 
+/** A `Model` as the host holds one: its defaults (amoris-assets' visual.rs) with a mesh, a base
+ * colour and a scale. */
+export function model(mesh: string, color: [number, number, number, number], scale: V3) {
+  return { cast_shadows: true, color, emissive: [0, 0, 0], ior: null, material: "", mesh, metallic: 0, roughness: 0.5, scale, transmission: null, visible: true };
+}
+
 export function crate(name: string, position: V3, yawDeg: number, value: number) {
   return {
     name,
@@ -39,7 +45,7 @@ export function crate(name: string, position: V3, yawDeg: number, value: number)
       RigidBody: { kind: "Dynamic", mass: 0, linear_damping: 0.4, angular_damping: 0.8, gravity_scale: 1, ccd: false },
       Collider: { shape: { Cuboid: { half_extents: [0.3, 0.3, 0.3] } }, density: 350, friction: 0.5, restitution: 0.1, sensor: false },
       Cargo: { value },
-      Model: { mesh: "models/crate.glb", color: [0.42, 0.25, 0.11, 1], scale: [0.6, 0.6, 0.6], cast_shadows: true, visible: true },
+      Model: model("models/crate.glb", [0.42, 0.25, 0.11, 1], [0.6, 0.6, 0.6]),
     },
   };
 }
@@ -72,7 +78,7 @@ export function sailingWorld(): World {
     Crew: { take: null },
     Tally: { taken: 0, worth: 0, total: 0 },
     Log: { distance: 0, top_speed: 0, sail_set: false },
-    Model: { mesh: "models/sloop.glb", color: [0.86, 0.88, 0.9, 1], scale: [1, 1, 1], cast_shadows: true, visible: true },
+    Model: model("models/sloop.glb", [0.86, 0.88, 0.9, 1], [1, 1, 1]),
   });
   for (const c of [
     crate("Crate1", [5, 0, 2.2], 10, 1),
@@ -84,11 +90,11 @@ export function sailingWorld(): World {
   }
   w.spawnRaw("Sun", {
     Transform: { position: [-20, 40, 20], rotation: lookAt([-20, 40, 20], [0, 0, 0]) },
-    Light: { kind: "Directional", color: [1, 0.95, 0.86], intensity: 100000, range: 0, spot_angle_deg: 45, shadows: true },
+    Light: { color: [1, 0.95, 0.86], inner_deg: 25, intensity: 10, kind: "directional", outer_deg: 35, range: 20, shadows: true },
   });
   w.spawnRaw("Camera", {
     Transform: { position: [-14, 7, 16], rotation: lookAt([-14, 7, 16], [10, 0, 0]) },
-    Camera: { fov_deg: 55, near: 0.1, far: 2000, active: true },
+    Camera: { active: true, exposure_ev: 0, far: 2000, fov_deg: 55, near: 0.1 },
   });
   const course = w.spawnRaw("Course", { Transform: { position: [0, 0, 0], rotation: [0, 0, 0, 1] } });
   const buoy = (name: string, position: V3, color: [number, number, number, number]) =>
@@ -96,7 +102,7 @@ export function sailingWorld(): World {
       Parent: { parent: course.id },
       Transform: { position, rotation: [0, 0, 0, 1] },
       Collider: { shape: { Ball: { radius: 0.45 } }, density: 300, friction: 0.5, restitution: 0.2, sensor: false },
-      Model: { mesh: "primitive:sphere", color, scale: [0.9, 0.9, 0.9], cast_shadows: true, visible: true },
+      Model: model("sphere", color, [0.9, 0.9, 0.9]),
     });
   buoy("Buoy A", [14, 0.1, 6], [0.95, 0.32, 0.05, 1]);
   buoy("Buoy B", [32, 0.1, 3], [0.95, 0.32, 0.05, 1]);

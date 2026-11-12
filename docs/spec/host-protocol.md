@@ -245,3 +245,21 @@ from a host without sources. The order stays this draft's (each stack most recen
 reverses the redo stack itself. Adopted 2026-11-11: `set` of `Name` takes a string (section 4;
 server.md 3.1, Names); until then the host refused the editor's rename (`request.wrong_type`: the
 value had to be an object).
+
+2026-11-12: the editor changed to the host's forms where its basic edits had been written against
+the mock's (editor.md 8, items 8 and 12): a light's `kind` in the registry's own spelling
+(`directional`, `point`, `spot`), the primitives' names as `Model.mesh` takes them (`cube`, not
+`primitive:cube`), a splat asset as `Splat {asset}`, `events.why` as `{event, causes, complete}`,
+the real-time speed from the status's `pacing`, and `play.start {speed}` for Play at the speed shown
+(a fork starts at 1 otherwise). The mock answers the same forms. The host changed in one place: a
+`time.control` that changes the pacing or the pause is published even when no tick follows
+(threads.md 4.3), so the `status` push no longer says the pacing and the pause of the last tick or
+write; the editor's transport reads both from it.
+
+2026-11-12, a poisoned world (editor.md 8, item 14): the status the game thread answers
+(`time.control`, `play.*`, `status`) carries `world_hash: null` and the failed tick in `poisoned`
+while a world is poisoned, and the editor, which had typed the hash as a string, went blank on it.
+The editor reads both forms now (`halted`, or `poisoned` set). The host changed in two places: the
+error of the tick that poisoned the world is a `log` line (in real time no `time.step` waits for
+it, so nothing had said why the world halted), and `time.control` checks `speed` and `pacing`
+before it applies either (a good `speed` beside a refused `pacing` had stayed applied).

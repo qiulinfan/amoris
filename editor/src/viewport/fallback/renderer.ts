@@ -4,6 +4,7 @@
 // Flat-shaded low-poly stand-ins sorted back to front, an animated sea from the `Sea` component's
 // waves, a fading grid, light and camera icons, and the gizmo on top.
 
+import { sameVariant } from "../../host/schema";
 import { View, type Camera } from "../camera";
 import type { Gizmo, Overlays, PickHit, RenderStats, Viewport } from "../engine";
 import { FrameMeter } from "../meter";
@@ -227,7 +228,7 @@ class FallbackViewport implements Viewport {
     if (sea) this.sea(view, sea.waves ?? [], sea.level ?? 0, t, horizonY);
     if (this.overlays.grid) this.grid(view, sea ? (sea.level ?? 0) + 0.02 : 0);
 
-    const sun = entities.find((e) => (e.components.Light as { kind?: string } | undefined)?.kind === "Directional");
+    const sun = entities.find((e) => sameVariant((e.components.Light as { kind?: string } | undefined)?.kind, "directional"));
     const lightDir = sun ? normalize(rotate(asQuat((sun.components.Transform as { rotation?: unknown } | undefined)?.rotation), [0, 0, -1])) : normalize([-0.45, -0.8, -0.4]);
 
     this.faces = [];
@@ -433,10 +434,10 @@ class FallbackViewport implements Viewport {
       const p = view.project(pos);
       if (p.visible) {
         const col = (light.color ?? [1, 0.95, 0.8]).map(srgb);
-        this.icons.push({ entity: e.id, x: p.x, y: p.y, r: 10, depth: p.depth, kind: light.kind === "Directional" ? "sun" : "light", color: rgb(col) });
+        this.icons.push({ entity: e.id, x: p.x, y: p.y, r: 10, depth: p.depth, kind: sameVariant(light.kind, "directional") ? "sun" : "light", color: rgb(col) });
         if (this.selection.has(e.id)) {
           const dir = rotate(rot, [0, 0, -1]);
-          const s = this.line3(view, pos, add(pos, scale(dir, light.kind === "Directional" ? 6 : 3)));
+          const s = this.line3(view, pos, add(pos, scale(dir, sameVariant(light.kind, "directional") ? 6 : 3)));
           if (s) this.dashed(s, "rgba(255,214,102,0.8)");
         }
       }

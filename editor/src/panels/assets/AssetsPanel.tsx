@@ -5,7 +5,7 @@ import { ClipboardCopy, Import, LayoutGrid, List, PackagePlus, RefreshCw } from 
 import { useMemo, useState } from "react";
 import { api } from "../../host/api";
 import { attempt } from "../../actions/report";
-import { spawnAsset } from "../../actions/world";
+import { placeableKind, spawnAsset } from "../../actions/world";
 import { ASSET_MIME, useAssets } from "../../state/assets";
 import { useUi, promptText } from "../../state/ui";
 import { Button, IconButton } from "../../ui/Button";
@@ -43,7 +43,7 @@ async function refreshAssets() {
   if (list) useAssets.getState().set(list);
 }
 
-const placeable = (a: AssetInfo) => a.kind === "model" || a.kind === "splat";
+const placeable = (a: AssetInfo) => placeableKind(a.kind);
 
 function Thumb({ a, big }: { a: AssetInfo; big: boolean }) {
   const Icon = assetIcon(a.kind);
@@ -80,7 +80,9 @@ export function AssetsPanel() {
     key: a.path,
     draggable: true,
     onDragStart: (e: React.DragEvent) => {
-      e.dataTransfer.setData(ASSET_MIME, a.path);
+      // Only what can be placed is offered to the viewport and the hierarchy; any file's path can
+      // still be dropped as text.
+      if (placeable(a)) e.dataTransfer.setData(ASSET_MIME, a.path);
       e.dataTransfer.setData("text/plain", a.path);
       e.dataTransfer.effectAllowed = "copy";
     },

@@ -1,18 +1,19 @@
 // Game events (`events` pushes, `events.since` on connect) and the selected event's cause chain.
 
 import { create } from "zustand";
-import type { GameEvent } from "../host/protocol";
+import type { CauseChain, GameEvent } from "../host/protocol";
 
 const MAX = 20000;
 
 interface EventsState {
   events: GameEvent[];
   selected: number | null;
-  why: GameEvent[] | null;
+  /** The selected event's cause chain; null until the host has answered. */
+  why: CauseChain | null;
   push(batch: GameEvent[]): void;
   replace(all: GameEvent[]): void;
   clear(): void;
-  select(seq: number | null, why?: GameEvent[] | null): void;
+  select(seq: number | null, why?: CauseChain | null): void;
 }
 
 export const useEvents = create<EventsState>((set) => ({

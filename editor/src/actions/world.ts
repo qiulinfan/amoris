@@ -4,8 +4,9 @@
 import { api } from "../host/api";
 import { HostError } from "../host/client";
 import { invalidate, refreshEntities } from "../host/sync";
-import { defaultComponent } from "../host/schema";
-import type { EditOp, EntityId, Vec3, WorldEditResult } from "../host/protocol";
+import { defaultComponent, enumValue } from "../host/schema";
+import type { AssetInfo, ComponentInfo, EditOp, EntityId, Vec3, WorldEditResult } from "../host/protocol";
+import { useAssets } from "../state/assets";
 import { useConnection } from "../state/connection";
 import { useSelection } from "../state/selection";
 import { useUi } from "../state/ui";
@@ -78,78 +79,147 @@ export async function duplicateEntities(ids: EntityId[]) {
 
 export type Primitive = "empty" | "cube" | "sphere" | "cylinder" | "plane" | "directional" | "point" | "spot" | "camera";
 
-export const PRIMITIVES: { kind: Primitive; label: string; needs?: string }[] = [
+/**
+ * The mesh primitives the Create menu offers. Each is a name of `amoris_assets::PRIMITIVES`
+ * (crates/amoris-assets/src/primitives.rs), which `Model.mesh` takes as it is: a name the engine
+ * lacks imports nothing and draws nothing. test/create.test.ts pins them to that list.
+ */
+export const MESH_PRIMITIVES = ["cube", "sphere", "cylinder", "plane"] as const;
+
+export const PRIMITIVES: { kind: Primitive; label: string }[] = [
   { kind: "empty", label: "Empty" },
-  { kind: "cube", label: "Cube", needs: "Model" },
-  { kind: "sphere", label: "Sphere", needs: "Model" },
-  { kind: "cylinder", label: "Cylinder", needs: "Model" },
-  { kind: "plane", label: "Plane", needs: "Model" },
-  { kind: "directional", label: "Directional Light", needs: "Light" },
-  { kind: "point", label: "Point Light", needs: "Light" },
-  { kind: "spot", label: "Spot Light", needs: "Light" },
-  { kind: "camera", label: "Camera", needs: "Camera" },
+  { kind: "cube", label: "Cube" },
+  { kind: "sphere", label: "Sphere" },
+  { kind: "cylinder", label: "Cylinder" },
+  { kind: "plane", label: "Plane" },
+  { kind: "directional", label: "Directional Light" },
+  { kind: "point", label: "Point Light" },
+  { kind: "spot", label: "Spot Light" },
+  { kind: "camera", label: "Camera" },
 ];
 
-function withDefaults(name: string, patch: Record<string, unknown>): Record<string, unknown> | null {
-  const info = useWorld.getState().schema[name];
+type Schema = Record<string, ComponentInfo>;
+
+/** A component's schema defaults with `patch` over them, or null when the registry lacks it. */
+function withDefaults(schema: Schema, name: string, patch: Record<string, unknown>): Record<string, unknown> | null {
+  const info = schema[name];
   if (!info) return null;
   return { ...(defaultComponent(info) as Record<string, unknown>), ...patch };
 }
 
+/**
+ * The components a created entity is spawned with, from the registry alone: `Transform` at `at` (a
+ * plane on the ground, the rest half a metre up, the sun ten), and `Model` with the primitive's
+ * name, `Light` with its kind in the registry's own spelling, or `Camera`. Null when the registry
+ * lacks the component or the light's kind, so the host would refuse or draw nothing.
+ */
+export function primitiveComponents(kind: Primitive, schema: Schema, at: Vec3, parent?: EntityId | null): Record<string, unknown> | null {
+  const components: Record<string, unknown> = {};
+  const transform = withDefaults(schema, "Transform", { position: [at[0], kind === "directional" ? at[1] + 10 : at[1] + (kind === "plane" ? 0 : 0.5), at[2]] });
+  if (transform) components.Transform = transform;
+  if ((MESH_PRIMITIVES as readonly string[]).includes(kind)) {
+    const model = withDefaults(schema, "Model", { mesh: kind, color: [0.75, 0.77, 0.8, 1] });
+    if (!model) return null;
+    components.Model = model;
+  } else if (kind === "directional" || kind === "point" || kind === "spot") {
+    const value = enumValue(schema.Light, "kind", kind);
+    const light = value === null ? null : withDefaults(schema, "Light", { kind: value });
+    if (!light) return null;
+    components.Light = light;
+    if (kind === "directional" && transform) transform.rotation = [-0.3535, 0.3535, 0.1464, 0.8536];
+  } else if (kind === "camera") {
+    const camera = withDefaults(schema, "Camera", {});
+    if (!camera) return null;
+    components.Camera = camera;
+  }
+  if (parent) {
+    const p = withDefaults(schema, "Parent", { parent });
+    if (p) components.Parent = p;
+  }
+  return components;
+}
+
+/** Whether the host can take the entity Create would spawn: an entry it would refuse is disabled. */
 export function primitiveAvailable(kind: Primitive): boolean {
-  const needs = PRIMITIVES.find((p) => p.kind === kind)?.needs;
-  return !needs || needs in useWorld.getState().schema;
+  return primitiveComponents(kind, useWorld.getState().schema, [0, 0, 0]) !== null;
+}
+
+/** `label`, or the next free name after it (`Cube`, then `Cube 2`). */
+function freeName(label: string): string {
+  const taken = new Set(Object.values(useWorld.getState().nodes).map((n) => n.name));
+  return taken.has(label) ? uniqueName(label, taken) : label;
 }
 
 export async function spawnPrimitive(kind: Primitive, opts: { at?: Vec3; parent?: EntityId | null } = {}) {
-  const at = opts.at ?? useViewport.getState().target;
-  const components: Record<string, unknown> = {};
-  const transform = withDefaults("Transform", { position: [at[0], kind === "directional" ? at[1] + 10 : at[1] + (kind === "plane" ? 0 : 0.5), at[2]] });
-  if (transform) components.Transform = transform;
-  const meshes: Partial<Record<Primitive, string>> = { cube: "primitive:cube", sphere: "primitive:sphere", cylinder: "primitive:cylinder", plane: "primitive:plane" };
-  if (meshes[kind]) {
-    const model = withDefaults("Model", { mesh: meshes[kind], color: [0.75, 0.77, 0.8, 1] });
-    if (model) components.Model = model;
-  }
-  const lights: Partial<Record<Primitive, string>> = { directional: "Directional", point: "Point", spot: "Spot" };
-  if (lights[kind]) {
-    const light = withDefaults("Light", { kind: lights[kind] });
-    if (light) components.Light = light;
-    if (kind === "directional" && transform) transform.rotation = [-0.3535, 0.3535, 0.1464, 0.8536];
-  }
-  if (kind === "camera") {
-    const cam = withDefaults("Camera", {});
-    if (cam) components.Camera = cam;
-  }
-  if (opts.parent) {
-    const parent = withDefaults("Parent", { parent: opts.parent });
-    if (parent) components.Parent = parent;
-  }
-  const label = PRIMITIVES.find((p) => p.kind === kind)?.label ?? "Entity";
-  const taken = new Set(Object.values(useWorld.getState().nodes).map((n) => n.name));
-  const name = taken.has(label) ? uniqueName(label, taken) : label;
+  const components = primitiveComponents(kind, useWorld.getState().schema, opts.at ?? useViewport.getState().target, opts.parent);
+  if (!components) return;
+  const name = freeName(PRIMITIVES.find((p) => p.kind === kind)?.label ?? "Entity");
   const r = await edit([{ spawn: { name, components } }], `Create ${name}`);
   if (r?.spawned.length) useSelection.getState().set(r.spawned);
 }
 
-export async function spawnAsset(path: string, at?: Vec3, parent?: EntityId | null) {
-  const pos = at ?? useViewport.getState().target;
-  const base = path.split("/").pop()!.replace(/\.[^.]+$/, "");
-  const name = base.charAt(0).toUpperCase() + base.slice(1);
+/**
+ * An asset's kind: what `assets.list` says of it. A path the list does not hold (it was not
+ * refreshed since the file came) is a splat by its extension, as the host classifies them
+ * (crates/amoris-server/src/local.rs `kind_of`), else a model.
+ */
+export function assetKind(path: string, assets: AssetInfo[]): string {
+  const listed = assets.find((a) => a.path === path);
+  if (listed) return listed.kind;
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  return ["ply", "splat", "spz"].includes(ext) ? "splat" : "model";
+}
+
+/** Whether an asset of this kind is placed in the scene: a model or a splat. The host lists every
+ * file of the project (its `project.toml`, scripts and textures among them), and it takes any
+ * `Model.mesh`, so a file of another kind placed as a model would be an entity that draws nothing. */
+export const placeableKind = (kind: string): boolean => kind === "model" || kind === "splat";
+
+/**
+ * The components a placed asset is spawned with: `Transform` at `at` and, over the schema's
+ * defaults, `Splat {asset}` for a splat or `Model {mesh}` for a model; or the component the
+ * registry lacks, or the kind when it is one nothing places.
+ */
+export function assetComponents(
+  path: string,
+  kind: string,
+  schema: Schema,
+  at: Vec3,
+  parent?: EntityId | null,
+): { components: Record<string, unknown> } | { missing: "Splat" | "Model" } | { unplaceable: string } {
+  if (!placeableKind(kind)) return { unplaceable: kind };
   const components: Record<string, unknown> = {};
-  const t = withDefaults("Transform", { position: pos });
-  if (t) components.Transform = t;
-  const model = withDefaults("Model", { mesh: path });
-  if (!model) {
-    useUi.getState().toast({ kind: "warn", title: "No Model component", body: "This host registers no Model component, so an asset cannot be placed yet." });
-    return;
+  const transform = withDefaults(schema, "Transform", { position: at });
+  if (transform) components.Transform = transform;
+  if (kind === "splat") {
+    const splat = withDefaults(schema, "Splat", { asset: path });
+    if (!splat) return { missing: "Splat" };
+    components.Splat = splat;
+  } else {
+    const model = withDefaults(schema, "Model", { mesh: path });
+    if (!model) return { missing: "Model" };
+    components.Model = model;
   }
-  components.Model = model;
   if (parent) {
-    const p = withDefaults("Parent", { parent });
+    const p = withDefaults(schema, "Parent", { parent });
     if (p) components.Parent = p;
   }
-  const r = await edit([{ spawn: { name, components } }], `Place ${path}`);
+  return { components };
+}
+
+export async function spawnAsset(path: string, at?: Vec3, parent?: EntityId | null) {
+  const built = assetComponents(path, assetKind(path, useAssets.getState().assets), useWorld.getState().schema, at ?? useViewport.getState().target, parent);
+  if ("unplaceable" in built) {
+    useUi.getState().toast({ kind: "warn", title: `${path.split("/").pop()} is not placed`, body: `It is listed as ${built.unplaceable}: only models and splats are placed in the scene.` });
+    return;
+  }
+  if ("missing" in built) {
+    useUi.getState().toast({ kind: "warn", title: `No ${built.missing} component`, body: `This host registers no ${built.missing} component, so this asset cannot be placed yet.` });
+    return;
+  }
+  const base = path.split("/").pop()!.replace(/\.[^.]+$/, "");
+  const name = freeName(base.charAt(0).toUpperCase() + base.slice(1));
+  const r = await edit([{ spawn: { name, components: built.components } }], `Place ${path}`);
   if (r?.spawned.length) useSelection.getState().set(r.spawned);
 }
 

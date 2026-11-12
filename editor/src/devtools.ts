@@ -14,6 +14,8 @@ import { useUi } from "./state/ui";
 import { useViewport } from "./state/viewport";
 import { useWorld } from "./state/world";
 import { useEvents } from "./state/events";
+import { useHistory } from "./state/history";
+import { useRender } from "./state/render";
 import * as debugActions from "./actions/debug";
 import * as worldActions from "./actions/world";
 
@@ -33,6 +35,8 @@ export function expose() {
     debug: useDebug,
     scripts: useScripts,
     events: useEvents,
+    history: useHistory,
+    render: useRender,
     ui: useUi,
     actions: { debug: debugActions, world: worldActions },
   };

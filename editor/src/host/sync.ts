@@ -1,8 +1,8 @@
 // Keeps the stores in step with the host: loads everything on each (re)connection, applies pushed
 // events, and refetches the entities `world.changed` names (coalesced, a few requests at a time).
 
-import { api, debugState, host } from "./api";
-import type { DebugState, EntityId, WorldChanged } from "./protocol";
+import { api, debugState, haltNotice, haltedOf, host } from "./api";
+import type { DebugState, EntityId, Status, WorldChanged } from "./protocol";
 import { useAgent } from "../state/agent";
 import { useAssets } from "../state/assets";
 import { useConnection } from "../state/connection";
@@ -14,6 +14,7 @@ import { useProfile } from "../state/profile";
 import { useScripts } from "../state/scripts";
 import { useSelection } from "../state/selection";
 import { useSession } from "../state/session";
+import { useUi } from "../state/ui";
 import { useWorld } from "../state/world";
 import { onPaused, refreshWatches } from "../actions/debug";
 
@@ -32,6 +33,10 @@ export function startSync() {
     useSession.getState().setStatus(s);
     if (prev && (prev.mode !== s.mode || s.tick < prev.tick)) void refreshSnapshots();
   });
+  // A world that halts says so once, whichever status brought the news (a push or an answer).
+  useSession.subscribe((now, was) => {
+    if (haltedOf(now.status) && !haltedOf(was.status)) reportHalt(now.status!);
+  });
   host.on("world.changed", onWorldChanged);
   host.on("events", (batch) => useEvents.getState().push(batch));
   host.on("log", (l) => useLogs.getState().push({ ...l, level: l.level ?? "info" }));
@@ -46,6 +51,12 @@ export function startSync() {
     const playing = useSession.getState().status?.mode === "play" && useDebug.getState().state.state !== "paused";
     if (useConnection.getState().info.state === "open" && playing) void refreshSnapshots();
   }, 1000);
+}
+
+function reportHalt(status: Status) {
+  const { title, body } = haltNotice(status);
+  useUi.getState().toast({ kind: "error", title, body });
+  logLocal("error", `${title}. ${body}`);
 }
 
 async function bootstrap() {
@@ -67,7 +78,8 @@ async function bootstrap() {
     // A host without it (the mock) leaves the editor on the bundled SDK.
     ["scripts.types", () => refreshTypes().catch(() => undefined)],
     ["assets.list", async () => useAssets.getState().set(await api.assets.list())],
-    ["events.since", async () => useEvents.getState().replace(await api.events.since(0, 5000))],
+    // The newest 5000: with a `seq` the host answers the oldest after it, and its ring holds more.
+    ["events.since", async () => useEvents.getState().replace(await api.events.since(undefined, 5000))],
     ["snapshots.list", refreshSnapshots],
     ["time.control", async () => useSession.getState().setStatus(await api.time.control({}))],
     ["debug", restoreDebugger],
@@ -222,7 +234,8 @@ function componentsDiffer(id: EntityId): boolean {
   const node = s.nodes[id];
   const e = s.entities[id];
   if (!node || !e) return false;
-  const a = Object.keys(e.components).sort().join(",");
+  // The host's `world.get` lists `Name` among the components; its `world.tree` does not.
+  const a = Object.keys(e.components).filter((c) => c !== "Name").sort().join(",");
   const b = [...node.components].sort().join(",");
   return a !== b;
 }
