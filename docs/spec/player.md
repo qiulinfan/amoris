@@ -599,3 +599,9 @@ every tick, and its player scenario passes the four checks.
 | The course's schedule | `amoris-runtime/tests/schedule.rs` |
 | The player scenario passes the four checks | `amoris-check/tests/checks.rs`, `samples/sailing-course/check.toml` |
 | The `player` tool's routing; `amoris player`'s forms | `amoris-mcp/src/tools.rs`, `amoris-app/src/client.rs` |
+| `third_person` (5.1): moves turn from their frame into the look's; the toggle picks the nearest lockable in front and in sight; a lock turns the look and the body and ends with its target; the arm follows the zoom and is pulled in at a wall; the same inputs give the same world | `amoris-physics` `third_person` unit tests, `--test third_person` |
+| `third_person`: the catalog's controls in reading order; yaws as bearings | `amoris-interface` `action::third_person`, `perception::third_person` tests |
+| `third_person` end to end: a project's seat moves in the camera, world and body frames, sprints, guards, dodges, interacts, locks on by toggle and through a kind's affordance, perceives its heading, look and lock; the rules see each pulse once; the recorded run replays identically | `amoris-runtime --features transpile --test third_person` |
+| Thornkeep's third-person seat over HTTP walks north in the world frame, locks on to a foe it sees through `lock_on` and swings; over MCP it dodges and reads its instruments | `amoris-app/tests/player_host.rs` |
+| The camera lag follows with `1 - exp(-dt / tau)`, at most a quarter second a frame, and jumps a cut | `amoris-render --lib camera_smoothing` |
+| Thornkeep in the browser player: the seat walks, sprints, orbits, zooms, guards, dodges, swings and locks on, the drawn camera near the rig's | `node tools/host/web_play_check.mjs <export> --third-person` |
