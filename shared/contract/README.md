@@ -94,6 +94,13 @@ fixed in 3.6.0). mcp.md 7.2's pin and the rmcp behaviour it cites (`Parameters`'
 `find_parameters_type_in_sig`, `schema_for_input`) name 3.7.0, where that behaviour is unchanged.
 The tools, their schemas and their answers did not change, so the contract stays 0.2.
 
+On 2026-11-12 scripts learned to declare intents and carry them out (spec-script's executors and
+`ctx.intent`, `docs/spec/script-host.md` 5.5), as actions.md, Executors, already said they would:
+a script intent is an `IntentDef` like an engine one, its executor is held to the same two rules,
+and a player starts it with the same `act`, so requests, answers, the text projection and the
+codes did not change, and the contract stays 0.2. The game definition's as-built paragraph (The
+game definition) says where a project's intents come from.
+
 On 2026-11-12 the host learned grants (mcp.md 14, Grants as built; `docs/spec/server.md` 3.6): a
 host started with `amoris serve --grants <file>` is locked, and each token of the file binds its
 client to one of this file's roles, a seat's player, a checker or a developer (Seats and callers),
@@ -353,7 +360,10 @@ As built (0.2): a project declares its players with `[player]` in `project.toml`
 its perception file (profiles, instruments, kinds with their facts and affordances, events) and an
 engine action catalog. That declaration is world state (`PlayerSpec`), so a snapshot, a fork and a
 replay carry it and rebuild the definition from it (`docs/spec/player.md` 2 and 3). Intents a
-project declares in its scripts are not built there yet.
+project declares in its scripts (spec-script's `intent(name, def)` beside the executor that carries
+them out, `docs/spec/script-host.md` 5.5) join the catalog's when the scripts load, and after a
+restore; they are code, as the catalog is, so the scripts' bundle a snapshot names brings them
+back.
 
 `describe` (with `part`, or nothing; with `entity` it describes one entity, perception.md, Queries;
 its parameters are mcp.md 5.2's `DescribeParams`) answers the definition filtered for the caller: a

@@ -359,6 +359,7 @@ so locations are the same in every build.
 | `script.exception` | Run | `run` threw; `js_error` holds the JavaScript error |
 | `script.unknown_component`, `script.unknown_field`, `script.entity_missing`, `script.component_present`, `script.component_missing`, `script.single_count`, `script.event_reserved`, `script.bad_data` | Run | A host call refused its arguments (script-host.md 5.3 to 5.5, 5.8) |
 | `script.restricted`, `script.undeclared_code` | Run | An intent executor called what its restricted context lacks, or rejected with a code the game does not declare for `Fail` (script-host.md 5.5) |
+| `script.no_seat`, an act's own codes (`action.*`, `perception.*`, `time.*`) | Run | `ctx.intent` named an actor that is no seat's body, or its act was refused (script-host.md 5.5) |
 | `script.write_not_finite`, `script.write_not_integer`, `script.write_out_of_range`, `script.write_type`, `script.write_too_long` | Run, WriteBack | script-host.md 6 |
 | `script.write_not_held` | Run, WriteBack | A component's slot rule refused a value its flat form cannot hold, naming the field (script-host.md 7.2); also a changed cell of the column `Parent.parent`, which is read but not written (script-host.md 5.4) |
 | `script.parent_cycle` | Run | A `set` or `insert` of `Parent` naming the entity itself or an entity under it; `detail.chain` runs from the parent up to the entity (script-host.md 5.4) |
