@@ -405,8 +405,9 @@ export class Viewport {
         wasm.viewport_set_gtao(this.__wbg_ptr, ptr0, len0);
     }
     /**
-     * Spot lights' shadow maps (local shadow views, docs/spec/shadows.md): `off` or `on` (the
-     * default; anything else leaves it as it is). Off draws spot lights unshadowed.
+     * Spot and point lights' shadow maps (local shadow views, docs/spec/shadows.md): `off` or `on`
+     * (the default; anything else leaves it as it is). Off draws spot and point lights
+     * unshadowed.
      * @param {string} mode
      */
     set_local_shadows(mode) {
