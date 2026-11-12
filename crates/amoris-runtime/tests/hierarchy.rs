@@ -445,6 +445,58 @@ fn destroying_a_parent_takes_what_is_under_it_and_an_undo_brings_it_all_back() {
     });
 }
 
+/// Renames and the hierarchy in one call (server.md 3.1, Names): a later op finds an entity by
+/// the name an earlier one gave it, a rename does not save an entity a destroy takes, and the
+/// undo puts back the names, the parents and the entities whole.
+#[test]
+fn renames_and_a_destroy_in_one_call_undo_and_redo() {
+    common::big_stack(|| {
+        let mut g = game("renames", TAG, &family());
+        let start = g.world_hash().unwrap();
+        let rename = |entity: &str, name: &str| json!({"set": {"entity": entity, "component": "Name", "value": name}});
+        // Renamed, then taken by its grandparent's destroy: its new name names a destroyed entity.
+        let e = refused(
+            &mut g,
+            json!([rename("Hand", "Palm"), destroy("Rig"),
+                   {"set": {"entity": "Palm", "component": "Tag", "value": {"note": "x"}}}]),
+        );
+        assert_eq!(e.code, "sim.entity_not_found", "{e:#?}");
+        assert_eq!(e.detail["destroyed_by"], json!(1), "{e:#?}");
+        assert_eq!(e.detail["path"], json!("/ops/2/set/entity"), "{e:#?}");
+        // The old name names nothing once the rename is checked.
+        let e = refused(
+            &mut g,
+            json!([rename("Hand", "Palm"), set_parent("Hand", 5)]),
+        );
+        assert_eq!(e.code, "sim.entity_not_found", "{e:#?}");
+        assert_eq!(e.detail["path"], json!("/ops/1/set/entity"), "{e:#?}");
+
+        // Renamed, moved out by its new name, and so kept when Rig goes.
+        let r = edit(
+            &mut g,
+            json!([
+                rename("Hand", "Palm"),
+                set_parent("Palm", 5),
+                destroy("Rig")
+            ]),
+        );
+        assert_eq!(
+            r["results"][2],
+            json!({"op": "destroyed", "count": 3}),
+            "{r}"
+        );
+        assert_eq!(whole(&mut g), "Loose(Palm Crate)");
+        assert_eq!(id(&g, "Palm"), 3);
+        let after = g.world_hash().unwrap();
+        call(&mut g, "history.undo", json!({}));
+        assert_eq!(whole(&mut g), FAMILY);
+        assert_eq!(g.world_hash().unwrap(), start);
+        call(&mut g, "history.redo", json!({}));
+        assert_eq!(whole(&mut g), "Loose(Palm Crate)");
+        assert_eq!(g.world_hash().unwrap(), after);
+    });
+}
+
 /// A destroy with a reparent in the same call: an entity moved out from under the destroyed one
 /// stays, one moved under it goes, and each call undoes and redoes whole.
 #[test]
