@@ -33,6 +33,15 @@ pub fn import_gltf(path: &Path) -> Result<ModelAsset, Problem> {
     Ok(convert(&doc, &buffers, &images))
 }
 
+/// A PNG or JPEG file's pixels as RGBA8 (sRGB), with its width and height: a game UI image
+/// (docs/spec/ui.md 2).
+pub fn decode_image(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
+    let img = image::load_from_memory(bytes)
+        .map_err(|e| e.to_string())?
+        .to_rgba8();
+    Ok((img.width(), img.height(), img.into_raw()))
+}
+
 /// Imports a `.glb` held in memory (the browser fetches it); external files are not resolved.
 pub fn import_glb_bytes(bytes: &[u8]) -> Result<ModelAsset, Problem> {
     let (doc, buffers, images) =
