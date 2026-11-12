@@ -778,9 +778,11 @@ completes the Boat's fields.
 - The worker's declarations are fetched on connect and after the editor's own apply: a component
   added in an unsaved file is unknown to it until the save, and one an agent adds (no push says the
   scripts changed) until the next apply or reconnect.
-- The bun unit tests (`test/`) cover the stores and protocol pieces, and the CDP harnesses
-  (`tools/`) drive the main flows end to end against the mock or a real host; nothing runs the
-  harnesses automatically, and `cargo xtask check` runs neither.
+- `cargo xtask check`'s `editor` step (checks.md 4) runs the bun unit tests, the type check and
+  three of the CDP harnesses (`edit-host`, with the fallback view, `rename-host`, `debug-host`)
+  against the release `amoris serve`; `sdk_check`, `viewport-loads` and `water-authoring` (the
+  Vite dev server, WebGPU) and the measuring harnesses still run by hand, and no harness drives
+  the wasm viewport in the check.
 - Add Component lists every registered component, and the real host refuses nine of them with the
   editor's schema defaults (2026-11-12): state the engine keeps itself (`Controls`,
   `ObserverEvents`, `ObserverMemory`) and components whose defaults are not a valid value

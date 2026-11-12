@@ -179,6 +179,10 @@ credential cleanup. File-verification records remain local, including in that ar
   debug information back for PIX.
 - `cargo xtask check`'s `test` step runs the GPU tests on the default adapter and backend; its
   `gpus` step (above) runs this machine's matrix.
+- `cargo xtask check`'s `editor` step (after `gpus`; checks.md 4) runs the editor's `bun test`,
+  its type check and, outside `--quick`, `edit-host`, `rename-host` and `debug-host` in headless
+  Chrome against the release `amoris serve`; it needs `cd editor && bun install` first and is
+  skipped with the reason without bun or `editor/node_modules`.
   `tools/gpu_matrix.py --configs 5060-dx12,780m-vulkan,780m-auto,5060-dx12-minimal` (any
   `ADAPTER-BACKEND`; `auto` leaves `AMORIS_BACKEND` unset as xtask does) runs `amoris-render`'s
   tests once per adapter (`AMORIS_ADAPTER`), backend and the WebGPU-baseline device (`-minimal`)

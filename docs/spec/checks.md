@@ -63,7 +63,7 @@ amoris check <project> [--json] [--seeds N,...] [--only CHECK,...]
 | Flag | Meaning |
 |---|---|
 | `--json` | stdout carries exactly one JSON document, the report; progress goes to stderr |
-| `--quick` | the code-health steps, build, tests (without those marked `#[ignore]`), `wasm`, `types`, and the project checks at the first seed only; no `gpus`, no `web`, no `perf`. For an agent's inner loop |
+| `--quick` | the code-health steps, build, tests (without those marked `#[ignore]`), `wasm`, `types`, and the project checks at the first seed only; no `gpus`, no `web`, no `perf`, and the `editor` step's unit tests and type check without its browser harnesses. For an agent's inner loop |
 | `--only`, `--skip` | step names (4); an unknown name is refused with a suggestion and exit 2 (charter 3.4) |
 | `--jobs N` | project checks run at once (default 2, chosen for the about 4 GB this machine has free while other agents work; not measured) |
 | `--record` | also prints the commit trailer line (12) |
@@ -99,6 +99,22 @@ running (9).
 It runs the renderer's GPU tests on every GPU adapter and native backend of the machine, and the
 default adapter's `auto` configuration too when `test` did not run it in the same check, and reports
 every test that skipped part of its work (checks-slice1.md 24); `--quick` leaves it out.
+
+2026-11-12 (charter 4.6): `editor` runs after `gpus` and needs `build`. It runs the web editor's
+bun unit tests (`bun test` in `editor/`) and its type check (`bun run typecheck`), and then, outside
+`--quick`, its browser harnesses (`editor/tools/`, editor.md 10) in headless Chrome over CDP against
+the release `amoris serve`: the editor is built with `VITE_AMORIS_EXPOSE=1` into
+`out/check/editor/dist`, and each harness gets a fresh copy of its sample under `out/check/editor/`
+and a host of its own on a port the system picks, and passes when it exits 0 within 300 s.
+The harnesses are `edit-host` (the edit loop on `samples/anim`, with the fallback view, so the
+step needs no WebGPU), `rename-host` and `debug-host` (`samples/sailing`); the others need the Vite
+dev server, WebGPU or measure, and stay manual. A failed test, type check or build is
+`editor.test_failed`, `editor.typecheck_failed` or `editor.build_failed`, a harness that exited
+otherwise or took too long `editor.harness_failed` (its first `FAIL` line, the failed lines and the
+output's tail). With no bun (`AMORIS_BUN`, PATH, `~/.bun/bin`) or no `editor/node_modules` the step
+is skipped with the reason (it never installs packages); with no Chrome the harnesses are
+inconclusive (`check.tool_missing`). Every command and the hosts' output go to
+`out/check/editor.log`, the harnesses' screenshots to `out/check/editor/<harness>/`.
 
 ## 5. Code health
 

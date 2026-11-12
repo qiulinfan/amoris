@@ -1032,6 +1032,12 @@ beta 功能，测试已移除（4.4）。
   测：7 个配置、每个 192 项测试，1,333 项通过，11 项跳过，用时 10 分 4 秒（同样不是安静测
   量）。master 在 `6af291db` 的完整检查不含这一步已用时 15 分 16 秒，超过
   [budgets.md](spec/budgets.md) 5.5 中 `check.full` 的 900 秒；这个数字是否调整由所有者决定。
+- 2026-11-12：编辑器的检查进入 `cargo xtask check`，作为 `gpus` 之后的 `editor` 一步：bun 单元测试
+  与类型检查，`--quick` 之外再用无头 Chrome 对 release 的 `amoris serve` 跑编辑器的浏览器驱动
+  （`edit-host`、`rename-host`、`debug-host`，各用一份样例副本与一个自己的宿主）。原因：这些驱动以前
+  只在手动时运行，编辑器与真宿主之间的形式差异要等有人想起来才发现。没有 bun 或没装编辑器依赖时这
+  一步跳过并写明原因，没有 Chrome 时驱动部分不确定；需要 Vite 开发服务器、WebGPU 或做测量的驱动仍是
+  手动的。细节见 [checks.md](spec/checks.md) 4。
 
 ### 4.7 物理性能与后端
 

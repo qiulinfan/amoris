@@ -14,6 +14,7 @@ pub const STEPS: &[&str] = &[
     "gen",
     "test",
     "gpus",
+    "editor",
     "wasm",
     "types",
     "determinism",
@@ -37,7 +38,8 @@ pub struct CheckOptions {
 
 impl CheckOptions {
     /// Whether a step runs at all: `--only` and `--skip` by request, and `--quick`, which leaves
-    /// out `gpus`, `web` and `perf` (checks.md 3).
+    /// out `gpus`, `web` and `perf` (checks.md 3), and the editor's browser harnesses (its step
+    /// runs its unit tests and type check alone).
     pub fn wants(&self, step: &str) -> Option<&'static str> {
         if let Some(only) = &self.only
             && !only.iter().any(|s| s == step)
