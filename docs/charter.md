@@ -1399,6 +1399,16 @@ ns，WebAssembly 23 到 30 ns，比 M5 慢 1.3 到 1.9 倍；blockcraft 的 256�
   动时的环境。原因： agent 能写项目文件，若由项目或请求决定运行什么，agent 就能让宿主执行任意命令。
   锁定的宿主不启动程序（启动的程序需要自己的 grant，未做）；同时最多 4 个。
 
+2026-11-12：新增引擎动作目录 `third_person`。Thornkeep 是第三人称游戏，却只能借用 `first_person`：
+翻滚、格挡、锁定、重击都是游戏自己的按钮，锁定写在项目组件里，agent 也只能相对相机移动。现在目录给出
+第三人称游戏共有的逻辑动作：相对相机（或世界、身体朝向）的移动、跳跃、冲刺、环绕相机的偏航、俯仰与远
+近、翻滚、防御、交互、锁定与按目标锁定；键盘鼠标的默认键位随之确定，其他设备与改键归输入那条线。新增
+持久组件 `ThirdPerson`（座位的输入与锁定状态）与 `Lockable`（可锁定的目标），系统
+`physics.third_person` 在 Control 阶段把输入换算成 walker 的移动、按锁定转动视角；弹簧臂的碰撞收缩
+仍在 tick 内。按原则 3，影响模拟的相机状态（偏航、俯仰、远近、锁定）都经 `player.act` 记录并进入哈
+希；画面上的相机平滑只在 presenter 里做，不进入世界，所以不改变哈希。规格见
+[player.md](spec/player.md) 5.1。
+
 2026-10-30（所有者决定："如果引擎没有足够的骨骼动画支持能力, 那正好补上. 参考ue和godot"，为第三人称
 战斗游戏 Thornkeep）：角色动画进入模拟。之前模拟只推进 `Animator` 的时间、从不加载片段，姿态只在渲染
 器里算；战斗要读骨骼挂点、动画事件与根运动，所以和 Unreal、Godot 一样在游戏线程上求值。宿主在加载项
@@ -1446,8 +1456,8 @@ BLAKE3 上下文 `Amoris 2026-10-15 pocket-physics fixed shape v1`（带日期�
 | `amoris-sim` | game | ECS 世界、tick、调度、EntityId、事件、RNG、确定性数学、组件注册表、方块体积 `Voxels` |
 | `amoris-assets` | game | 资源 ID、可视组件（模型、材质、灯光、相机、环境、splat、声源）、CPU 网格与 glTF 导入、渲染流（游戏线程交给渲染器与音频的可视变化） |
 | `amoris-persist` | game | 规范编码、哈希、snapshot/fork/replay、分叉定位、版本迁移 |
-| `amoris-physics` | game | Rapier、`Transform`、浮力、风与帆、水动力、第一人称身体 `Walker`、浅水 `WaterRegion` 与 GPU 水的服务接口 |
-| `amoris-interface` | game | 感知、动作与意图、affordance、时间模型；动作目录 `sailing`、`first_person` |
+| `amoris-physics` | game | Rapier、`Transform`、浮力、风与帆、水动力、第一人称身体 `Walker`、第三人称的 `Avatar`、`CameraRig`、`ThirdPerson` 与锁定目标 `Lockable`、浅水 `WaterRegion` 与 GPU 水的服务接口 |
+| `amoris-interface` | game | 感知、动作与意图、affordance、时间模型；动作目录 `sailing`、`first_person`、`third_person` |
 | `amoris-script` | game | TypeScript on QuickJS-ng、沙箱、预算、热更新、调试钩子；脚本的 `amoris` 模块 |
 | `amoris-link` | link | 游戏线程与宿主、工具之间：命令信封、队列、发布的快照、事件环 |
 | `amoris-runtime` | game | 游戏组合、命令目录、场景、游戏线程、渲染流提取 |

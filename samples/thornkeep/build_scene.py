@@ -70,9 +70,15 @@ def fighter(s, name, kind, at, yaw=0.0, brain=None, player=None):
     }
     if player is not None:
         walker['Player'] = player
+        # The third_person seat (player.md 5.1): its moves, orbit, verbs and lock-on.
+        walker['ThirdPerson'] = {'lock_range_m': 22.0}
         walker['Observer'] = {'profile': 'player', 'seat': 'player'}
     if brain is not None:
         walker['Brain'] = brain
+        # The sellsword locks on to it and sees it; the rules take the lock away when it falls.
+        walker['Lockable'] = {}
+        walker['Perceivable'] = {'kind': 'foe', 'detect_m': 60.0, 'height_m': round(1.8 * SCALE[k], 3),
+                                 'priority': 90 if k == WARDEN else 50}
         # Its bar and its lock-on mark, over its head, hidden until it fights or is locked.
         walker['UiBar'] = {'value': HP[k], 'max': HP[k], 'size': [74, 6], 'color': [0.78, 0.16, 0.12, 0.95],
                            'back': [0.05, 0.04, 0.04, 0.7], 'anchor': 'entity',
@@ -118,7 +124,7 @@ def hud(s):
     text('HudBossName', 4, 'THE THORN WARDEN', 17, 'bottom', (0, -78), (0.92, 0.82, 0.62, 1), False)
     text('HudBanner', 5, '', 40, 'center', (0, -120), (0.96, 0.88, 0.7, 1), False)
     text('HudFlasks', 6, 'FLASKS 3', 15, 'bottom_left', (28, -30))
-    text('HudHelp', 7, 'LMB swing · E heavy · Space roll · RMB guard (parry on time) · Q lock · 1 bolt · 2 knives · 3 flask',
+    text('HudHelp', 7, 'LMB swing · E heavy · Space or C roll · RMB guard (parry on time) · Q lock · 1 bolt · 2 knives · 3 flask',
          13, 'bottom_right', (-24, -24), (0.85, 0.82, 0.76, 0.8))
 
 
@@ -325,8 +331,19 @@ def perception():
         return {"kind": kind, "doc": doc, "scope": {"scope": "private"},
                 "data": [{"name": n, "doc": d, "unit": {"unit": u}, "precision": 1, "exposure": "coarse",
                           "source": {"from": "data", "path": n}} for n, d, u in data]}
+    def derived(name, doc, unit, function):
+        return {"name": name, "doc": doc, "unit": {"unit": unit}, "precision": 0,
+                "source": {"from": "derived", "function": function}}
+
+    def fact(name, doc, unit, component, path):
+        return {"name": name, "doc": doc, "unit": {"unit": unit}, "precision": 0, "exposure": "full",
+                "source": {"from": "field", "component": component, "path": path}}
     instruments = [
         instrument("position_m", "The sellsword's eye.", "position", "Transform", "position", 2),
+        derived("heading_deg", "The way the sellsword faces.", "bearing", "third_person.heading_deg"),
+        derived("look_deg", "The way the camera looks (forward moves this way).", "bearing",
+                "third_person.look_deg"),
+        derived("locked", "Locked on to a foe.", "bool", "third_person.locked"),
         instrument("health", "Health.", "count", "Fighter", "hp", 0),
         instrument("stamina", "Stamina.", "count", "Fighter", "stamina", 0),
         instrument("focus", "Focus for bolts and knives.", "count", "Fighter", "focus", 0),
@@ -342,7 +359,20 @@ def perception():
             "event_capacity": 64, "budget_tokens": 400,
             "instruments": [i["name"] for i in instruments]}],
         "instruments": instruments,
-        "kinds": [],
+        "kinds": [{
+            "kind": "foe", "doc": "One of the keep's fighters: a brigand, a brute behind a shield, an archer or the Warden.",
+            "facts": [
+                fact("type", "1 brigand, 2 brute, 3 archer, 4 the Warden.", "count", "Fighter", "kind"),
+                fact("health", "Its health.", "count", "Fighter", "hp"),
+                fact("action", "What it does: 0 free, 1 attacking, 2 rolling, 3 hurt, 4 staggered, 5 casting, 6 dead.",
+                     "count", "Fighter", "action"),
+            ],
+            "affordances": [{
+                "verb": "lock_on", "doc": "Lock on to it: the camera and the sellsword turn to it.",
+                "effect": {"effect": "pulse", "control": "lock_on"},
+                "requires": [{"requires": "seen"}, {"requires": "within", "max_m": 22}],
+            }],
+        }],
         "events": [
             event("keep.freed", "The Thorn Warden fell: the keep is free.", [("kills", "Foes felled.", "count")]),
         ],

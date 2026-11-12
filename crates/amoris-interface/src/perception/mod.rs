@@ -26,6 +26,7 @@ pub mod probe;
 pub mod query;
 pub mod sailing;
 pub mod state;
+pub mod third_person;
 pub mod update;
 pub mod view;
 
@@ -92,9 +93,9 @@ pub fn register(w: &mut World) -> Result<(), Problem> {
 }
 
 /// The declarations of a game from their JSON text, with the engine's derived functions (the
-/// sailing ones) registered, validated.
+/// sailing and third-person ones) registered, validated.
 pub fn load(text: &str) -> Result<PerceptionDefs, Problem> {
-    let defs = sailing::functions(PerceptionDefs::from_json(text)?);
+    let defs = third_person::functions(sailing::functions(PerceptionDefs::from_json(text)?));
     defs.validate()?;
     Ok(defs)
 }

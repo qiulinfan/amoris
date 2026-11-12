@@ -334,6 +334,32 @@ the `Walker` (`forward`, `strafe`, `yaw`, `pitch`, `run`, `slot`, and the one-ti
 `primary`, `secondary`), which rules read like any component; `amoris play <project> --walk` plays
 it from the keyboard and mouse. Example: `samples/blockcraft`.
 
+A third-person game declares `actions = "third_person"` ([spec/player.md](spec/player.md) 5.1): its
+seat `player` is a walker with a `ThirdPerson` component, seen as an `Avatar` and followed by a
+`CameraRig`. The engine turns the seat's move into the walker's before your rules run, relative to
+the camera, the world (north and east) or the body (`frame`), turns the camera toward a lock, and
+keeps the avatar facing its motion or its lock. Rules read the verbs as one-tick pulses and held
+toggles; give `Lockable` to what may be locked on to and take it away when it falls:
+
+```ts
+const tp = ctx.world.get(me, "ThirdPerson")!;    // forward, strafe, frame, zoom, guard, lock, facing
+const w = ctx.world.get(me, "Walker")!;          // yaw, pitch (the orbit), run, and the pulses
+if (tp.dodge || w.jump) roll();                  // dodge, interact: this tick only
+if (w.primary) swing(); else if (w.secondary) heavy();
+if (tp.guard) block();                           // held
+if (tp.lock) faceToward(tp.lock);                // the engine's lock (Q, or an agent's lock_on)
+if (tp.interact_target) open(tp.interact_target); // an agent's interact_with
+ctx.world.remove(fallen, "Lockable");            // a lock on it ends
+```
+
+Its controls are `forward`, `strafe`, `frame`, `yaw`, `pitch`, `zoom`, `run`, `guard`, the pulses
+`jump`, `primary`, `secondary`, `dodge`, `interact` and `lock`, the targeted pulses `lock_on` and
+`interact_with` (which a kind's affordance in `perception.json` names), and the game's own
+`[player] buttons`. Perception derives `third_person.heading_deg`, `look_deg` and `locked` for the
+seat's instruments. `amoris play <project> --walk` plays it: WASD, the mouse orbits, the wheel
+zooms, Shift sprints, Space jumps, C dodges, the left button and E act, the right button guards, F
+interacts, Q or the middle button locks on. Example: `samples/thornkeep`.
+
 ## The game UI
 
 What the screen shows is world state, drawn by the renderer ([spec/ui.md](spec/ui.md)): `UiText`

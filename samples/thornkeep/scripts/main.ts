@@ -15,9 +15,9 @@ const FREE = 0, ATTACK = 1, ROLL = 2, HURT = 3, STAGGER = 4, CAST = 5, DEAD = 6,
 /** Kinds of fighter. */
 const PLAYER = 0, BRIGAND = 1, BRUTE = 2, ARCHER = 3, WARDEN = 4;
 
-/** The game's buttons, in the order of project.toml's [player] buttons. */
-const B_DODGE = 1 << 0, B_BLOCK = 1 << 1, B_LOCK = 1 << 2, B_HEAVY = 1 << 3;
-const B_BOLT = 1 << 4, B_KNIVES = 1 << 5, B_FLASK = 1 << 6;
+/** The game's own buttons, in the order of project.toml's [player] buttons; the third_person
+ * catalog's verbs carry the rest (dodge, guard, lock, primary, secondary). */
+const B_BOLT = 1 << 0, B_KNIVES = 1 << 1, B_FLASK = 1 << 2;
 
 const STAMINA_REGEN = 34; // per second
 const REGEN_DELAY_S = 0.7;
@@ -26,7 +26,6 @@ const ROLL_COST = 22;
 const PARRY_S = 0.2; // a block raised this soon before a blow parries it
 const HITSTOP_TICKS = 5;
 const BLADE_R = 0.14;
-const LOCK_RANGE_M = 22;
 const BOLT_COST = 34, KNIFE_COST = 12;
 
 /** Per kind: walk and run speeds, health, poise, the swings it knows, its blade's reach. */
@@ -77,10 +76,9 @@ export const Fighter = component("Fighter", {
 
 export const Player = component("Player", {
     version: 1,
-    doc: "The sellsword's controls, lock-on and flasks.",
+    doc: "The sellsword's camera, flasks and skills; its lock-on is its ThirdPerson's.",
     fields: {
         camera: field.entity("The rigged camera."),
-        lock: field.entity("The foe locked on, or none."),
         flasks: field.u32(3, "Healing flasks left."),
         bolt_cd: field.f64(0, "Seconds until the next bolt."),
         knife_cd: field.f64(0, "Seconds until the next knives."),
@@ -310,6 +308,8 @@ function hurt(ctx: SystemContext, victim: Entity, attacker: Entity, damage: numb
     else if (a.kind === PLAYER) shake(ctx, dmg > 25 ? 0.35 : 0.18);
     if (hp <= 0) {
         ctx.world.set(victim, "Fighter", { hp: 0, hitstop: HITSTOP_TICKS + 3 });
+        // The fallen can no longer be locked on to: a lock on it ends.
+        if (ctx.world.get(victim, "Lockable")) ctx.world.remove(victim, "Lockable");
         act(ctx, victim, { ...v, hp: 0 }, DEAD, null);
         if (v.body) {
             ctx.anim.stop(v.body, 0.1);
@@ -418,15 +418,15 @@ export const control = system({
     phase: "update",
     doc: "The sellsword: swings and their combo, the heavy, the roll, the guard and parry, lock-on, bolts, knives and flasks.",
     queries: {
-        players: { with: ["Player", "Fighter", "Walker"], fields: [] },
-        foes: { with: ["Brain", "Fighter", "Transform"], fields: ["Transform.position"] },
+        players: { with: ["Player", "Fighter", "Walker", "ThirdPerson"], fields: [] },
     },
-    run(ctx, { players, foes }) {
+    run(ctx, { players }) {
         players.each((_r, me) => {
             const f = fighter(ctx, me);
             const p = ctx.world.get(me, "Player");
             const w = ctx.world.get(me, "Walker");
-            if (!f || !p || !w) return;
+            const tp = ctx.world.get(me, "ThirdPerson");
+            if (!f || !p || !w || !tp) return;
             const b = ctx.world.get(me, "Buttons") ?? { held: 0, pressed: 0 };
             const dt = ctx.dt;
             ctx.world.set(me, "Player", { bolt_cd: Math.max(0, p.bolt_cd - dt), knife_cd: Math.max(0, p.knife_cd - dt) });
@@ -435,31 +435,24 @@ export const control = system({
             // Down: rise at the checkpoint after a while.
             if (f.action === DEAD) {
                 const down = p.down_s + dt;
-                ctx.world.set(me, "Player", { down_s: down, lock: null });
+                ctx.world.set(me, "Player", { down_s: down });
+                if (tp.lock) ctx.world.set(me, "ThirdPerson", { lock: null });
                 if (p.down_s === 0) banner(ctx, "YOU FELL", 3.5);
                 if (down > 4) rise(ctx, me, f, p);
                 return;
             }
             // The jump pulse is the roll: the walker never jumps.
             if (w.jump) ctx.world.set(me, "Walker", { jump: false });
-            // Lock-on: the nearest foe in front, in reach and in sight.
-            let lock = p.lock;
-            if (lock && (!fighter(ctx, lock) || fighter(ctx, lock)!.action === DEAD)) lock = null;
-            if (b.pressed & B_LOCK) {
-                if (lock) lock = null;
-                else lock = nearestFoe(ctx, me, here, w.yaw, foes);
-            }
-            if (lock !== p.lock) {
-                ctx.world.set(me, "Player", { lock });
-                if (p.camera) ctx.world.set(p.camera, "CameraRig", { look_at: lock });
-                if (lock) ctx.emit("fight.lock", {}, { subject: lock });
-            }
+            // Lock-on is the engine's (the nearest lockable foe in front and in sight, or the one an
+            // agent names); the lock turns the camera and the body. The rules sound it.
+            const lock = tp.lock;
+            if (lock && (tp.lock_toggle || tp.lock_request)) ctx.emit("fight.lock", {}, { subject: lock });
             // What the controls ask for: a roll, a swing, a heavy (buffered while busy).
-            const wants = (b.pressed & B_DODGE) || w.jump ? 3 : w.primary ? 1 : (b.pressed & B_HEAVY) ? 2 : 0;
+            const wants = tp.dodge || w.jump ? 3 : w.primary ? 1 : w.secondary ? 2 : 0;
             let queued = wants || f.queued;
             if (f.queued !== queued) ctx.world.set(me, "Fighter", { queued });
             // The guard: held while free.
-            const guard = (b.held & B_BLOCK) !== 0 && (f.action === FREE) && f.stamina > 0;
+            const guard = tp.guard && (f.action === FREE) && f.stamina > 0;
             if (guard !== f.guard) {
                 ctx.world.set(me, "Fighter", { guard, guard_t: guard ? f.time : f.guard_t });
                 if (f.body) ctx.anim.set(f.body, "blocking", guard);
@@ -471,11 +464,11 @@ export const control = system({
             const aimYaw = lock
                 ? (() => { const t = pos(ctx, lock)!; return yawTo(t[0] - here[0], t[2] - here[2]); })()
                 : moving ? w.yaw + Math.atan2(-w.strafe, w.forward) : bodyYaw(ctx, f);
-            // While free the body faces its motion, or the lock.
+            // While free the body faces its motion, or the lock while not sprinting (the engine's
+            // `motion` facing for a third-person walker).
             if (f.action === FREE && f.body) {
-                const want: Facing = lock && !w.run ? "target" : "motion";
                 const av = ctx.world.get(f.body, "Avatar");
-                if (av && (av.facing !== want || (want === "target" && av.target !== lock))) release(ctx, f, want, lock);
+                if (av && av.facing !== "motion") release(ctx, f, "motion");
             }
             const free = f.action === FREE || (f.action === ATTACK && f.chain_open);
             if (queued && free) {
@@ -522,34 +515,10 @@ export const control = system({
     },
 });
 
-function nearestFoe(ctx: SystemContext, me: Entity, here: V, yaw: number, foes: any): Entity | null {
-    let best: Entity | null = null;
-    let score = Infinity;
-    const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
-    for (let r = 0; r < foes.len; r++) {
-        const e = foes.id(r);
-        const f = fighter(ctx, e);
-        if (!f || f.action === DEAD || f.team === 0) continue;
-        const at = foes.cols.Transform.position;
-        const dx = at.x[r] - here[0], dy = at.y[r] - here[1], dz = at.z[r] - here[2];
-        const d = Math.hypot(dx, dz);
-        if (d > LOCK_RANGE_M) continue;
-        const front = (dx * fx + dz * fz) / Math.max(d, 0.01);
-        if (front < 0.2 && d > 4) continue;
-        const seen = ctx.physics.ray(here, [dx / Math.max(Math.hypot(dx, dy, dz), 0.01), dy / Math.max(Math.hypot(dx, dy, dz), 0.01), dz / Math.max(Math.hypot(dx, dy, dz), 0.01)], Math.hypot(dx, dy, dz), { exclude: [me] });
-        if (seen && seen.entity !== e) continue;
-        const s = d * (1.6 - front);
-        if (s < score) {
-            score = s;
-            best = e;
-        }
-    }
-    return best;
-}
-
 function rise(ctx: SystemContext, me: Entity, f: FighterRow, p: { checkpoint: { x: number; y: number; z: number }; deaths: number; flasks: number }) {
     ctx.world.set(me, "Transform", { position: { x: p.checkpoint.x, y: p.checkpoint.y, z: p.checkpoint.z } });
-    ctx.world.set(me, "Player", { down_s: 0, deaths: p.deaths + 1, flasks: 3, lock: null });
+    ctx.world.set(me, "Player", { down_s: 0, deaths: p.deaths + 1, flasks: 3 });
+    ctx.world.set(me, "ThirdPerson", { lock: null });
     act(ctx, me, f, FREE, null, { hp: f.hp_max, stamina: f.stamina_max, focus: 100, poise: KINDS[f.kind].poise });
     if (f.body) {
         ctx.anim.set(f.body, "dead", false);
@@ -788,7 +757,8 @@ export const notifies = system({
                     // The sellsword aims at the lock, else straight ahead along the camera.
                     const w = ctx.world.get(e, "Walker")!;
                     const here = pos(ctx, e)!;
-                    const lock = p.lock ? pos(ctx, p.lock) : null;
+                    const locked = ctx.world.get(e, "ThirdPerson")?.lock;
+                    const lock = locked ? pos(ctx, locked) : null;
                     const ahead: V = lock ? [lock[0], lock[1] - 0.3, lock[2]] : [here[0] - Math.sin(w.yaw) * 30, here[1] + Math.sin(w.pitch) * 30, here[2] - Math.cos(w.yaw) * 30];
                     if (d.clip === "Spell_Simple_Shoot") launch(ctx, e, f, 0, ahead);
                     else {
@@ -968,6 +938,7 @@ export const hud = system({
         const me = players.id(0);
         const f = fighter(ctx, me)!;
         const p = ctx.world.get(me, "Player")!;
+        const held = ctx.world.get(me, "ThirdPerson")?.lock ?? null;
         const keep = ctx.world.get(ctx.single("Keep"), "Keep")!;
         const boss = keep.boss ? fighter(ctx, keep.boss) : undefined;
         parts.each((r, e) => {
@@ -984,11 +955,11 @@ export const hud = system({
         foes.each((_r, e) => {
             const g = fighter(ctx, e)!;
             const b = ctx.world.get(e, "Brain")!;
-            const shown = g.action !== DEAD && g.kind !== WARDEN && (b.state >= 1 && b.state <= 4 || p.lock === e) && g.hp < g.hp_max || p.lock === e && g.action !== DEAD;
+            const shown = g.action !== DEAD && g.kind !== WARDEN && (b.state >= 1 && b.state <= 4 || held === e) && g.hp < g.hp_max || held === e && g.action !== DEAD;
             const bar = ctx.world.get(e, "UiBar");
             if (bar && (bar.visible !== shown || bar.value !== g.hp)) ctx.world.set(e, "UiBar", { value: g.hp, max: g.hp_max, visible: shown });
             const mark = ctx.world.get(e, "UiText");
-            const locked = p.lock === e && g.action !== DEAD;
+            const locked = held === e && g.action !== DEAD;
             if (mark && mark.visible !== locked) ctx.world.set(e, "UiText", { visible: locked });
         });
     },

@@ -17,12 +17,21 @@ The browser edition is exported with:
 cargo xtask export-web samples/thornkeep --out out/thornkeep-web --zip out/thornkeep-web.zip
 ```
 
-Click to capture the mouse. WASD moves (relative to the camera), the mouse turns the camera, Shift
-sprints. Left click swings (three swings chain into a combo), E is a heavy blow, Space rolls (you
-pass through blows mid-roll), the right button guards, and raising the guard just before a blow
-lands parries it, leaving the attacker open to a riposte. Q (or the middle button) locks on to the
-nearest foe and back off. 1 throws a bolt of thorn-fire, 2 a fan of knives (both spend focus),
-3 or C drinks a flask. Escape releases the mouse. Sound starts with the first click.
+Click to capture the mouse. WASD moves (relative to the camera), the mouse orbits the camera and the
+wheel brings it nearer or farther, Shift sprints. Left click swings (three swings chain into a
+combo), E is a heavy blow, Space or C rolls (you pass through blows mid-roll), the right button
+guards, and raising the guard just before a blow lands parries it, leaving the attacker open to a
+riposte. Q (or the middle button) locks on to the nearest foe in front and back off; while locked
+the camera swings behind the line to the foe and the sellsword faces it unless sprinting. 1 throws a
+bolt of thorn-fire, 2 a fan of knives (both spend focus), 3 drinks a flask. Escape releases the
+mouse. Sound starts with the first click.
+
+The sellsword is the engine's `third_person` seat (docs/spec/player.md 5.1), so an agent plays it
+as a person does, over MCP, HTTP or the CLI: `amoris player observe` lists the foes it sees with
+their bearing, range, health and action, and its heading, look and lock; `amoris player act
+'[{"do": "set", "controls": {"frame": "world", "forward": 1}}]'` walks north whatever the camera
+does, `{"do": "use", "entity": "Brigand4", "verb": "lock_on"}` locks on to a foe it sees within
+22 m, and `primary`, `secondary`, `dodge`, `guard` and `lock` are its verbs.
 
 - Every swing, roll and guard spends stamina; it comes back when you stop spending it. A blow
   breaks a foe's poise and staggers it; a guard that runs out of stamina breaks.
@@ -65,9 +74,12 @@ navigation grid and the scripts' physics queries.
 - `build_scene.py` writes `scene.json` and `perception.json`: the terrain, the keep and its
   colliders, the road's parapets, the dressing, the braziers' fire, light and sound, the
   navigation grid, the fighters (each a walker, its posed body, its weapon on a hand socket with
-  its sparks, and the spray at its chest), the spring-arm camera and the HUD.
-- `scripts/main.ts` holds the rules: the sellsword's controls, stamina, combos, rolls, guard and
-  parry, lock-on, bolts, knives and flasks; the blade's swept hits from its notifies; the foes'
+  its sparks, and the spray at its chest; the sellsword's walker is the `third_person` seat, each
+  foe's lockable and perceivable), the spring-arm camera, the HUD, and the seat's perception (its
+  instruments, and the foe kind with its `lock_on` affordance).
+- `scripts/main.ts` holds the rules: what the sellsword's verbs do (stamina, combos, rolls, guard
+  and parry, bolts, knives and flasks; the lock-on itself is the engine's, which the rules take
+  from a foe that falls); the blade's swept hits from its notifies; the foes'
   brains (watch, alert, chase by the grid, circle, take turns, strike, back off, return); the
   Warden's phases; the shrine and the outcome; the sounds, sparks and camera shake.
 - `build_audio.py` synthesizes every sound: swings, blows, clangs, guards and parries, rolls,
@@ -92,6 +104,8 @@ python samples/thornkeep/build_scene.py
 ```
 
 `check.toml` runs the engine's determinism, fork and reload checks on the walk up the road to the
-gate fight.
+gate fight, played through the seat's `third_person` controls (`checks/inputs.jsonl`: the walk and
+sprint, a lock-on, a combo, a roll, a guard and a heavy blow). `checks/pilot.py` plays the whole
+game through the same seat.
 
 Credits and licences are in `CREDITS.txt`.

@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::body::Transform;
 use crate::geom;
 use crate::solver::Physics;
+use crate::third_person::ThirdPerson;
 use crate::walker::Walker;
 
 /// How an avatar turns.
@@ -303,7 +304,7 @@ fn wanted(w: &Walker) -> [f64; 2] {
 pub(crate) fn avatars(
     clock: Res<SimClock>,
     index: Res<EntityIndex>,
-    walkers: Query<(&EntityId, &Walker, &Transform)>,
+    walkers: Query<(&EntityId, &Walker, &Transform, Option<&ThirdPerson>)>,
     mut avatars: Query<(&EntityId, &mut Avatar, &mut Transform), Without<Walker>>,
     others: Query<(&EntityId, &Transform), Placed>,
 ) {
@@ -312,32 +313,37 @@ pub(crate) fn avatars(
         index
             .get(id)
             .and_then(|e| walkers.get(e).ok())
-            .map(|(_, w, t)| (*w, t.position))
+            .map(|(_, w, t, tp)| (*w, t.position, crate::third_person::lock_of(tp, w)))
     };
     let target_pos = |id: EntityId| -> Option<[f64; 3]> {
         let e = index.get(id)?;
         walkers
             .get(e)
-            .map(|(_, _, t)| t.position)
+            .map(|(_, _, t, _)| t.position)
             .ok()
             .or_else(|| others.get(e).ok().map(|(_, t)| t.position))
     };
+    let toward = |feet: [f64; 3], target: Option<EntityId>| {
+        target.and_then(target_pos).and_then(|p| {
+            let (dx, dz) = (p[0] - feet[0], p[2] - feet[2]);
+            (dx * dx + dz * dz > 1e-6).then(|| math::atan2(-dx, -dz))
+        })
+    };
     for (_, mut a, mut tf) in by_id_mut(&mut avatars) {
-        let Some((w, eye)) = a.walker.and_then(walker) else {
+        let Some((w, eye, lock)) = a.walker.and_then(walker) else {
             continue;
         };
         let feet = [eye[0], eye[1] - w.eye_m, eye[2]];
         let goal = match a.facing {
             Facing::Look => Some(w.yaw),
             Facing::Fixed => None,
+            // A third-person walker locked on and not running faces its lock (player.md 5.1).
+            Facing::Motion if lock.is_some() => toward(feet, lock),
             Facing::Motion => {
                 let [vx, vz] = wanted(&w);
                 (vx * vx + vz * vz > 0.01).then(|| math::atan2(-vx, -vz))
             }
-            Facing::Target => a.target.and_then(target_pos).and_then(|p| {
-                let (dx, dz) = (p[0] - feet[0], p[2] - feet[2]);
-                (dx * dx + dz * dz > 1e-6).then(|| math::atan2(-dx, -dz))
-            }),
+            Facing::Target => toward(feet, a.target),
         };
         let mut yaw = a.yaw;
         if let Some(goal) = goal {
@@ -427,7 +433,7 @@ pub(crate) fn attach(
 pub(crate) fn rigs(
     clock: Res<SimClock>,
     index: Res<EntityIndex>,
-    walkers: Query<(&Walker, &Transform)>,
+    walkers: Query<(&Walker, &Transform, Option<&ThirdPerson>)>,
     targets: Query<&Transform, Without<CameraRig>>,
     mut cams: Query<(&EntityId, &mut CameraRig, &mut Transform), Without<Walker>>,
     physics: Option<Res<Physics>>,
@@ -437,9 +443,11 @@ pub(crate) fn rigs(
         let Some(e) = rig.target.and_then(|id| index.get(id)) else {
             continue;
         };
-        let Ok((w, wtf)) = walkers.get(e) else {
+        let Ok((w, wtf, tp)) = walkers.get(e) else {
             continue;
         };
+        // A third-person seat's zoom scales the arm (player.md 5.1).
+        let reach = tp.map_or(rig.distance_m, |t| rig.distance_m * t.zoom);
         let feet = [wtf.position[0], wtf.position[1] - w.eye_m, wtf.position[2]];
         let mut look = Walker {
             pitch: w.pitch,
@@ -466,10 +474,11 @@ pub(crate) fn rigs(
             feet[2] + right[2] * rig.shoulder_m,
         ];
         let back = [-dir[0], -dir[1], -dir[2]];
-        let free = physics.as_deref().map_or(rig.distance_m, |p| {
-            probe(p, pivot, back, rig.distance_m, rig.probe_m)
-        });
-        let want = math::clamp(free, rig.min_distance_m, rig.distance_m);
+        let reach = math::max(reach, rig.min_distance_m);
+        let free = physics
+            .as_deref()
+            .map_or(reach, |p| probe(p, pivot, back, reach, rig.probe_m));
+        let want = math::clamp(free, rig.min_distance_m, reach);
         let length = if want < rig.length_m {
             want
         } else {

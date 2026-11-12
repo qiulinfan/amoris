@@ -5,8 +5,9 @@
     python samples/thornkeep/checks/pilot.py page --cdp 9333 --page <target id prefix>
 
 It reads the sellsword and the foes from the world (developer reads: `world.get`, `world.query`)
-and acts only as the seat `player` does: it sets forward, strafe, run, yaw, the held buttons and the
-pressed ones, and pulses primary. It walks the road, the bailey, the stair, the shrine and the ring
+and acts only as the seat `player` does, through the third_person catalog: it sets forward,
+strafe, run, yaw and guard, pulses primary, secondary, dodge and lock, and presses the game's own
+buttons (bolt, knives, flask). It walks the road, the bailey, the stair, the shrine and the ring
 by waypoints; locks on to the nearest foe; rolls from blows it sees begin; swings while the foe is
 open, a heavy blow at a shield, bolts at archers; guards and backs off after a combo; drinks when
 hurt and clear. Against the Warden it stays out of reach while he swings and goes in for three blows
@@ -26,7 +27,11 @@ import urllib.request
 
 ROUTE = [(0, 30), (0, 10), (-7, 7.5), (0, -17), (0, -24), (0, -31.5), (-12, -28), (0, -36), (0, -48), (0, -56),
          (0, -66), (0, -78)]
+# The pilot's own flags for what it asks of the seat; `Pilot.set` turns them into the catalog's
+# verbs (guard held, the dodge, lock and secondary pulses) and the game's buttons (project.toml).
 BITS = {'dodge': 1, 'block': 2, 'lock': 4, 'heavy': 8, 'bolt': 16, 'knives': 32, 'flask': 64}
+PULSES = {'dodge': 'dodge', 'lock': 'lock', 'heavy': 'secondary'}
+BUTTONS = {'bolt': 1, 'knives': 2, 'flask': 4}
 FREE, ATTACK, ROLL, HURT, STAGGER, CAST, DEAD, DRINK, CHARGE = range(9)
 BRIGAND, BRUTE, ARCHER, WARDEN = 1, 2, 3, 4
 FOE_FIELDS = ['Fighter.kind', 'Fighter.hp', 'Fighter.action', 'Fighter.action_s', 'Transform.position']
@@ -57,7 +62,7 @@ class Host:
 
     def read(self):
         """What one step reads: the keep, the sellsword and the foes."""
-        return (self.query(['Keep'], ['Keep.freed']), self.get('Sellsword', ['Transform', 'Fighter', 'Player']),
+        return (self.query(['Keep'], ['Keep.freed']), self.get('Sellsword', ['Transform', 'Fighter', 'Player', 'ThirdPerson']),
                 self.query(['Brain', 'Fighter', 'Transform'], FOE_FIELDS))
 
 
@@ -101,7 +106,7 @@ class Page:
         """What one step reads, in one round trip: the keep, the sellsword and the foes."""
         c = 'window.amorisPlayer.amoris.command'
         r = self.eval(f'Promise.all([{c}("world.query", {{with: ["Keep"], fields: ["Keep.freed"]}}), '
-                      f'{c}("world.get", {{entity: "Sellsword", components: ["Transform", "Fighter", "Player"]}}), '
+                      f'{c}("world.get", {{entity: "Sellsword", components: ["Transform", "Fighter", "Player", "ThirdPerson"]}}), '
                       f'{c}("world.query", {{with: ["Brain", "Fighter", "Transform"], fields: {json.dumps(FOE_FIELDS)}}})])'
                       '.then(r => JSON.stringify(r))')
         keep, me, foes = json.loads(r)
@@ -151,7 +156,17 @@ class Pilot:
             self.yaw = (self.yaw + max(-step, min(step, dy)) + math.pi) % math.tau - math.pi
             c['yaw'] = self.yaw
         self.at = time.time()
-        self.game.act([{'do': 'set', 'controls': c}])
+        actions = []
+        if 'held' in c:
+            c['guard'] = bool(c.pop('held') & BITS['block'])
+        pressed = c.pop('pressed', 0)
+        mask = sum(bit for name, bit in BUTTONS.items() if pressed & BITS[name])
+        if mask:
+            c['pressed'] = mask
+        if c:
+            actions.append({'do': 'set', 'controls': c})
+        actions += [{'do': 'pulse', 'control': v} for k, v in PULSES.items() if pressed & BITS[k]]
+        self.game.act(actions)
 
     def swing(self):
         self.game.act([{'do': 'pulse', 'control': 'primary'}])
@@ -219,7 +234,7 @@ class Pilot:
             if fight:
                 d, n, q, c = fight[0]
                 kind = c['kind']
-                if not pl.get('lock'):
+                if not me['ThirdPerson'].get('lock'):
                     self.set(pressed=BITS['lock'])
                 face = yaw_to(q[0] - p[0], q[2] - p[2])
                 if kind == WARDEN:

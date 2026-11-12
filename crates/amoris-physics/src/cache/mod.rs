@@ -94,6 +94,8 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
             "baked navigation grids, rebuilt from the colliders at their next query",
         )
         .component::<crate::avatar::CameraRig>()
+        .component::<crate::third_person::ThirdPerson>()
+        .component::<crate::third_person::Lockable>()
         .component::<crate::board::Board>()
         .component::<amoris_sim::voxels::Voxels>()
         .component::<WaterRegion>()
@@ -615,6 +617,21 @@ impl Persisted for crate::walker::Buttons {
 
 impl Persisted for crate::avatar::CameraRig {
     const NAME: &'static str = "CameraRig";
+    const VERSION: u32 = 1;
+}
+
+impl Persisted for crate::third_person::ThirdPerson {
+    const NAME: &'static str = "ThirdPerson";
+    const VERSION: u32 = 1;
+
+    fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
+        t.trace_type::<crate::third_person::MoveFrame>(s)?;
+        t.trace_type::<Self>(s).map(|_| ())
+    }
+}
+
+impl Persisted for crate::third_person::Lockable {
+    const NAME: &'static str = "Lockable";
     const VERSION: u32 = 1;
 }
 

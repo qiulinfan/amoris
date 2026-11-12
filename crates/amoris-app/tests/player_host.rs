@@ -6,7 +6,9 @@
 //! sessions, `agent.session.*`, which are a developer's to list, open and close), and the world
 //! does not change; the omniscient view is refused; an unknown seat says so. The MCP session
 //! lists the `player` tool alone, refuses the others, and its caller is refused developer methods
-//! by the host even past the MCP layer's own check.
+//! by the host even past the MCP layer's own check. Thornkeep's third-person seat (player.md 5.1)
+//! is played the same ways: it walks north in the world frame, sees a foe, locks on to it through
+//! the foe's affordance and swings, over HTTP, and dodges and reads its heading over MCP.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -20,14 +22,16 @@ use amoris_server::{GameAccess, Host, McpBackend, ServeOptions, Via};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-fn course() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../samples/sailing-course")
+fn sample(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../samples")
+        .join(name)
 }
 
-/// The sailing course on a game thread started as `amoris serve` starts it (real time at speed 1,
-/// paused: the edit world), behind a host that opens player clients.
-fn start() -> (GameHandle, Host) {
-    let root = course();
+/// A sample on a game thread started as `amoris serve` starts it (real time at speed 1, paused:
+/// the edit world), behind a host that opens player clients.
+fn start_sample(name: &str) -> (GameHandle, Host) {
+    let root = sample(name);
     let setup = Arc::new(Project::load(&root).unwrap().setup(false).unwrap());
     let t0 = Instant::now();
     let clock: amoris_runtime::thread::Clock =
@@ -53,6 +57,11 @@ fn start() -> (GameHandle, Host) {
     let host = Host::new(access, root, None);
     host.set_players(Arc::new(move |i| players.client(Source::Player(i))));
     (handle, host)
+}
+
+/// The sailing course, served.
+fn start() -> (GameHandle, Host) {
+    start_sample("sailing-course")
 }
 
 fn runtime() -> tokio::runtime::Runtime {
@@ -323,6 +332,193 @@ fn a_seat_bound_mcp_session_lists_and_calls_the_player_tool_alone() {
             .await
             .unwrap();
         assert!(dev["components"]["Cargo"].is_object(), "{dev:#}");
+    });
+    drop(host);
+    handle.shutdown(5000).unwrap();
+}
+
+/// Thornkeep's third-person seat over HTTP: it moves in the world frame, perceives the foes ahead,
+/// locks on to one through its `lock_on` affordance (the engine turns the camera to it) and
+/// swings; a developer's reads see what the seat did. The world never sees a hash of the seat's.
+#[test]
+fn a_third_person_seat_over_http_walks_locks_on_and_swings() {
+    let (handle, host) = start_sample("thornkeep");
+    let rt = runtime();
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let (addr, task) = rt
+        .block_on(host.serve(&ServeOptions { port: 0 }, async {
+            let _ = stopped.await;
+        }))
+        .unwrap();
+    let url = format!("http://{addr}");
+    let seat = |method: &str, params: Value| json!({"id": 1, "method": method, "params": params, "seat": "player"});
+    let dev = |method: &str, params: Value| json!({"id": 1, "method": method, "params": params});
+    let hero = |fields: &[&str]| {
+        result(
+            &url,
+            &dev(
+                "world.get",
+                json!({"entity": "Sellsword", "fields": fields}),
+            ),
+        )["fields"]
+            .clone()
+    };
+
+    let d = result(&url, &seat("player.describe", json!({"part": "controls"})));
+    let names: Vec<&str> = d["controls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["name"].as_str())
+        .collect();
+    for c in ["frame", "zoom", "guard", "dodge", "lock", "lock_on", "held"] {
+        assert!(names.contains(&c), "{c}: {names:?}");
+    }
+    let start = hero(&["Transform.position"])["Transform.position"][2]
+        .as_f64()
+        .unwrap();
+    // North in the world frame, sprinting, until a foe it sees can be locked on to.
+    result(
+        &url,
+        &seat(
+            "player.act",
+            json!({"actions": [{"do": "set", "controls": {"frame": "world", "forward": 1.0, "run": true}}]}),
+        ),
+    );
+    let mut foe = None;
+    for _ in 0..20 {
+        result(&url, &seat("player.wait", json!({"ticks": 30})));
+        let o = result(
+            &url,
+            &seat(
+                "player.observe",
+                json!({"projection": "json", "budget_tokens": 2000}),
+            ),
+        );
+        assert_eq!(o["omniscient"], json!(false));
+        foe = o["entities"].as_array().unwrap().iter().find_map(|e| {
+            (e["kind"] == json!("foe") && e["can"].to_string().contains("lock_on"))
+                .then(|| (e["name"].as_str().unwrap().to_owned(), e["id"].clone()))
+        });
+        if foe.is_some() {
+            break;
+        }
+    }
+    let (name, id) = foe.expect("a foe within lock range");
+    let z = hero(&["Transform.position"])["Transform.position"][2]
+        .as_f64()
+        .unwrap();
+    assert!(z < start - 5.0, "walked north from {start} to {z}");
+    result(
+        &url,
+        &seat(
+            "player.act",
+            json!({"actions": [{"do": "set", "controls": {"forward": 0.0, "run": false}},
+                               {"do": "use", "entity": name, "verb": "lock_on"}]}),
+        ),
+    );
+    result(&url, &seat("player.wait", json!({"ticks": 20})));
+    assert_eq!(hero(&["ThirdPerson.lock"])["ThirdPerson.lock"], id);
+    let o = result(&url, &seat("player.observe", json!({"projection": "json"})));
+    let locked = o["instruments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["name"] == json!("locked"))
+        .map(|i| i["value"].clone());
+    assert_eq!(locked, Some(json!(true)), "{o:#}");
+    let swings = hero(&["Fighter.swings"])["Fighter.swings"]
+        .as_f64()
+        .unwrap();
+    result(
+        &url,
+        &seat(
+            "player.act",
+            json!({"actions": [{"do": "pulse", "control": "primary"}]}),
+        ),
+    );
+    let w = result(&url, &seat("player.wait", json!({"ticks": 3})));
+    assert!(w.get("world_hash").is_none(), "{w:#}");
+    let after = hero(&["Fighter.swings", "Fighter.action"]);
+    assert_eq!(
+        after["Fighter.swings"].as_f64(),
+        Some(swings + 1.0),
+        "{after:#}"
+    );
+    // The seat cannot write the world as a developer does.
+    let e = error(
+        &url,
+        &seat(
+            "world.edit",
+            json!({"ops": [{"set": {"entity": "Sellsword", "component": "ThirdPerson", "value": {"lock": null}}}]}),
+        ),
+    );
+    assert_eq!(e["code"], json!("permission.denied"), "{e:#}");
+
+    let _ = stop.send(());
+    rt.block_on(task).unwrap();
+    drop(host);
+    handle.shutdown(5000).unwrap();
+}
+
+/// Thornkeep's third-person seat in a seat-bound MCP session: the `player` tool dodges and
+/// observes the seat's own heading, look and lock.
+#[test]
+fn a_third_person_seat_plays_over_mcp() {
+    let (handle, host) = start_sample("thornkeep");
+    let rt = runtime();
+    rt.block_on(async {
+        let backend: Arc<dyn amoris_mcp::Backend> =
+            Arc::new(McpBackend::player(host.clone(), "player"));
+        let (client, server) = tokio::io::duplex(1 << 20);
+        let (sr, sw) = tokio::io::split(server);
+        let session = tokio::spawn(amoris_mcp::serve_io(backend.clone(), sr, sw));
+        let (cr, cw) = tokio::io::split(client);
+        let mut c = McpClient {
+            write: cw,
+            read: BufReader::new(cr),
+            id: 0,
+        };
+        c.send(
+            "initialize",
+            json!({"protocolVersion": "2025-06-18", "capabilities": {},
+                   "clientInfo": {"name": "test", "version": "0"}}),
+        )
+        .await;
+        c.notify("notifications/initialized").await;
+        let (failed, text) = c
+            .tool(
+                "player",
+                json!({"action": "act", "actions": [
+                    {"do": "set", "controls": {"frame": "body", "forward": 1.0}},
+                    {"do": "pulse", "control": "dodge"}]}),
+            )
+            .await;
+        assert!(!failed, "{text}");
+        let (failed, text) = c
+            .tool("player", json!({"action": "wait", "ticks": 30}))
+            .await;
+        assert!(!failed, "{text}");
+        let (failed, text) = c.tool("player", json!({"action": "observe"})).await;
+        assert!(!failed, "{text}");
+        for i in ["heading_deg", "look_deg", "locked"] {
+            assert!(text.contains(i), "{i} in {text}");
+        }
+        drop(c);
+        let _ = session.await;
+        // The dodge was the rules' roll.
+        let dev = host
+            .call(
+                &Via::Api,
+                "world.get",
+                json!({"entity": "Sellsword", "fields": ["Fighter.stamina", "Transform.position"]}),
+            )
+            .await
+            .unwrap();
+        assert!(
+            dev["fields"]["Fighter.stamina"].as_f64().unwrap() < 100.0,
+            "{dev:#}"
+        );
     });
     drop(host);
     handle.shutdown(5000).unwrap();

@@ -17,6 +17,10 @@
 // the page's query (`gpu_minimal=features,limits,timestamps`: WebGPU's baseline device).
 // --windward checks the game-controlled camera, startup hold, banking/diving keys, restart,
 // pause on release, and a complete ten-gate run by a scripted test pilot instead of voxel edits.
+// --third-person checks a third_person seat (docs/spec/player.md 5.1, samples/thornkeep): it walks
+// and sprints along the camera, the mouse orbits the camera, the wheel zooms, the right button
+// guards, C dodges, the left button acts and Q locks on to the nearest foe in front, which turns
+// the camera to it; the drawn camera stays near the world's (its lag is the page's alone).
 // --no-pointer-lock reproduces embedded browsers that refuse capture; the real click must still
 // start a game-camera game with keyboard controls and drag-to-look, without forceCapture.
 import { spawn } from "node:child_process";
@@ -36,6 +40,7 @@ const shots = opt("--shots", null);
 const settle = Number(opt("--seconds", "6"));
 const windward = args.includes("--windward");
 const emberlight = args.includes("--emberlight");
+const thirdPerson = args.includes("--third-person");
 const noPointerLock = args.includes("--no-pointer-lock");
 if (!existsSync(join(folder, "index.html"))) {
   console.error("usage: node tools/host/web_play_check.mjs <exported folder> [--shots DIR] [--seconds S]");
@@ -126,6 +131,12 @@ const key = async (code, ms) => {
   await sleep(ms);
   await send("Input.dispatchKeyEvent", { type: "keyUp", ...k });
 };
+const keys = async (codes, ms) => {
+  const k = (code) => ({ code, key: code.replace(/^Key/, "").toLowerCase(), windowsVirtualKeyCode: code.startsWith("Key") ? code.charCodeAt(3) : 0 });
+  for (const c of codes) await send("Input.dispatchKeyEvent", { type: "keyDown", ...k(c) });
+  await sleep(ms);
+  for (const c of codes) await send("Input.dispatchKeyEvent", { type: "keyUp", ...k(c) });
+};
 const click = async (button) => {
   const at = { x: Math.round(vw / 2), y: Math.round(vh / 2), button, clickCount: 1 };
   await send("Input.dispatchMouseEvent", { type: "mousePressed", ...at });
@@ -183,7 +194,71 @@ if (ready) {
   await shot("1-ready");
   const veil = await evaluate("!document.getElementById('veil').hidden && document.getElementById('status').textContent");
   check("click to play shown", veil === "Click to play", { status: veil });
-  if (emberlight) {
+  if (thirdPerson) {
+    // The seat's walker as the world has it, and the camera as the page draws it.
+    const seat = () => evaluate(`(async () => {
+      const p = window.amorisPlayer, a = p.amoris;
+      const q = await a.command("world.query", { with: ["ThirdPerson", "Walker"], fields: [
+        "Transform.position", "Walker.yaw", "ThirdPerson.zoom", "ThirdPerson.guard", "ThirdPerson.lock",
+        "ThirdPerson.facing", "Fighter.action", "Fighter.swings"] });
+      const r = q[0];
+      const cam = Array.from(p.viewport.raw.camera());
+      const rig = (await a.command("world.query", { with: ["CameraRig"], fields: ["Transform.position"] }))[0];
+      return { at: r["Transform.position"], yaw: r["Walker.yaw"], zoom: r["ThirdPerson.zoom"], guard: r["ThirdPerson.guard"],
+        lock: r["ThirdPerson.lock"], facing: r["ThirdPerson.facing"], action: r["Fighter.action"], swings: r["Fighter.swings"],
+        drawn: cam.slice(0, 3), camera: rig["Transform.position"], tick: (await a.command("status")).tick };
+    })()`);
+    check("third-person seat and game camera", await evaluate("window.amorisPlayer.thirdPerson && window.amorisPlayer.gameCamera"));
+    await evaluate("window.amorisPlayer.forceCapture(true)");
+    await sleep(500);
+    const s0 = await seat();
+    await keys(["KeyW"], 2000);
+    await sleep(300);
+    const s1 = await seat();
+    const walked = Math.hypot(s1.at[0] - s0.at[0], s1.at[2] - s0.at[2]);
+    check("walks away from the camera", walked > 1.5 && s1.at[2] < s0.at[2], { walked_m: Number(walked.toFixed(2)), from: s0.at, to: s1.at });
+    const lag = Math.hypot(...s1.drawn.map((v, i) => v - s1.camera[i]));
+    check("the drawn camera follows the rig's", lag < 1.5 && s1.camera[2] > s1.at[2], { lag_m: Number(lag.toFixed(2)), drawn: s1.drawn, rig: s1.camera });
+    await shot("2-walked");
+    await evaluate("window.amorisPlayer.input.dx += 200");
+    await sleep(400);
+    const s2 = await seat();
+    check("the mouse orbits the camera", Math.abs(s2.yaw - s1.yaw) > 0.3, { yaw_before: s1.yaw, yaw_after: s2.yaw });
+    await evaluate("window.amorisPlayer.input.dx -= 200");
+    await send("Input.dispatchMouseEvent", { type: "mouseWheel", x: vw / 2, y: vh / 2, deltaX: 0, deltaY: 300 });
+    await sleep(400);
+    const s3 = await seat();
+    check("the wheel zooms out", s3.zoom > 1.2, { zoom: s3.zoom });
+    await send("Input.dispatchMouseEvent", { type: "mousePressed", x: vw / 2, y: vh / 2, button: "right", clickCount: 1 });
+    await sleep(300);
+    const guarding = await seat();
+    await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: vw / 2, y: vh / 2, button: "right", clickCount: 1 });
+    await sleep(300);
+    const lowered = await seat();
+    check("the right button guards while held", guarding.guard === true && lowered.guard === false, { held: guarding.guard, released: lowered.guard });
+    // Sprint toward the gate's brigands until one is in lock range, then lock on.
+    await keys(["ShiftLeft", "KeyW"], 2400);
+    await sleep(200);
+    await key("KeyQ", 60);
+    await sleep(700);
+    const locked = await seat();
+    check("Q locks on and turns the camera to the foe", locked.lock !== null && locked.lock !== undefined, { lock: locked.lock, at: locked.at, yaw: locked.yaw });
+    await shot("3-locked");
+    await key("KeyC", 60);
+    await sleep(150);
+    const rolled = await seat();
+    check("C dodges (the game's roll)", rolled.action === 2, { action: rolled.action });
+    await sleep(1200);
+    await click("left");
+    await sleep(300);
+    const swung = await seat();
+    check("the left button swings", swung.swings > rolled.swings, { swings: swung.swings });
+    await shot("4-swung");
+    const frames = await evaluate(`(() => { const s = window.amorisPlayer.samples.slice(-300).sort((a, b) => a - b);
+      return { n: s.length, p50: s[Math.floor(s.length / 2)], p95: s[Math.floor(s.length * 0.95)] }; })()`);
+    check("draws frames", frames.n > 30, frames);
+    globalThis.frames = frames;
+  } else if (emberlight) {
     await click("left");
     await sleep(200);
     const active = await evaluate("window.amorisPlayer.input.captured() && !window.amorisPlayer.input.forced && document.getElementById('veil').hidden");

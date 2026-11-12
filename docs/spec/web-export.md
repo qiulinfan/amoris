@@ -47,7 +47,10 @@ declares `actions = "first_person"` is played as seat `player` (voxels.md 8): `p
 input into the same `player.act` actions as `SeatWalk` in `crates/amoris-app/src/window.rs`, sent as
 the local human player, and the viewport's `first_person` draws from the walker's camera as the
 world last published it, turned at once by the page's own look, with the targeted block's outline
-and the crosshair.
+and the crosshair. A game whose catalog is `third_person` (player.md 5.1) is played the same way
+with that catalog's keys (the wheel zooms, the right button guards, C, E, F and Q pulse `dodge`,
+`secondary`, `interact` and `lock`), always with the game's camera, its rig's, whose drawn
+position the viewport smooths (`set_camera_smoothing`, 0.08 s).
 
 | Input | Native window | Page |
 |---|---|---|

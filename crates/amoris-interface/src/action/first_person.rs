@@ -16,11 +16,11 @@ use crate::perception::PerceptionDefs;
 /// The hotbar's slots, as the `slot` control names them.
 pub const SLOTS: [&str; 9] = ["0", "1", "2", "3", "4", "5", "6", "7", "8"];
 
-fn has_walker(world: &World, body: EntityId) -> bool {
+pub(super) fn has_walker(world: &World, body: EntityId) -> bool {
     amoris_sim::entity::entity(world, body).is_some_and(|e| world.get::<Walker>(e).is_some())
 }
 
-fn with_walker(
+pub(super) fn with_walker(
     world: &mut World,
     body: EntityId,
     f: impl FnOnce(&mut Walker),
@@ -33,7 +33,7 @@ fn with_walker(
     Ok(())
 }
 
-fn number(v: Option<&ControlValue>) -> Result<f64, Problem> {
+pub(super) fn number(v: Option<&ControlValue>) -> Result<f64, Problem> {
     match v {
         Some(ControlValue::Number(x)) => Ok(*x),
         _ => Err(super::state::internal(
@@ -43,7 +43,7 @@ fn number(v: Option<&ControlValue>) -> Result<f64, Problem> {
     }
 }
 
-fn flag(v: Option<&ControlValue>) -> Result<bool, Problem> {
+pub(super) fn flag(v: Option<&ControlValue>) -> Result<bool, Problem> {
     match v {
         Some(ControlValue::Bool(b)) => Ok(*b),
         _ => Err(super::state::internal(
@@ -53,7 +53,11 @@ fn flag(v: Option<&ControlValue>) -> Result<bool, Problem> {
     }
 }
 
-fn read(world: &World, body: EntityId, f: fn(&Walker) -> ControlValue) -> Option<ControlValue> {
+pub(super) fn read(
+    world: &World,
+    body: EntityId,
+    f: fn(&Walker) -> ControlValue,
+) -> Option<ControlValue> {
     let e = amoris_sim::entity::entity(world, body)?;
     world.get::<Walker>(e).map(f)
 }
@@ -137,7 +141,7 @@ fn read_buttons(
 }
 
 /// The game's own buttons (`[player] buttons`, animation.md 6): bit i is the i-th button.
-fn button_controls() -> Vec<ControlDef> {
+pub(super) fn button_controls(writable: fn(&World, EntityId) -> bool) -> Vec<ControlDef> {
     let kind = ControlKind::Axis {
         min: 0.0,
         max: 65535.0,
@@ -155,7 +159,7 @@ fn button_controls() -> Vec<ControlDef> {
                     with_buttons(w, b, |x| x.held = m)
                 },
                 read: |w, b| read_buttons(w, b, |x| x.held),
-                writable: has_walker,
+                writable,
             },
         },
         ControlDef {
@@ -169,7 +173,7 @@ fn button_controls() -> Vec<ControlDef> {
                     with_buttons(w, b, |x| x.pressed |= m)
                 },
                 read: |w, b| read_buttons(w, b, |x| x.pressed),
-                writable: has_walker,
+                writable,
             },
         },
     ]
@@ -178,7 +182,7 @@ fn button_controls() -> Vec<ControlDef> {
 /// The first-person controls (voxels.md 6).
 pub fn controls() -> Vec<ControlDef> {
     let mut all = base_controls();
-    all.extend(button_controls());
+    all.extend(button_controls(has_walker));
     all
 }
 
