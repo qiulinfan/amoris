@@ -203,8 +203,39 @@ bodies.cols.ExternalForce.force.x[r] += 6 / ctx.dt;  // an impulse of 6 N s
 - Contacts arrive a tick later: declare `events: ["physics."]` and read `physics.contact_began` and
   `physics.contact_ended` from `ctx.events`, `subject` the lower id, `data.other` the other.
 - Limits: no continuous collision detection, so a small fast body passes through a thin one (keep
-  `ctx.physics.sweep` for bullets); no joints, sensors or kinematic bodies; a `Walker` stands on
-  fixed colliders only, and dynamic bodies neither block nor push it.
+  `ctx.physics.sweep` for bullets); no joints or kinematic bodies; a `Walker` stands on fixed
+  colliders only, and dynamic bodies neither block nor push it.
+
+### Sensors and collision groups
+
+A `CollisionFilter` beside a `Collider` makes it a sensor (a trigger) or puts it in groups.
+
+```ts
+// A fixed trigger box: no RigidBody, so it is fixed.
+const gate = ctx.world.spawn({
+    Transform: { position: { z: -4, y: 1 } },
+    Collider: { kind: "Cuboid", half_extents: { x: 2, y: 1, z: 0.5 } },
+    CollisionFilter: { sensor: true },
+});
+for (const e of ctx.events) {
+    if (e.kind === "physics.sensor_entered" && e.subject === gate) open(e.data.other);
+}
+// Groups: bit i is group i. The level is in group 1 alone (in the scene: "CollisionFilter":
+// {"groups": 1}); ghosts (group 2) meet only ghosts, so they pass through the level.
+const GHOST = 1 << 1;
+ctx.world.insert(ball, "CollisionFilter", { groups: GHOST, mask: GHOST });
+```
+
+- A sensor pushes nothing: bodies fall through it and walkers walk through it. Declare
+  `events: ["physics."]`: `physics.sensor_entered` and `physics.sensor_left` arrive a tick later,
+  `subject` the sensor and `data.other` the body or `Walker` that entered or left.
+- Two colliders meet when each is in a group the other's `mask` holds: `a.groups & b.mask` and
+  `b.groups & a.mask` both non-zero. Without a filter a collider is in every group and meets
+  every group, so it meets a ghost too: put what ghosts pass through in a group of its own.
+  Masks are unsigned: write `(GHOST | 1) >>> 0`, and `0xffffffff` for all.
+- On a `Walker`, a `CollisionFilter` decides which sensors notice it, never what it stands on.
+- Ray casts, overlaps and sweeps (`ctx.physics`) pass through sensors.
+- Changing a filter takes effect at the next step without rebuilding the body.
 
 ## Block volumes
 

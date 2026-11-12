@@ -219,7 +219,7 @@ this table and the schedule golden of section 12 together.
 | 7a | Forces | `physics.board` | amoris-physics | each `Board`'s planing, glide, rail and fin forces at its Floater points, implicit over each point's share of its mass, and its rider's paddling, carving and pop-up (water.md 50) |
 | 7b | Forces | `physics.terrain` | amoris-physics | each `Terrain` whose hash changed given its fixed triangle-mesh `Collider` again (water.md 65.1) |
 | 8 | Physics | `physics.step` | amoris-physics | sync changed bodies in, one step of `dt`, write back positions, velocities and readouts |
-| 9 | Physics | `physics.contacts` | amoris-physics | contact begin and end events, in pair order (section 8.4) |
+| 9 | Physics | `physics.contacts` | amoris-physics | each `Walker`'s box tested against the sensors; contact begin and end events and sensor entries and exits, in pair order (sections 8.4 and 8.5) |
 | 9b | Physics | `physics.walk` | amoris-physics | each `Walker` moved against the volumes' solid cells and its eye written (voxels.md 5.2) |
 | 9c | Physics | `physics.mount` | amoris-physics | each mounted `Walker`'s eye carried with its board's integrated pose; a board turned over throws its rider (water.md 50) |
 | 10 | Finish | `interface.perception` | amoris-interface | every observer's memory and perceived events from the events appended since its last run: the boundary writes' (the inbox from `boundary_from`, 5.1) and the tick's own (still in the outbox), in `EventSeq` order (shared/contract/perception.md, The perception update) |
@@ -637,6 +637,43 @@ sequence of insertions and removals, which a solver rebuilt from components does
 solver's state is therefore a Cache that snapshot and fork carry as it is (charter 3.3;
 `persistence.md`, 8).
 
+**Sensors and collision groups** (2026-11-12). `CollisionFilter {sensor, groups, mask}` on a
+collider's entity says how it meets others; without one a collider is solid, in every group and
+meets every group (`groups` and `mask` are 32-bit masks, default all bits).
+
+- Two colliders meet, solid or sensor, when `a.groups & b.mask` and `b.groups & a.mask` are both
+  non-zero (Rapier's interaction groups in its `And` test). Colliders that do not meet neither
+  touch nor report. The block volumes' chunks are in every group with every group in their mask.
+  Every group, not group 1 alone as in Godot's layers or Unity's default layer, is the default
+  because it is how Rapier's builder made every collider before the filter existed: another
+  default would change every body's state in the physics cache and every recorded hash chain. A
+  game whose bodies pass through some colliders therefore puts those colliders in groups too.
+- A sensor (Rapier's sensor collider) pushes nothing and is pushed by nothing; the walkers, the ray
+  casts, the overlaps and the sweeps of 4.4's queries, perception's occlusion test and the
+  navigation bake pass through it. It reports what enters and leaves it.
+- `physics.step` builds a new body's collider with its filter and sets a changed filter on a built
+  collider in place (no rebuild: the pose, velocity and the other contacts stay), comparing the
+  filter with the collider as the solver holds it, so a filter changed by any route is seen, and
+  a collider without one is compared with the default. The filter is part of the solver's state,
+  in the physics cache.
+- `physics.contacts` turns the step's touches into events. Rapier marks an overlap's begin and end
+  with its `SENSOR` flag; a begun or ended contact between two solid colliders is
+  `physics.contact_began` or `physics.contact_ended`, subject the lower id, and an overlap is
+  `physics.sensor_entered` or `physics.sensor_left`, subject the sensor (once for each sensor of
+  the pair), `data.other` the other entity in both. An overlap that ended because its sensor was
+  removed or made solid in the step is reported as the sensor it was.
+- A `Walker` is no Rapier body, so before the events `physics.contacts` tests each walker's box
+  (without a `Collider` of its own: such a walker is reported through its body) against the
+  sensors where the step left them, with the walker's `CollisionFilter` (all groups without one;
+  on a walker it decides only which sensors notice it, never what it stands on). It keeps the
+  sensors overlapped in the walker's `SensorOverlaps {sensors}` (ascending ids, present only while
+  not empty), persisted like any component, so a fork, a restore and a replay report the same
+  entries and exits; a sensor in the list and not overlapped now (moved, made solid or despawned)
+  is left. The walkers' touches join the step's, and all are emitted by pair `(min id, max id)`
+  (8.4), a pair's in the order they were found.
+- A world without a `CollisionFilter` builds every collider as before, and `SensorOverlaps` has no
+  row, so its snapshots, hashes and recorded chains are unchanged.
+
 ## 9. Why this is deterministic
 
 | Source of nondeterminism | How it is closed |
@@ -796,6 +833,13 @@ what tick semantics add.
     `tests/save.rs` (the renumbering of engine components' entity fields); and the check project
     `tests/fixtures/scenes/hierarchy`, whose rule and inputs parent, move, free and despawn
     entities through determinism, fork, replay and reload.
+12. **Sensors and groups** (8.5): amoris-physics' `tests/sensors.rs` (a ball falls through a
+    sensor onto the ground with its entry and exit; queries pass through the sensor; groups and
+    masks decide what meets; a floor made a sensor under a resting ball ends the contact and
+    reports the overlap; walkers walk through a sensor, reported only when its mask holds their
+    group, standing inside says nothing, a despawned sensor is left) and amoris-runtime's
+    `tests/sensors.rs` (a script's sensor, its events and a filter written from a script; the
+    walker's `SensorOverlaps` through a snapshot, a fork and a replay).
 
 ## 13. Performance
 

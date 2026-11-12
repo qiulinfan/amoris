@@ -1,5 +1,5 @@
 // Rigid bodies from scripts (docs/sdk.md, Rigid bodies): the guide's example, and the types the
-// generated declarations give RigidBody, Collider and ExternalForce.
+// generated declarations give RigidBody, Collider, CollisionFilter and ExternalForce.
 import { system } from "amoris";
 import type { Entity, EnumColumn, Vec3Columns } from "amoris";
 
@@ -15,6 +15,20 @@ export const bodies = system({
         });
         ctx.world.set(ball, "Collider", { friction: 0.9, restitution: 0.3 });
         ctx.world.set(ball, "ExternalForce", { force: { y: 40 } });
+        // Sensors and groups (docs/sdk.md, Sensors and collision groups).
+        const gate = ctx.world.spawn({
+            Transform: { position: { z: -4, y: 1 } },
+            Collider: { kind: "Cuboid", half_extents: { x: 2, y: 1, z: 0.5 } },
+            CollisionFilter: { sensor: true },
+        });
+        const GHOST = 1 << 1;
+        ctx.world.insert(ball, "CollisionFilter", { groups: GHOST, mask: (GHOST | 1) >>> 0 });
+        const filter = ctx.world.get(ball, "CollisionFilter");
+        if (filter) {
+            const sensor: boolean = filter.sensor;
+            const bits: number = filter.groups & filter.mask;
+            void [sensor, bits];
+        }
         const force: Vec3Columns = bodies.cols.ExternalForce.force;
         const fx: Float64Array = bodies.cols.ExternalForce.force.x;
         const kinds: EnumColumn = bodies.cols.Collider.kind;
@@ -35,6 +49,10 @@ export const bodies = system({
             void [kind, shape, sum];
         }
         for (const ev of ctx.events) {
+            if (ev.kind === "physics.sensor_entered" && ev.subject === gate) {
+                const who: Entity = (ev.data as { other: Entity }).other;
+                void who;
+            }
             if (ev.kind !== "physics.contact_began") continue;
             const other: Entity = (ev.data as { other: Entity }).other;
             void [ev.subject, other];

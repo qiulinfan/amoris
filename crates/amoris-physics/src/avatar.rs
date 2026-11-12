@@ -524,7 +524,7 @@ fn probe(physics: &Physics, from: [f64; 3], dir: [f64; 3], max: f64, r: f64) -> 
         geom::vec_in(dir),
         &shape,
         options,
-        rapier3d::prelude::QueryFilter::only_fixed(),
+        rapier3d::prelude::QueryFilter::only_fixed().exclude_sensors(),
     ) {
         Some((_, hit)) => f64::from(hit.time_of_impact),
         None => max,

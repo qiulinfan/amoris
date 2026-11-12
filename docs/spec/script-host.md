@@ -487,6 +487,7 @@ schemas are flat projections, written by hand in `amoris-runtime` (14, choice 8)
 |---|---|---|
 | `RigidBody` | `kind` (`Dynamic`, `Fixed`), `mass_kg`, `center_of_mass`, `inertia`, `linear_damping`, `angular_damping`, `gravity_scale` | a `center_of_mass` or an `inertia` without `mass_kg` |
 | `Collider` | `kind` (`Ball`, `Cuboid`, `Capsule`, read only `ConvexHull`, `TriMesh`, `Compound`, `HeightField`), `radius` (ball, capsule), `half_height` (capsule), `half_extents` (cuboid), `density`, `friction`, `restitution` | a read-only kind the collider does not already have; a size the kind does not take |
+| `CollisionFilter` | `sensor`, `groups`, `mask` (`u32` masks; simulation.md 8.5) | no rule: the component is flat |
 | `ExternalForce` | `force`, `torque` | no rule |
 | `Parent` | `parent` | no parent (a slot of 0): an entity without a parent has no `Parent` |
 
@@ -557,8 +558,9 @@ only). A kind or name held in a `string` is checked at run time only. Registered
 a script schema (`Camera`, `Splat`, `AudioSource`, `Animator`, `Floater`, `Vessel`, `Hull`, `Sail`,
 `Sea`, ...) are listed in a comment and are not `ComponentName`s. `Model`, `Light`, `Environment`,
 `UiBar` and `ParticleEmitter` have schemas, so a game can animate a look, a lamp or the dawn, and so
-do `RigidBody`, `Collider` and `ExternalForce` (7.2), so its rules can make, tune and push rigid
-bodies (`docs/sdk.md`).
+do `RigidBody`, `Collider`, `CollisionFilter` and `ExternalForce` (7.2), so its rules can make,
+tune, filter and push rigid bodies and make sensors (`docs/sdk.md`). `SensorOverlaps`, which the
+engine keeps on a walker, has none: scripts read sensors by their events.
 
 Departures from the first design of this section, which listed more files: a component's value is
 reached as `Components["Boat"]` (or `ComponentValue<"Boat">`), not as a named interface per

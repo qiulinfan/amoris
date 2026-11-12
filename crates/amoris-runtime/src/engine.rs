@@ -20,8 +20,9 @@ use amoris_physics::water::displacement::WaterDisplacement;
 use amoris_physics::water::feedback::WaterFeedback;
 use amoris_physics::water::resident::{WaterOutletStage, WaterProbe, WaterResident};
 use amoris_physics::{
-    Board, Boat, Collider, ExternalForce, Floater, Hull, Rain, RigidBody, Sail, Sea, Terrain,
-    Transform, Trim, Velocity, Vessel, Walker, WaterDrain, WaterRegion, WaterSource, Wind,
+    Board, Boat, Collider, CollisionFilter, ExternalForce, Floater, Hull, Rain, RigidBody, Sail,
+    Sea, SensorOverlaps, Terrain, Transform, Trim, Velocity, Vessel, Walker, WaterDrain,
+    WaterRegion, WaterSource, Wind,
 };
 use amoris_script::{EngineFns, register_engine};
 use amoris_sim::registry::{
@@ -92,7 +93,7 @@ where
 /// Every engine component a scene or `world_edit` can name (`Name` is the entity's own `name`);
 /// the first three are the player layer's (perception.md: who observes, what can be perceived,
 /// what blocks sight).
-pub fn engine_components() -> [EngineComponent; 49] {
+pub fn engine_components() -> [EngineComponent; 51] {
     [
         entry::<amoris_interface::perception::Observer>(),
         entry::<amoris_interface::perception::Perceivable>(),
@@ -113,6 +114,8 @@ pub fn engine_components() -> [EngineComponent; 49] {
         entry::<UiBar>(),
         entry::<UiText>(),
         entry::<Collider>(),
+        entry::<CollisionFilter>(),
+        entry::<SensorOverlaps>(),
         entry::<ExternalForce>(),
         entry::<Floater>(),
         entry::<Hull>(),
@@ -1994,6 +1997,11 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     )?;
     ComponentRegistry::register::<RigidBody>(world, Some(bodies::rigid_body_schema()?))?;
     ComponentRegistry::register::<Collider>(world, Some(bodies::collider_schema()?))?;
+    ComponentRegistry::register::<CollisionFilter>(
+        world,
+        Some(bodies::collision_filter_schema()?),
+    )?;
+    ComponentRegistry::register::<SensorOverlaps>(world, None)?;
     ComponentRegistry::register::<ExternalForce>(world, Some(bodies::external_force_schema()?))?;
     ComponentRegistry::register::<Floater>(world, None)?;
     ComponentRegistry::register::<Vessel>(world, None)?;

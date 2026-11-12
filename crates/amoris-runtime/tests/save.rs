@@ -187,6 +187,7 @@ fn the_engine_components_that_hold_entity_ids() {
                 "Controls",
                 "ObserverEvents",
                 "Parent",
+                "SensorOverlaps",
                 "Walker",
                 "WaterDrain",
                 "WaterProbe",

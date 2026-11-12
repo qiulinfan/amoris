@@ -40,7 +40,8 @@ use serde_reflection::{Samples, Tracer};
 
 use crate::boat::{Boat, Floater, Hull, Sail, Trim};
 use crate::body::{
-    BodyKind, Collider, ExternalForce, PartShape, RigidBody, Shape, Transform, Velocity,
+    BodyKind, Collider, CollisionFilter, ExternalForce, PartShape, RigidBody, Shape, Transform,
+    Velocity,
 };
 use crate::sea::{Rain, Sea, Wind};
 use crate::shapes::{self, ShapeKey};
@@ -73,6 +74,8 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
         .component::<Velocity>()
         .component::<RigidBody>()
         .component::<Collider>()
+        .component::<CollisionFilter>()
+        .component::<crate::sensors::SensorOverlaps>()
         .component::<ExternalForce>()
         .component::<Floater>()
         .component::<crate::vessel::Vessel>()
@@ -548,6 +551,8 @@ persisted! {
     Transform => "Transform",
     Velocity => "Velocity",
     ExternalForce => "ExternalForce",
+    CollisionFilter => "CollisionFilter",
+    crate::sensors::SensorOverlaps => "SensorOverlaps",
     Sail => "Sail",
     Hull => "Hull",
     Wind => "Wind",

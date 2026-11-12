@@ -313,7 +313,7 @@ pub fn bake(physics: &Physics, grid: &NavGrid) -> Baked {
     let nx = cells(((grid.max[0] - grid.min[0]) / cell).ceil(), 1024).max(1);
     let nz = cells(((grid.max[2] - grid.min[2]) / cell).ceil(), 1024).max(1);
     let min_up = math::cos(grid.slope_deg.to_radians());
-    let filter = QueryFilter::only_fixed();
+    let filter = QueryFilter::only_fixed().exclude_sensors();
     // The agent's body above a step's height (what it steps over is no obstacle).
     let tall = math::max(grid.height_m - grid.step_m, 2.0 * grid.radius_m + 0.02);
     let body = rapier3d::parry::shape::Capsule::new_y(

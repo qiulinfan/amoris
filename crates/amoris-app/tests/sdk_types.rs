@@ -74,6 +74,7 @@ fn the_declarations_type_check_every_field_type_and_api() {
         "readonly kind: \"Dynamic\" | \"Fixed\";",
         "readonly kind: \"Ball\" | \"Cuboid\" | \"Capsule\" | \"ConvexHull\" | \"TriMesh\" | \"Compound\" | \"HeightField\";",
         "readonly force: Vec3Columns;",
+        "readonly sensor: boolean;",
     ] {
         assert!(components.contains(declared), "{declared}: {components}");
     }

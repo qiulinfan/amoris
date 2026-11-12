@@ -1,4 +1,5 @@
-//! `RigidBody`, `Collider` and `ExternalForce` for scripts (script-host.md 7.2): the first engine
+//! `RigidBody`, `Collider`, `CollisionFilter` and `ExternalForce` for scripts (script-host.md 7.2;
+//! `CollisionFilter` is flat already, a bool and two `u32` masks): the first engine
 //! components whose Rust forms are not flat. Each schema is a flat projection of its component: an
 //! optional number is a slot whose 0 is none (`density`, `mass_kg`), and the collider's tagged
 //! shape is its tag as the enum `kind` with one field per size of the kinds a script builds (a
@@ -18,7 +19,9 @@
 //! named like a field of the JSON form must hold all of it.
 
 use amoris_contract::Problem;
-use amoris_physics::{BodyKind, Collider, ExternalForce, MassProps, RigidBody, Shape};
+use amoris_physics::{
+    BodyKind, Collider, CollisionFilter, ExternalForce, MassProps, RigidBody, Shape,
+};
 use amoris_script::{EngineFns, SlotRefusal, register_engine, register_engine_rule};
 use amoris_sim::Persisted;
 use amoris_sim::registry::{ComponentSchema, FieldType, FieldValue, ProjectValues};
@@ -163,6 +166,39 @@ pub(super) fn collider_schema() -> Result<ComponentSchema, Problem> {
             ),
             f("friction", d.friction, "Coulomb friction, at least 0."),
             f("restitution", d.restitution, "Bounciness, at least 0."),
+        ],
+    )
+}
+
+pub(super) fn collision_filter_schema() -> Result<ComponentSchema, Problem> {
+    let d = CollisionFilter::default();
+    schema(
+        "CollisionFilter",
+        CollisionFilter::VERSION,
+        "How the collider on its entity meets others. A sensor pushes nothing and reports what \
+         enters and leaves it (physics.sensor_entered, physics.sensor_left; subject the sensor, \
+         data.other what entered), bodies and Walkers alike. Two colliders meet when each is in \
+         a group the other's mask holds. On a Walker it decides only which sensors notice it.",
+        vec![
+            (
+                "sensor",
+                FieldType::Bool,
+                FieldValue::Bool(d.sensor),
+                "A sensor (a trigger): it detects, never collides.",
+            ),
+            (
+                "groups",
+                FieldType::U32,
+                FieldValue::U32(d.groups),
+                "The groups it is in, one bit each (default all: 4294967295). In a script, \
+                 combine bits with | and end with >>> 0, so bit 31 stays unsigned.",
+            ),
+            (
+                "mask",
+                FieldType::U32,
+                FieldValue::U32(d.mask),
+                "The groups it meets (default all).",
+            ),
         ],
     )
 }
@@ -318,6 +354,29 @@ fn collider_fns() -> EngineFns<Collider> {
     }
 }
 
+fn collision_filter_fns() -> EngineFns<CollisionFilter> {
+    fn write(c: &mut CollisionFilter, v: &ProjectValues) {
+        c.sensor = v.nums[0] != 0.0;
+        c.groups = amoris_sim::num::to_u32(v.nums[1]).unwrap_or(u32::MAX);
+        c.mask = amoris_sim::num::to_u32(v.nums[2]).unwrap_or(u32::MAX);
+    }
+    EngineFns {
+        read: |c| {
+            nums(&[
+                if c.sensor { 1.0 } else { 0.0 },
+                f64::from(c.groups),
+                f64::from(c.mask),
+            ])
+        },
+        write,
+        make: |v| {
+            let mut c = CollisionFilter::default();
+            write(&mut c, v);
+            c
+        },
+    }
+}
+
 fn external_force_fns() -> EngineFns<ExternalForce> {
     EngineFns {
         read: |c| {
@@ -448,6 +507,7 @@ fn rigid_body_rule(
 pub(super) fn register(world: &mut World) -> Result<(), Problem> {
     register_engine::<RigidBody>(world, rigid_body_fns())?;
     register_engine::<Collider>(world, collider_fns())?;
+    register_engine::<CollisionFilter>(world, collision_filter_fns())?;
     register_engine::<ExternalForce>(world, external_force_fns())?;
     register_engine_rule::<RigidBody>(world, rigid_body_rule)?;
     register_engine_rule::<Collider>(world, collider_rule)
