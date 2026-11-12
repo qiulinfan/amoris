@@ -136,6 +136,12 @@ export const api = {
   profile: {
     frame: (ticks?: number) => call("profile.frame", ticks === undefined ? {} : { ticks }),
   },
+  agent: {
+    /** The host's agent sessions, and the stream number the list was read at. */
+    sessions: () => call("agent.session.list", {}),
+    /** The stream of what they called: the newest, or with `since` the first after it. */
+    events: (p: { since?: number; limit?: number; session?: string } = {}) => call("agent.session.events", p),
+  },
 };
 
 // ---- The debugger's as-built shapes (docs/spec/debugger.md 7) -------------------------------------

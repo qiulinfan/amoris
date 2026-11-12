@@ -225,6 +225,25 @@ pub fn call_url_as(
     if let Some(s) = seat {
         body["seat"] = json!(s);
     }
+    post_call(url, method, &body, timeout)
+}
+
+/// [`call_url_within`] made as the agent session `agent.session.open` gave `handle` to
+/// (docs/spec/server.md 3.5): the host sends it from the session's own client and lists it under
+/// the session.
+pub fn call_url_in(
+    url: &str,
+    method: &str,
+    params: Value,
+    handle: &str,
+    timeout: Duration,
+) -> Result<Value, Problem> {
+    let body = json!({"id": 1, "method": method, "params": params, "handle": handle});
+    post_call(url, method, &body, timeout)
+}
+
+/// `POST /api/call` with `body`: the result, or the host's refusal.
+fn post_call(url: &str, method: &str, body: &Value, timeout: Duration) -> Result<Value, Problem> {
     let body = body.to_string();
     let failed = |e: ureq::Error| match e {
         ureq::Error::Timeout(_) => timed_out(url, method, timeout),

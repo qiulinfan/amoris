@@ -10,6 +10,7 @@ import { Scripts, diagnose } from "./scripts";
 import { MockError, isObject, rng, suggest, unknownField } from "./util";
 import { EDITOR, emptyChanges, merge, unknownComponent, type Caller, type Changes, type World } from "./world";
 import { ASSETS } from "./assets";
+import { AgentSessions } from "./sessions";
 
 export type Broadcast = (topic: string, data: unknown) => void;
 
@@ -49,6 +50,8 @@ export class Session {
   changes: Changes = emptyChanges();
   assets = [...ASSETS];
   debugger: Debugger;
+  /** The agent sessions and their stream, as the host keeps them (server.md 3.5). */
+  agents: AgentSessions;
   private inTick = false;
   private sysIndex = 0;
   private fps = 60;
@@ -64,6 +67,7 @@ export class Session {
       (line) => this.log(line),
     );
     this.bundle = this.scripts.bundleHash();
+    this.agents = new AgentSessions(broadcast);
   }
 
   get world(): World {
@@ -595,6 +599,10 @@ export class Session {
       return { restored: s.tick, tick: this.tick };
     },
     "profile.frame": (p) => this.profile(Math.min(600, Math.max(1, Number(p.ticks ?? 60)))),
+    "agent.session.list": () => this.agents.list(),
+    "agent.session.events": (p) => this.agents.events(p as { since?: number; limit?: number; session?: string }),
+    "agent.session.open": (p) => this.agents.register(p as { label?: string; seat?: string }),
+    "agent.session.close": (p) => this.agents.unregister(p as { handle?: string; session?: string }),
   };
 
 }

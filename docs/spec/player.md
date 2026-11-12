@@ -252,6 +252,13 @@ The commands are projected like every catalog command:
   player instructions.
 - **HTTP**: `/api/call {method, params, seat}` makes the call from the seat's player source (the
   host asks the game for the seat's index once and keeps one client per seat).
+- **Agent sessions** (2026-11-12; server.md 3.5): a seat-bound MCP session, and a bridge opened
+  with `agent.session.open {seat}` (what `amoris mcp --seat` attached to a host is), are rows of
+  role `player` in the host's list, and their `agent` events carry their `mcp-<n>` id (before, a
+  seat-bound session's said `player:<seat>`). Their calls pass `seat_permits` before the seat is
+  looked up, a refusal recorded as a call that failed; the seat's client is found by the session's
+  first permitted call and kept. Calls made as a seat with no session (`/api/call {seat}`) are the
+  row `player:<seat>`.
 - **CLI**: `amoris player <action> ['<json>'] [--seat s]`; `act` also takes the actions alone;
   observations print as text, other answers as one line of JSON. A client of a running host (the
   CLI, `amoris mcp` against a host) waits for a `wait` at least 10 s past its wall limit,

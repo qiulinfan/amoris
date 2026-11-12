@@ -34,6 +34,11 @@ amoris mcp samples/sailing     # MCP over stdio (uses the running host if there 
 - `amoris mcp <project>` serves one MCP session over stdio. When `.amoris/host.json` names a host
   that answers, the session calls it over HTTP (agents and the editor then share one world);
   otherwise, or with `--own`, it runs the game in its own process. Nothing but MCP goes to stdout.
+  Attached to a host it is an agent session of that host (3.5; 2026-11-12): it registers with
+  `agent.session.open` when its MCP client says who it is (with `--seat`, as that seat's player),
+  makes its calls with the handle it was given, registers again when the host no longer knows the
+  handle (the host started again), and closes its session when the client closes stdin, on Ctrl-C
+  and on SIGTERM.
 - Client commands (section 8) find the host through `--host <url|port>`, `AMORIS_HOST`, or the
   nearest `.amoris/host.json` at or above `--project <dir>` or the working directory.
 
@@ -58,7 +63,9 @@ amoris mcp samples/sailing     # MCP over stdio (uses the running host if there 
   read from the `SnapshotReader`.
 - Sources (threads.md 5.1): every editor socket shares `Source::Editor`; `/api/call` (the CLI,
   tests) shares one `Developer(n)`; each MCP session opens its own `Developer(n)`. A boundary
-  applies the editor's commands before developers' (threads.md 5.2).
+  applies the editor's commands before developers' (threads.md 5.2). 2026-11-12: one developer
+  client per agent session (3.5), a bridge that registered itself included, so `amoris mcp`
+  attached to a host no longer shares the API's client; `agent.session.*` is answered here.
 - Threads: the game thread; tokio's worker threads (`amoris-server`) for HTTP, WebSocket, MCP and
   the pushers. A game stuck in a tick (a breakpoint) leaves the server answering and pushing the
   last snapshot, and no call waits on it (3.4): reads answer from the last publication, others are
@@ -112,6 +119,10 @@ files).
 | `debug.*` | (server) | per amoris-debug (debugger.md 7), one catalog entry each with its schema | `debug.not_available` until a `DebugHub` is installed; `debug.rewind {tick, bundle?}` and `debug.writes {entity, component, field?, ticks?}` (debugger.md 13) are the server's own |
 | `capture` | read (server) | `{position?, look_at? \| rotation?, fov_deg? = 60, width? = 1280, height? = 720, frames? = 0}` (no `position`: the scene's camera; `look_at` defaults to the origin; `rotation` a quaternion `[x, y, z, w]`; `frames` at most 1,200) | `{path, width, height, tick, instances, gpu_ms, pending_assets, spray}`: a PNG under `.amoris/captures/` (amoris-app's `present.rs`); `capture.not_available` until a `CaptureHub` is installed |
 | `subscribe` / `unsubscribe` | `/ws` only | `{topics: [topic]}` | `{topics}` |
+| `agent.session.list` | read (server) | `{}` | `{sessions: [row], last}`: the host's agent sessions in opening order and the newest stream number (3.5) |
+| `agent.session.events` | read (server) | `{since?, limit? = 100, session?}` (`limit` at most 2,000) | `{events: [event], last, missed}`: with `since` the first `limit` after it, without it the newest; `last` is the cursor the answer reaches (3.5) |
+| `agent.session.open` | control (server) | `{label?, seat?}` | the session's row and `handle`: a bridge session, a developer's or with `seat` that seat's player (3.5) |
+| `agent.session.close` | control (server) | `{handle}` or `{session}` | the row, no longer live (3.5) |
 
 Names follow `noun.verb`; the slice 1 names stay as aliases (`world_get`, `step`, `time_control`).
 `thread: true` marks commands that need the game thread: a `Game` driven directly (checks, replays)
@@ -261,7 +272,7 @@ read`, and the CLI had no read timeout, so 28 calls in 11 runs hung until the ag
   section, which equals what the game's own reads answer (`paused_host.rs` compares them call by
   call). `catalog.list` (fetched before serving), `docs.search` (component schemas from the
   publication's registry), `events.*`, `log.since`, `profile.frame`, `assets.list`,
-  `scripts.guide` and `debug.*` never need the game.
+  `scripts.guide`, `debug.*` and `agent.session.*` (3.5) never need the game.
 - **`play.stop` in Play ends Play wherever the debugger holds it.** Stop drops the fork, held tick
   and all, so the server has the debugger pass over every pause (amoris-debug `DebugHub::pass`,
   the server's `DebugHub::pass`) from the moment it sees one until the Stop lands: the held tick
@@ -300,6 +311,104 @@ read`, and the CLI had no read timeout, so 28 calls in 11 runs hung until the ag
 Not done: the edit world's kept snapshots (`snapshots.list`), the history and `project.info` stay
 on the game thread and are refused while held.
 
+### 3.5 Agent sessions
+
+2026-11-12. Until then the host kept no sessions. An MCP client was only numbered (`mcp-<n>`), and
+rmcp asks for a handler for more than sessions, so three requests of a client that keeps none were
+`mcp-2`, `mcp-3` and `mcp-4`; `agent` events were pushes, dropped when no socket listened, so an
+editor that connected later showed nothing and guessed sessions from the events it had received;
+and `amoris mcp` attached to a host called as the shared `api` client, raised no `agent` event, and
+its edits were `api`'s in the history. Now the host lists who calls it as an agent and keeps what
+they called (amoris-server `sessions.rs`).
+
+**Host state, never world state.** The rows, the handles, the counters, the timestamps and the
+stream live in the server, which holds no game: nothing of them is in the world, its hash, a
+snapshot or a recording, and all of it is lost with the host (a host started again begins at
+`mcp-1` with an empty stream). The game sees only which `Developer(n)` or `Player(i)` source sends
+a command.
+
+A row, as `agent.session.list` answers it, every key always present:
+
+```json
+{"id": "mcp-3", "transport": "bridge", "role": "developer", "seat": null,
+ "label": "claude-code 2.1.0", "calls": 12, "failed_calls": 1, "last_method": "world.edit",
+ "live": true, "opened_ts": 1794468357818, "last_ts": 1794468362921}
+```
+
+`id` is `mcp-<n>` (one counter for every session, never given again) or `player:<seat>`; `role` is
+`developer` or `player`, with the `seat` a player's session plays; `label` is what the client calls
+itself (an MCP client's `clientInfo` as `name version`, a bridge's `label`; at most 80 characters);
+`failed_calls` counts the calls answered with an error; times are ms since the Unix epoch. `live`
+says that a connection or a registration holds the session.
+
+| `transport` | Who | Opened | Closed | `live` |
+|---|---|---|---|---|
+| `http` | an MCP client on `POST /mcp` that sent `initialize` | inside `initialize`, before its answer leaves | when rmcp drops the session's handler: the client's `DELETE /mcp`, 300 s without a request, the host's end | while open |
+| `http` | an MCP client of the 2026-07-28 revision, which keeps no session: every request comes alone and names its client in `_meta` | at its first `tools/call`; one row for every request of one client label, with one developer client (`tools/list` opens nothing) | never | never |
+| `stdio` | `amoris mcp` running the game in its own process | at `initialize` (or the first call of a client that sent none) | when the client closes stdin | while open |
+| `bridge` | a process that registered with `agent.session.open {label?, seat?}`: `amoris mcp` attached to this host (1) | by the call, which answers the row and a `handle` | `agent.session.close` | until closed |
+| `api` | calls made as a seat with no session (`POST /api/call {seat}`), under the id `player:<seat>` | at the first such call | never | never |
+
+The editor's socket and the HTTP API's shared `api` client (the CLI, plain `/api/call`) are not
+sessions: their calls are not in the stream, as before.
+
+**The stream.** Every opening, call, result and closing is an event with a stream number:
+
+```json
+{"seq": 41, "ts": 1794468362921, "session": "mcp-3", "kind": "call", "method": "world.edit", "summary": "{\"ops\":[...]}"}
+{"seq": 42, "ts": 1794468362925, "session": "mcp-3", "kind": "result", "method": "world.edit", "ok": true, "summary": "{\"applied\":1,...}"}
+{"seq": 43, "ts": 1794468369000, "session": "mcp-3", "kind": "closed", "row": {"id": "mcp-3", "live": false, "calls": 13, ...}}
+```
+
+`opened` and `closed` carry the session's row as the event leaves it; `summary` is the parameters
+or the result as JSON cut to 160 bytes, or a refusal's `code: message`. The host keeps the newest
+2,000 events in a ring. Each event is put in the ring and then pushed on the `agent` topic (4), in
+the order of the numbers, whether or not a socket listens, so a client that connects later reads
+what it missed.
+
+- `agent.session.list {}` answers `{sessions: [row], last}`: the rows in opening order, and the
+  newest stream number.
+- `agent.session.events {since?, limit? = 100, session?}` answers `{events, last, missed}`. With
+  `since`, the first `limit` events after it, oldest first; without it, the newest `limit` (at most
+  2,000). `session` keeps one session's (an id that is not listed is refused with
+  `request.invalid_value` at `/session` and the listed ids). `missed` counts the events after
+  `since` that left the ring, whatever their session. `last` is the cursor the answer reaches: the
+  last event returned when `limit` cut the answer, else the newest stream number, so a reader that
+  asks again with `since: last` loses nothing. (`events.since` answers the ring's newest as `last`
+  also when `limit` cut the answer; this method does not.)
+- `agent.session.open {label?, seat?}` registers the caller as a `bridge` session and answers its
+  row with `handle`. Without `seat` it is a developer's, with a developer client of its own
+  (`Developer(n)`, named after the session in the history, 3.1); with `seat` it is that seat's
+  player, whose seat is not looked up until its first call, so opening never asks the game. The
+  session's calls are `POST /api/call {handle, method, params}` (5).
+- `agent.session.close {handle}` (the opener's own) or `{session}` (a `bridge` row by its id, for a
+  row whose process is gone) answers the row, no longer live; a closed row answers again. Both
+  keys: `request.conflict`; neither: `request.missing_field`; an `http`, `stdio` or `api` row named
+  by `session`: `request.not_applicable` at `/session`; no such handle or id:
+  `host.session_unknown`.
+
+The handle is `<the host run, hex>-<n>`: unique to one run of the host, so a bridge that outlives
+its host is refused with `host.session_unknown` by the next one (a session id would have named
+another bridge's row there) and registers again. It is an address on a loopback host, not a
+credential: admission is the tokens' (11).
+
+A row that is not live stays listed while the ring holds one of its events, and goes with the last
+one; a live row never goes. So every session the stream names is in the list.
+
+A player's session passes `seat_permits` (player.md 7) before its seat is looked up: a developer's
+method is refused with `permission.denied` and recorded as a call that failed, as is a first call
+for a seat the game does not declare (`seat.unknown`). A call refused with `host.session_unknown`
+belongs to no session and is not recorded, and neither is a tool call the MCP layer refuses before
+it routes it (an unknown tool or action, a player session naming another tool).
+
+The four methods never reach the game thread, so they answer while the debugger holds the game
+(3.4). They are a developer's: a call made as a seat is refused them.
+
+Not built: a bridge killed without closing (SIGKILL) stays live until `agent.session.close
+{session}` or the host's end, and an MCP client that vanishes stays live for rmcp's 300 s; an
+agent that idles longer than that and calls again is a new `mcp-<n>`. The requests of two
+instances of one sessionless client program share a row.
+
 ## 4. Pushes on `/ws`
 
 The server pushes `{"event": topic, "data": ...}` to the sockets subscribed to the topic (`status`
@@ -313,7 +422,7 @@ always). A socket that falls more than 1,024 pushes behind gets
 | `events` | `[{seq, id, tick, name, subject, cause, data}]` | every 50 ms, at most 500 per push |
 | `log` | `{seq, level, source, message, file?, line?, tick?}` | one per line: script `console.*`, failed system runs |
 | `history` | `{undo, redo, entries}` (`history.list`'s answer, with sessions) | after `world.edit`, undo, redo, restore, Play, Stop, when it changed (3.1) |
-| `agent` | `{session, kind: "call"/"result", method, ok?, summary}` | each MCP call and its result |
+| `agent` | `{seq, ts, session, kind: "opened"/"call"/"result"/"closed", method?, ok?, summary?, row?}` (3.5) | each agent session's opening, each of its calls and its result, its closing; recorded in the host's ring whether or not a socket listens |
 | `debug` | debugger.md 7's state on a pause, `{state: "running"}` on a resume | pushed by `amoris serve`'s debugger (amoris-app `forward_debug_events`); script console lines and failed calls the debugger saw go to `log` |
 | `profile` | `{tick, epoch, ticks, held, missed, tick_ms, tick_max_ms, busy_ms, systems: [{name, ms, max_ms}], phases: [{name, ms, max_ms}]}` | every 250 ms: the ticks profiled since the last push, summarized (below) |
 
@@ -356,7 +465,7 @@ numbers. The host draws no frame: the editor's profiler adds its own viewport's 
 | Path | Answer |
 |---|---|
 | `GET /api/catalog` | the catalog |
-| `POST /api/call` | `{id?, method, params?}` -> `{id, result}` or `{id, error}`; HTTP 400 only for a body that is not JSON |
+| `POST /api/call` | `{id?, method, params?, seat?, handle?}` -> `{id, result}` or `{id, error}`; HTTP 400 only for a body that is not JSON. With `seat` the call is that seat's player's (player.md 7); with `handle` it is the call of the agent session `agent.session.open` gave the handle to (3.5); both: `request.conflict` |
 | `GET /ws` | the WebSocket of host-protocol.md 2 and 3 |
 | `GET /render` | the render feed (`RenderFeed`); `501 render.not_available` until installed |
 | `GET /assets/<path>` | a project file; no `..`, no dot files, contained after resolving links |
@@ -433,6 +542,17 @@ bytes a token, as `tools/host/smoke_server.py` counts it; 2026-10-14, Windows; t
 Served on `POST /mcp` (one developer client per session, every call pushed as `agent`) and by
 `amoris mcp` over stdio.
 
+Sessions (2026-11-12; 3.5). rmcp 3.7 asks the host for a handler for every `initialize`, for every
+request of a client of the 2026-07-28 revision (which has no handshake and no session: each request
+names its client in `_meta`), for `server/discover` and for its own look-ups of a tool's schema, so
+making a handler opens nothing (`Backend::open`). A session opens when `amoris-mcp` tells the
+handler's caller who its client is (`Caller::hello`, once): inside `initialize`, so a client that
+has its answer is listed, or with the first `tools/call` of a client that sent none (over HTTP that
+handler serves one request, and the hello says so: such requests share a row). It closes when rmcp
+drops the handler and the calls in flight have answered: the client's `DELETE /mcp`, an HTTP
+session 300 s without a request (rmcp's default, kept), the closed stream of a stdio session, or
+the host's end. No tool or action was added for the session methods; `tools/list` keeps its size.
+
 ## 8. The CLI
 
 `amoris <command>` talks to the running host over `/api/call`; `amoris help` lists the commands and
@@ -496,6 +616,7 @@ error exits 2. Every call waits 60 s at most (`--timeout <s>`, `AMORIS_TIMEOUT`)
 | `host.no_players`, `seat.not_playable` | a call made as a seat to a host that opens no player clients; as a seat the game declares for no player (shared/contract/errors.md) |
 | `debug.paused` | the call needs the game thread, which the debugger holds (3.4); `queued: true` when it was sent before the stop (or is a `time.control` sent while held) and runs at the boundary after the held tick |
 | `debug.not_available`, `capture.not_available`, `render.not_available` | plug-in not installed |
+| `host.session_unknown` | a `handle` or a session id that names no open agent session: it was closed, or the host started again since it opened (3.5) |
 
 ## 10. Verification
 
@@ -522,6 +643,22 @@ reader alone turns nothing on) and that Play starts the ring again; amoris-link'
 the summaries, the rows' order, the world's ticks only, and that a reader holding the ring never
 stops the game thread.
 
+Agent sessions (3.5; 2026-11-12, macOS): amoris-server's `sessions` unit tests cover the registry
+alone (numbering, counters, the ring and `missed`, paging with `last`, rows kept while the ring
+speaks of them, the shared row of a sessionless client, handles per host run); amoris-mcp's that a
+caller is told who its client is once, at `initialize` or at the first call of a client that sent
+none, and that a handler nobody called through says nothing. amoris-app's `tests/agent_sessions.rs`
+serves the sailing course: an MCP client on `/mcp` with no editor listening is one row from its
+`initialize`, its calls are read back with `agent.session.events`, an editor's socket that
+subscribes afterwards is pushed only what follows, `DELETE /mcp` closes the row, and three requests
+of a 2026-07-28 client are one more row; a bridge registers, calls with its handle, plays a seat
+through the player tools alone and is closed, and none of it moves the world's tick, hash or
+writes; and the built `amoris mcp`, attached to a served copy, is listed after its `initialize`,
+its edit is its own in the history and its session closes when stdin does. `serve.rs` tests that a
+bridge holding a handle of another host run registers once and retries; `tests/paused_host.rs` that
+the four methods answer while the debugger holds the game. `editor/tools/agent-sessions.ts` drives
+the editor's Agent panel against a real host in headless Chrome (editor.md 9).
+
 ## 11. Open
 
 1. A hierarchy component (`Parent`) for `world.tree`'s `children` and `depth`.
@@ -539,3 +676,9 @@ stops the game thread.
 4. The web worker's loop (`amoris-web`) runs plain step counts; stop conditions, Play and kept
    snapshots are native only, and it refuses a write trace (`time.trace_unavailable`, debugger.md
    13).
+5. Agent sessions (3.5): the host lists the sessions agents open themselves and starts none.
+   `agent.session.start` (the editor launching an agent program) waits for the owner's decision on
+   which program, with whose credentials. A dead bridge's row has no expiry (a lease belongs with
+   the tokens and grants of shared/contract/mcp.md, which are not built: a handle admits nobody).
+   An agent driven through the `amoris` CLI still calls as the shared `api` client and is no
+   session; the stream is not kept across host restarts.

@@ -297,13 +297,38 @@ export interface HostProfile {
   phases: ProfileRow[];
 }
 
+/** An agent session as the host lists it (`agent.session.list`, server.md 3.5): an MCP client on
+ * `/mcp` or stdio, a bridge that registered itself, or a seat's calls made with no session. Times
+ * are ms since the Unix epoch. */
+export interface AgentSession {
+  /** `mcp-<n>`, or `player:<seat>`. */
+  id: string;
+  transport: "http" | "stdio" | "bridge" | "api";
+  role: "developer" | "player";
+  seat: string | null;
+  /** What the client calls itself. */
+  label: string;
+  calls: number;
+  failed_calls: number;
+  last_method: string | null;
+  /** A connection or a registration holds the session. */
+  live: boolean;
+  opened_ts: number;
+  last_ts: number;
+}
+
+/** One event of the host's agent stream (`agent` pushes, `agent.session.events`): `seq` its
+ * stream number, `opened` and `closed` with the session's `row`, `call` and `result` with the
+ * method and a summary. `message` (an agent's own words) is the mock's only. */
 export interface AgentEvent {
+  seq: number;
+  ts: number;
   session: string;
-  kind: "call" | "result" | "message";
+  kind: "opened" | "call" | "result" | "closed" | "message";
   method?: string;
-  summary: string;
+  summary?: string;
   ok?: boolean;
-  ts?: number;
+  row?: AgentSession;
 }
 
 export interface TopicData {
@@ -526,6 +551,10 @@ export interface Methods {
   ];
   "profile.frame": [{ ticks?: number }, HostProfile];
   subscribe: [{ topics: string[] }, { topics: string[] }];
+  "agent.session.list": [Record<string, never>, { sessions: AgentSession[]; last: number }];
+  "agent.session.events": [{ since?: number; limit?: number; session?: string }, { events: AgentEvent[]; last: number; missed: number }];
+  "agent.session.open": [{ label?: string; seat?: string }, AgentSession & { handle: string }];
+  "agent.session.close": [{ handle?: string; session?: string }, AgentSession];
 }
 
 export type MethodName = keyof Methods;

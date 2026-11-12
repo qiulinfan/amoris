@@ -15,6 +15,7 @@ import { useScripts } from "../state/scripts";
 import { useSelection } from "../state/selection";
 import { useSession } from "../state/session";
 import { useWorld } from "../state/world";
+import { loadAgent } from "../actions/agent";
 import { onPaused, refreshWatches } from "../actions/debug";
 
 let started = false;
@@ -38,7 +39,10 @@ export function startSync() {
   host.on("history", (h) => useHistory.getState().set(h));
   host.on("debug", (d) => void onDebug(debugState(d)));
   host.on("profile", (p) => useProfile.getState().push(p));
-  host.on("agent", (a) => useAgent.getState().push(a));
+  host.on("agent", (a) => {
+    // A gap in the stream's numbers: read the host's sessions and stream again.
+    if (!useAgent.getState().push(a)) void loadAgent().catch(() => undefined);
+  });
   host.connect();
   // Snapshots grow while playing; the timeline reads them every second (not while a script is
   // paused: the game thread answers no command then, debugger.md 8).
@@ -71,6 +75,10 @@ async function bootstrap() {
     ["snapshots.list", refreshSnapshots],
     ["time.control", async () => useSession.getState().setStatus(await api.time.control({}))],
     ["debug", restoreDebugger],
+    ["agent sessions", async () => {
+      useAgent.getState().reset();
+      await loadAgent();
+    }],
   ];
   const results = await Promise.allSettled(steps.map(([, run]) => run()));
   results.forEach((r, i) => {

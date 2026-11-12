@@ -2,7 +2,8 @@
 //! the sailing course served as `amoris serve` serves it: `/api/call` with `seat` and a seat-bound
 //! MCP session play the seat's player, through the player tools alone. Every other method is
 //! refused with `permission.denied`, whether the game answers it (`world.get`, `world.edit`,
-//! `time.step`) or the host does (`events.since`, which lists every world event), and the world
+//! `time.step`) or the host does (`events.since`, which lists every world event; the agent
+//! sessions, `agent.session.*`, which are a developer's to list, open and close), and the world
 //! does not change; the omniscient view is refused; an unknown seat says so. The MCP session
 //! lists the `player` tool alone, refuses the others, and its caller is refused developer methods
 //! by the host even past the MCP layer's own check.
@@ -140,6 +141,10 @@ fn a_seat_over_http_plays_through_the_player_tools_alone() {
         ("events.since", json!({})),
         ("log.since", json!({})),
         ("catalog.list", json!({})),
+        ("agent.session.list", json!({})),
+        ("agent.session.events", json!({})),
+        ("agent.session.open", json!({"label": "a seat's"})),
+        ("agent.session.close", json!({"session": "mcp-1"})),
         ("debug.rewind", json!({"tick": 0})),
         (
             "debug.writes",

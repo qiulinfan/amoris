@@ -1,15 +1,16 @@
 //! `amoris serve <project> [--port 7878]` and `amoris mcp <project>` (docs/spec/server.md): the
 //! project's game on its game thread (real time, paused: the edit world) with the host's server on
 //! 127.0.0.1, or one MCP session over stdio, against a host already serving the project when there
-//! is one and otherwise against a game of its own.
+//! is one (as an agent session of that host, server.md 3.5) and otherwise against a game of its
+//! own.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use amoris_contract::{Problem, detail};
 use amoris_link::Source;
-use amoris_mcp::{Backend, BoxFuture, Caller};
+use amoris_mcp::{Backend, BoxFuture, Caller, Hello};
 use amoris_runtime::Project;
 use amoris_runtime::thread::{GameHandle, GameThread, Pacing, ThreadOptions};
 use amoris_server::{GameAccess, Host, McpBackend, ServeOptions, hostfile};
@@ -226,38 +227,170 @@ fn serving(args: &Args) -> Result<(), Problem> {
     r
 }
 
-/// A host serving the project over HTTP, as `amoris mcp` reaches it; with a seat, as that seat's
-/// player.
-struct Remote {
+/// How long the bridge waits for the host to register its session.
+const REGISTER_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long it waits, on its way out, for the host to close it.
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// `amoris mcp` attached to a host serving the project (server.md 3.5): one agent session of
+/// that host. It registers with `agent.session.open` when its MCP client says who it is (with a
+/// seat, as that seat's player), makes its calls with the handle the host answered, registers
+/// again when the host no longer knows the handle (it started again), and closes its session on
+/// its way out. So the host lists it, its calls are in the `agent` stream and its edits are its
+/// own in the history, not the shared `api` client's.
+struct Bridge {
     url: String,
     seat: Option<String>,
+    /// What the MCP client calls itself, from its hello.
+    label: std::sync::Mutex<String>,
+    /// The session's id and handle on the host, once registered. Held while registering, so
+    /// calls that find it missing or stale together open one session.
+    registered: tokio::sync::Mutex<Option<(String, String)>>,
 }
 
-impl Caller for Remote {
-    fn call(&self, method: String, params: Value) -> BoxFuture<Result<Value, Problem>> {
+/// Runs a blocking HTTP call off the runtime's workers.
+async fn blocking(
+    call: impl FnOnce() -> Result<Value, Problem> + Send + 'static,
+) -> Result<Value, Problem> {
+    tokio::task::spawn_blocking(call)
+        .await
+        .unwrap_or_else(|e| Err(Problem::new("host.unreachable", e.to_string(), detail([]))))
+}
+
+impl Bridge {
+    fn new(url: String, seat: Option<String>) -> Bridge {
+        Bridge {
+            url,
+            seat,
+            label: std::sync::Mutex::new(String::new()),
+            registered: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    /// Asks the host for a session: its id and its handle.
+    async fn register(&self) -> Result<(String, String), Problem> {
+        let label = self.label.lock().map(|l| l.clone()).unwrap_or_default();
+        let mut params = json!({"label": label});
+        if let Some(seat) = &self.seat {
+            params["seat"] = json!(seat);
+        }
         let url = self.url.clone();
-        let seat = self.seat.clone();
-        Box::pin(async move {
-            tokio::task::spawn_blocking(move || {
-                let timeout = crate::client::timeout_for(None, &method, &params);
-                crate::client::call_url_as(&url, &method, params, seat.as_deref(), timeout)
-            })
+        let row = blocking(move || {
+            crate::client::call_url_within(&url, "agent.session.open", params, REGISTER_TIMEOUT)
+        })
+        .await?;
+        match (row["id"].as_str(), row["handle"].as_str()) {
+            (Some(id), Some(handle)) => Ok((id.to_owned(), handle.to_owned())),
+            _ => Err(Problem::new(
+                "host.error",
+                "agent.session.open answered no session handle.",
+                detail([("answer", row)]),
+            )),
+        }
+    }
+
+    /// The session's handle, registering first when there is none.
+    async fn handle(&self) -> Result<String, Problem> {
+        let mut registered = self.registered.lock().await;
+        if let Some((_, handle)) = registered.as_ref() {
+            return Ok(handle.clone());
+        }
+        let session = self.register().await?;
+        let handle = session.1.clone();
+        *registered = Some(session);
+        Ok(handle)
+    }
+
+    /// A handle in place of `stale`, which the host refused: registers again, unless another
+    /// call already did.
+    async fn renewed(&self, stale: &str) -> Result<String, Problem> {
+        let mut registered = self.registered.lock().await;
+        if let Some((_, handle)) = registered.as_ref()
+            && handle != stale
+        {
+            return Ok(handle.clone());
+        }
+        let session = self.register().await?;
+        eprintln!(
+            "amoris mcp: the host knew this session no longer; registered again as {}",
+            session.0
+        );
+        let handle = session.1.clone();
+        *registered = Some(session);
+        Ok(handle)
+    }
+
+    async fn post(&self, handle: String, method: String, params: Value) -> Result<Value, Problem> {
+        let url = self.url.clone();
+        blocking(move || {
+            let timeout = crate::client::timeout_for(None, &method, &params);
+            crate::client::call_url_in(&url, &method, params, &handle, timeout)
+        })
+        .await
+    }
+
+    /// One call as the session; a host that forgot the session gets it again, once.
+    async fn call(&self, method: String, params: Value) -> Result<Value, Problem> {
+        let handle = self.handle().await?;
+        match self
+            .post(handle.clone(), method.clone(), params.clone())
             .await
-            .unwrap_or_else(|e| Err(Problem::new("host.unreachable", e.to_string(), detail([]))))
+        {
+            Err(p) if p.code == "host.session_unknown" => {
+                let handle = self.renewed(&handle).await?;
+                self.post(handle, method, params).await
+            }
+            answer => answer,
+        }
+    }
+
+    /// Closes the session on the host, if it has one: best effort, the bridge is leaving.
+    async fn close(&self) {
+        let Some((_, handle)) = self.registered.lock().await.take() else {
+            return;
+        };
+        let url = self.url.clone();
+        let _ = blocking(move || {
+            crate::client::call_url_within(
+                &url,
+                "agent.session.close",
+                json!({"handle": handle}),
+                CLOSE_TIMEOUT,
+            )
+        })
+        .await;
+    }
+}
+
+/// A host serving the project over HTTP, as `amoris mcp` reaches it: the bridge's session.
+struct Remote(Arc<Bridge>);
+
+impl Caller for Remote {
+    /// The client said who it is: the bridge registers under that name. A failure is left for
+    /// the first call to report.
+    fn hello(&self, hello: Hello) -> BoxFuture<()> {
+        let bridge = self.0.clone();
+        Box::pin(async move {
+            if let Ok(mut label) = bridge.label.lock() {
+                *label = hello.label;
+            }
+            let _ = bridge.handle().await;
         })
     }
 
+    fn call(&self, method: String, params: Value) -> BoxFuture<Result<Value, Problem>> {
+        let bridge = self.0.clone();
+        Box::pin(async move { bridge.call(method, params).await })
+    }
+
     fn seat(&self) -> Option<String> {
-        self.seat.clone()
+        self.0.seat.clone()
     }
 }
 
 impl Backend for Remote {
     fn open(&self) -> Arc<dyn Caller> {
-        Arc::new(Remote {
-            url: self.url.clone(),
-            seat: self.seat.clone(),
-        })
+        Arc::new(Remote(self.0.clone()))
     }
 }
 
@@ -292,8 +425,20 @@ fn mcp_session(args: &Args) -> Result<(), Problem> {
     let seat = args.value("seat").map(str::to_owned);
     if let Some(f) = running {
         eprintln!("amoris mcp: using the host at {}", f.url);
-        let backend: Arc<dyn Backend> = Arc::new(Remote { url: f.url, seat });
-        return rt.block_on(amoris_mcp::serve_stdio(backend));
+        let bridge = Arc::new(Bridge::new(f.url, seat));
+        let backend: Arc<dyn Backend> = Arc::new(Remote(bridge.clone()));
+        // Until the client closes stdin, or the bridge is asked to stop; either way its session
+        // on the host is closed before it leaves.
+        let r = rt.block_on(async {
+            let r = tokio::select! {
+                r = amoris_mcp::serve_stdio(backend) => r,
+                () = stopped() => Ok(()),
+            };
+            bridge.close().await;
+            r
+        });
+        rt.shutdown_timeout(Duration::from_secs(2));
+        return r;
     }
     let served = start(&root, args.number::<u64>("seed")?, None)?;
     eprintln!("amoris mcp: running {} in this process", root.display());
@@ -318,7 +463,7 @@ mod tests {
     use amoris_server::{ServeOptions, Via};
     use serde_json::json;
 
-    use super::{runtime, start};
+    use super::{Bridge, runtime, start};
     use crate::present::FEED_GAP;
 
     /// Each frame `/render` sends, with the time it was read and its tick.
@@ -380,6 +525,56 @@ mod tests {
             got.windows(2).all(|w| w[0].1 < w[1].1),
             "ticks only go forward"
         );
+        drop(rt);
+        served.shutdown();
+    }
+    /// `amoris mcp` attached to a host that started again holds a handle the new host never
+    /// gave: its calls are refused with `host.session_unknown`, the bridge registers again and
+    /// retries, and two calls that find the handle stale together open one session.
+    #[test]
+    fn a_bridge_registers_again_after_its_host_forgot_it() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../samples/sailing");
+        let served = start(&root, None, None).unwrap();
+        let host = served.host.clone();
+        let rt = runtime().unwrap();
+        let (addr, _task) = rt
+            .block_on(host.serve(&ServeOptions { port: 0 }, std::future::pending()))
+            .unwrap();
+        let bridge = Bridge::new(format!("http://{addr}"), None);
+        *bridge.label.lock().unwrap() = "bridge-test 1".to_owned();
+        let (a, b) = rt.block_on(async {
+            // A session of another host run.
+            *bridge.registered.lock().await = Some(("mcp-7".to_owned(), "0-7".to_owned()));
+            tokio::join!(
+                bridge.call("status".to_owned(), json!({})),
+                bridge.call("status".to_owned(), json!({}))
+            )
+        });
+        assert!(a.is_ok(), "{a:#?}");
+        assert!(b.is_ok(), "{b:#?}");
+        let list = rt
+            .block_on(host.call(&Via::Api, "agent.session.list", json!({})))
+            .unwrap();
+        let rows = list["sessions"].as_array().unwrap();
+        assert_eq!(rows.len(), 1, "{list:#}");
+        let row = &rows[0];
+        assert_eq!(
+            (
+                row["transport"].as_str(),
+                row["label"].as_str(),
+                row["live"].as_bool(),
+                row["calls"].as_u64()
+            ),
+            (Some("bridge"), Some("bridge-test 1"), Some(true), Some(2)),
+            "{list:#}"
+        );
+        // On its way out the bridge closes its session, once.
+        rt.block_on(bridge.close());
+        rt.block_on(bridge.close());
+        let list = rt
+            .block_on(host.call(&Via::Api, "agent.session.list", json!({})))
+            .unwrap();
+        assert_eq!(list["sessions"][0]["live"], json!(false), "{list:#}");
         drop(rt);
         served.shutdown();
     }

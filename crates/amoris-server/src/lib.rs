@@ -4,7 +4,7 @@
 //!
 //! The server holds no game. It reaches the game thread only through `amoris-link`: a
 //! [`SnapshotReader`] for what it shows and pushes, and [`GameClient`]s for commands (the editor's,
-//! one shared by the HTTP API, one per MCP session). Every request is a catalog call
+//! one shared by the HTTP API, one per agent session). Every request is a catalog call
 //! ([`Host::call`]); a few are answered here because they read the presenter's side of the link (the
 //! event and log streams), the project's files (`assets.list`) or plug-ins the integrator installs
 //! (the debugger, captures, the render feed).
@@ -16,12 +16,12 @@ mod local;
 mod mcp;
 mod paused;
 mod push;
+mod sessions;
 pub mod typecheck;
 mod ws;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use amoris_contract::{Problem, detail};
@@ -74,7 +74,7 @@ pub struct GameAccess {
     pub editor: GameClient,
     /// The HTTP API's client (a developer source), shared by CLI calls.
     pub api: GameClient,
-    /// Opens the next developer client, one per MCP session.
+    /// Opens the next developer client, one per agent session (`sessions.rs`).
     pub developer: Arc<dyn Fn() -> GameClient + Send + Sync>,
 }
 
@@ -101,7 +101,9 @@ struct Inner {
     debug: RwLock<Option<Arc<dyn DebugHub>>>,
     capture: RwLock<Option<Arc<dyn CaptureHub>>>,
     render: RwLock<Option<Arc<dyn RenderFeed>>>,
-    sessions: AtomicU64,
+    /// The agent sessions and the stream of their calls (`sessions.rs`): host state, never the
+    /// world's.
+    sessions: Mutex<sessions::Registry>,
     /// The names of the developer sources the server hands out (`api`, `mcp-<n>`), which the
     /// history's entries carry as `session` (dispatch's `named_history`).
     names: RwLock<std::collections::BTreeMap<amoris_link::Source, String>>,
@@ -142,7 +144,7 @@ impl Host {
             debug: RwLock::new(None),
             capture: RwLock::new(None),
             render: RwLock::new(None),
-            sessions: AtomicU64::new(0),
+            sessions: sessions::registry(),
             names: RwLock::new(names),
             last_history: std::sync::Mutex::new(None),
             players: RwLock::new(None),
@@ -159,9 +161,21 @@ impl Host {
         }
     }
 
-    /// The way calls made as `seat` reach the game: its player client, opened on first use (the
-    /// seat's index is asked of the game), named `player:<seat>` in `agent` events.
+    /// The way calls made as `seat` with no session reach the game: the seat's player client,
+    /// listed as the session `player:<seat>` (`sessions.rs`).
     pub async fn player_via(&self, seat: &str) -> Result<Via, Problem> {
+        Ok(Via::Player(
+            self.player_client(seat).await?,
+            self.seat_row(seat),
+        ))
+    }
+
+    /// `seat`'s player client, opened on first use (the seat's index is asked of the game) and
+    /// shared by every call made as that seat.
+    pub(crate) async fn player_client(
+        &self,
+        seat: &str,
+    ) -> Result<Arc<Mutex<GameClient>>, Problem> {
         let session = self
             .game(&Via::Api, "player.session", json!({"seat": seat}))
             .await?;
@@ -200,7 +214,7 @@ impl Host {
                 c
             }
         };
-        Ok(Via::Player(client, seat.to_owned()))
+        Ok(client)
     }
 
     pub fn reader(&self) -> &SnapshotReader {

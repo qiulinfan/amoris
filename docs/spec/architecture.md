@@ -418,6 +418,11 @@ application in `editor/`, specified in [editor.md](editor.md).
   stays the one place they are checked. `tokio` and `rmcp` appear in the tool and app crates only.
 - **wasm32**: native only. In a browser the page's `window.amoris` is the same command surface
   (`threads.md`, 7.4).
+- **2026-11-12**: `Caller::hello` tells a handler's caller once who its client is (`Hello`: the
+  label, the transport, and whether the handler serves one request of a client that keeps no
+  session), at `initialize` or at the first tool call of a client that sent none. `Backend::open`
+  is asked per handler, and rmcp makes handlers for more than sessions, so it opens nothing: the
+  host opens the agent session at the hello (docs/spec/server.md 3.5, 7).
 
 ### 4.13 `amoris-app`: the native binary
 
@@ -541,6 +546,11 @@ application in `editor/`, specified in [editor.md](editor.md).
   oneshots, and the `SnapshotReader` for what it shows and pushes. `axum` and `tokio` appear in
   presenter, tool and app crates only.
 - **wasm32**: native only.
+- **2026-11-12**: the agent session registry (`sessions.rs`; docs/spec/server.md 3.5): the rows of
+  who calls the host as an agent and the bounded stream of what they called, behind
+  `agent.session.list`, `.events`, `.open` and `.close` and the `agent` pushes. It is host state,
+  held in the server and never in the world, its hash, a snapshot or a recording. One developer
+  `GameClient` per agent session, a bridge that registered itself included.
 
 ### 4.19 `amoris-audio`: sound
 

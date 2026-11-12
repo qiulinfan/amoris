@@ -1,10 +1,12 @@
-// What agents do, live: every MCP call an agent makes reaches the editor as an `agent` event (call,
-// result, message), grouped by session. Starting a session from here waits for the host's
-// agent.session methods; agents connect over MCP today.
+// What agents do on this host: its agent sessions (`agent.session.list`) and the stream of what
+// they called (`agent.session.events`, then `agent` pushes), read from the host on connect, so an
+// editor that opens later shows what happened before it came (server.md 3.5). The host lists the
+// sessions agents open themselves and starts none: the New session form is a preview.
 
-import { ArrowRight, Bot, Check, ChevronRight, ClipboardCopy, MessageSquare, Play, Square, X } from "lucide-react";
+import { ArrowRight, Bot, Check, ChevronRight, ClipboardCopy, MessageSquare, Play, Plug, Square, Unplug, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { host } from "../../host/api";
+import type { AgentSession } from "../../host/protocol";
 import { useAgent, type AgentLine } from "../../state/agent";
 import { useConnection } from "../../state/connection";
 import { useUi } from "../../state/ui";
@@ -21,8 +23,26 @@ function mcpUrl(): string {
   return `${base}/mcp`;
 }
 
+/** Why the form starts nothing, for its tooltips and its toast. */
+const PREVIEW =
+  "A preview: the host lists the sessions agents open themselves and starts none, because which agent program the editor may launch, and with whose credentials, is not decided. Connect one with `amoris mcp <project>` or the MCP endpoint and it appears in the list.";
+
+/** How a session reached the host, and whose calls it makes. */
+function describe(row: AgentSession): string {
+  const who = row.label || (row.transport === "api" ? "calls made with no session" : "an unnamed client");
+  const as = row.role === "player" ? `plays ${row.seat ?? "a seat"}` : "developer";
+  return `${who} (${row.transport}, ${as})`;
+}
+
 function Line({ l }: { l: AgentLine }) {
-  const Icon = l.kind === "call" ? ArrowRight : l.kind === "message" ? MessageSquare : l.ok === false ? X : Check;
+  const Icon =
+    l.kind === "opened" ? Plug : l.kind === "closed" ? Unplug : l.kind === "call" ? ArrowRight : l.kind === "message" ? MessageSquare : l.ok === false ? X : Check;
+  const text =
+    l.kind === "opened"
+      ? `opened: ${l.row ? describe(l.row) : l.session}`
+      : l.kind === "closed"
+        ? `closed after ${l.row?.calls ?? 0} ${l.row?.calls === 1 ? "call" : "calls"}${l.row?.failed_calls ? `, ${l.row.failed_calls} failed` : ""}`
+        : l.summary;
   return (
     <div className={cx("ag-line", `ag-${l.kind}`, l.ok === false && "is-failed")}>
       <span className="ag-time mono">{timeOfDay(l.ts)}</span>
@@ -30,7 +50,7 @@ function Line({ l }: { l: AgentLine }) {
         <Icon size={12} />
       </span>
       {l.method && <span className="ag-method mono">{l.method}</span>}
-      <span className="ag-summary">{l.summary}</span>
+      <span className="ag-summary">{text}</span>
     </div>
   );
 }
@@ -61,7 +81,7 @@ function NewSession() {
       <div className="ag-new-head" onClick={toggle}>
         <Bot size={15} />
         <span>New agent session</span>
-        {!supported && <span className="ag-soon" data-tip="The host protocol has no agent.session.* methods yet">preview</span>}
+        {!supported && <span className="ag-soon" data-tip={PREVIEW}>preview</span>}
         <ChevronRight size={14} className="ag-chev is-open" />
       </div>
       <div className="ag-form">
@@ -94,8 +114,8 @@ function NewSession() {
           size="sm"
           icon={Play}
           disabled={!supported}
-          data-tip={supported ? "Start" : "Waiting for agent.session.start on the host; connect an agent over MCP meanwhile"}
-          onClick={() => useUi.getState().toast({ kind: "info", title: "Agent sessions", body: "Starting sessions from the editor needs agent.session.start on the host." })}
+          data-tip={supported ? "Start" : PREVIEW}
+          onClick={() => useUi.getState().toast({ kind: "info", title: "Agent sessions", body: PREVIEW })}
         >
           Start session
         </Button>
@@ -121,19 +141,14 @@ function NewSession() {
 }
 
 export function AgentPanel() {
-  const feed = useAgent((s) => s.feed);
+  const rows = useAgent((s) => s.sessions);
+  const all = useAgent((s) => s.feed);
+  const hidden = useAgent((s) => s.hidden);
   const clear = useAgent((s) => s.clear);
   const [session, setSession] = useState("all");
-  const sessions = useMemo(() => {
-    const m = new Map<string, { calls: number; last: number }>();
-    for (const l of feed) {
-      const s = m.get(l.session) ?? { calls: 0, last: 0 };
-      if (l.kind === "call") s.calls++;
-      s.last = Math.max(s.last, l.ts);
-      m.set(l.session, s);
-    }
-    return [...m.entries()].sort((a, b) => b[1].last - a[1].last);
-  }, [feed]);
+  // The host's rows, the most recently active first.
+  const sessions = useMemo(() => [...rows].sort((a, b) => b.last_ts - a.last_ts), [rows]);
+  const feed = useMemo(() => (hidden ? all.filter((l) => l.seq > hidden) : all), [all, hidden]);
   const shown = session === "all" ? feed : feed.filter((l) => l.session === session);
   const now = Date.now();
 
@@ -142,7 +157,10 @@ export function AgentPanel() {
       <SelectField
         value={session}
         onChange={setSession}
-        options={[{ value: "all", label: `All sessions (${sessions.length})` }, ...sessions.map(([s]) => ({ value: s, label: s }))]}
+        options={[
+          { value: "all", label: `All sessions (${sessions.length})` },
+          ...sessions.map((s) => ({ value: s.id, label: s.label ? `${s.id} · ${s.label}` : s.id })),
+        ]}
       />
       <Spacer />
       <IconButton icon={X} label="Clear the feed" onClick={clear} />
@@ -162,19 +180,32 @@ export function AgentPanel() {
       <NewSession />
       {sessions.length > 0 && (
         <div className="ag-sessions">
-          {sessions.map(([s, info]) => (
-            <button key={s} type="button" className={cx("ag-session", session === s && "is-on")} onClick={() => setSession(session === s ? "all" : s)}>
-              <span className={cx("ag-live", now - info.last < 15000 && "is-live")} />
-              <span className="mono">{s}</span>
-              <span className="ag-count">{info.calls} calls</span>
-              <span className="ag-ago">{ago(info.last, now)}</span>
+          {sessions.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              className={cx("ag-session", session === s.id && "is-on", !s.live && "is-closed")}
+              data-session={s.id}
+              data-tip={`${describe(s)}${s.last_method ? `; last called ${s.last_method}` : ""}${s.live ? "" : "; not connected"}`}
+              onClick={() => setSession(session === s.id ? "all" : s.id)}
+            >
+              <span className={cx("ag-live", s.live && "is-live")} />
+              <span className="mono">{s.id}</span>
+              {s.label && <span className="ag-label">{s.label}</span>}
+              <span className="ag-tag">{s.transport}</span>
+              {s.seat && <span className="ag-tag ag-seat">{s.seat}</span>}
+              <span className="ag-count">
+                {s.calls} {s.calls === 1 ? "call" : "calls"}
+                {s.failed_calls > 0 && <span className="ag-failed"> · {s.failed_calls} failed</span>}
+              </span>
+              <span className="ag-ago">{ago(s.last_ts, now)}</span>
             </button>
           ))}
         </div>
       )}
       {groups.length === 0 ? (
         <EmptyState icon={Bot} title="No agent activity yet">
-          When an agent calls the host over MCP, each call and its result appear here, and its edits land in History.
+          When an agent connects to the host (over MCP, or with amoris mcp), its session is listed here with each call and its result, also those made before this editor opened; its edits land in History.
         </EmptyState>
       ) : (
         <div className="ag-feed">
@@ -185,7 +216,7 @@ export function AgentPanel() {
                 <span className="mono">{g.session}</span>
               </div>
               {g.lines.map((l) => (
-                <Line key={l.id} l={l} />
+                <Line key={l.seq} l={l} />
               ))}
             </div>
           ))}

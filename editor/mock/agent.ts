@@ -1,7 +1,8 @@
-// A simulated MCP agent for the mock: every call an agent makes is mirrored to editors as an `agent`
-// event (host-protocol.md section 7), and its writes go through `world.edit` like the editor's, so
-// they land in the same undo history. The first session inspects the scene and moves the crate that
-// floats out of reach; later sessions only observe.
+// A simulated MCP agent for the mock: each round is an agent session of the mock host (opened,
+// listed and closed as the real host's are, server.md 3.5), every call it makes is recorded and
+// pushed to editors as an `agent` event, and its writes go through `world.edit` like the editor's,
+// so they land in the same undo history under the session's name. The first session inspects the
+// scene and moves the crate that floats out of reach; later sessions only observe.
 
 import type { Session } from "./session";
 import { MockError } from "./util";
@@ -12,10 +13,7 @@ export class MockAgent {
   private timers: ReturnType<typeof setTimeout>[] = [];
   private round = 0;
 
-  constructor(
-    private readonly session: Session,
-    private readonly broadcast: (topic: string, data: unknown) => void,
-  ) {}
+  constructor(private readonly session: Session) {}
 
   start(firstDelayMs = 6000) {
     this.schedule(firstDelayMs);
@@ -30,32 +28,34 @@ export class MockAgent {
     this.timers.push(setTimeout(() => this.runRound(), delay));
   }
 
-  private emit(session: string, kind: "call" | "result" | "message", summary: string, method?: string, ok = true) {
-    this.broadcast("agent", { session, kind, method, summary, ok, ts: Date.now() });
+  private emit(session: string, summary: string) {
+    this.session.agents.message(session, summary);
   }
 
   private call(session: string, method: string, params: Record<string, unknown>, describe: (r: unknown) => string, note: string) {
-    this.emit(session, "call", note, method);
+    const agents = this.session.agents;
+    agents.call(session, method, note);
     try {
-      // Each round is one MCP session: a developer client of its own, named as its events are.
+      // Each round is one MCP session: a developer client of its own, named as its row is.
       const r = this.session.call(method, params, { source: { developer: this.round }, session });
-      this.emit(session, "result", describe(r), method);
+      agents.result(session, method, true, describe(r));
       return r;
     } catch (e) {
       const msg = e instanceof MockError ? `${e.code}: ${e.message}` : String(e);
-      this.emit(session, "result", msg, method, false);
+      agents.result(session, method, false, msg);
       return undefined;
     }
   }
 
   private runRound() {
     const first = this.round === 0;
-    const session = first ? "claude-opus · a7f3" : `claude-opus · ${(0xb000 + this.round * 977).toString(16).slice(-4)}`;
     this.round++;
     const s = this.session;
+    // An MCP client that connected over HTTP, as the host would list it.
+    const session = s.agents.open({ transport: "http", label: "claude-opus (simulated)" }).row.id;
     const steps: Step[] = [];
     const add = (delay: number, run: () => void) => steps.push({ delay, run });
-    add(0, () => this.emit(session, "message", first ? "Connected over MCP (developer tools). Goal: make every crate reachable on the sloop's course." : "Checking on the voyage."));
+    add(0, () => this.emit(session, first ? "Connected over MCP (developer tools). Goal: make every crate reachable on the sloop's course." : "Checking on the voyage."));
     add(700, () =>
       this.call(session, "world.tree", {}, (r) => `${countTree(r as TreeLike[])} entities; roots ${(r as TreeLike[]).slice(0, 4).map((n) => n.name).join(", ")}…`, "list the scene"),
     );
@@ -66,10 +66,10 @@ export class MockAgent {
           return rows.map((x) => `${x.name} (${x["Transform.position"].map((v) => v.toFixed(1)).join(", ")})`).join("; ");
         }, "where are the crates?"),
       );
-      add(2400, () => this.emit(session, "message", "Crate4 floats 6 m off the course and REACH is 3 m, so the crew can never take it. Moving it onto the line."));
+      add(2400, () => this.emit(session, "Crate4 floats 6 m off the course and REACH is 3 m, so the crew can never take it. Moving it onto the line."));
       add(3300, () => {
         if (s.mode !== "edit") {
-          this.emit(session, "message", "Play is running; I will not edit the world now.");
+          this.emit(session, "Play is running; I will not edit the world now.");
           return;
         }
         const crate = [...s.world.entities.values()].find((e) => e.name === "Crate4");
@@ -82,7 +82,7 @@ export class MockAgent {
           "move Crate4 to (26, 0, -2.5)",
         );
       });
-      add(4300, () => this.emit(session, "message", "Done: all four crates now lie within 3 m of the sloop's line. Undo it from History to restore the original layout."));
+      add(4300, () => this.emit(session, "Done: all four crates now lie within 3 m of the sloop's line. Undo it from History to restore the original layout."));
     } else {
       add(1400, () => this.call(session, "events.since", { seq: Math.max(0, s.seq - 5) }, (r) => `${(r as unknown[]).length} recent events`, "what happened lately?"));
       add(2200, () =>
@@ -91,13 +91,15 @@ export class MockAgent {
           return row ? `Sloop ${Number(row["Boat.speed"]).toFixed(2)} m/s heading ${Number(row["Boat.heading_deg"]).toFixed(0)}°` : "no boat";
         }, "how is the sloop doing?"),
       );
-      add(3000, () => this.emit(session, "message", s.mode === "play" ? `Tick ${s.tick}: the voyage is under way.` : "The world is in Edit mode; nothing to report."));
+      add(3000, () => this.emit(session, s.mode === "play" ? `Tick ${s.tick}: the voyage is under way.` : "The world is in Edit mode; nothing to report."));
     }
     let at = 0;
     for (const step of steps) {
       at = step.delay;
       this.timers.push(setTimeout(step.run, at));
     }
+    // The client ends its session after its last step.
+    this.timers.push(setTimeout(() => s.agents.close(session), at + 800));
     this.schedule(at + 30000);
   }
 }

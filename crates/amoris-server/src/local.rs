@@ -1,8 +1,8 @@
 //! Methods the server answers itself (docs/spec/server.md, methods): the merged catalog, the event,
 //! log and profile streams `amoris-link` keeps for presenters, the project's asset files, the type check
-//! stage of `scripts.apply` and `scripts.check`, the script guide (`scripts.guide`), and the
-//! plug-ins (`debug.*`, `capture`), which answer `*.not_available` until the integrator installs
-//! them.
+//! stage of `scripts.apply` and `scripts.check`, the script guide (`scripts.guide`), the agent
+//! sessions (`agent.session.*`, `sessions.rs`), and the plug-ins (`debug.*`, `capture`), which
+//! answer `*.not_available` until the integrator installs them.
 
 use std::path::{Component, Path};
 
@@ -205,6 +205,38 @@ pub fn server_catalog() -> Vec<Value> {
              scene's camera. The reply names the image, its size and tick, and each water \
              region's spray: drops born in the last frame and alive.",
             schema::<Capture>(),
+        ),
+        e(
+            "agent.session.list",
+            "read",
+            "The host's agent sessions in opening order, {sessions: [{id, transport, role, seat, \
+             label, calls, failed_calls, last_method, live, opened_ts, last_ts}], last}: the MCP \
+             clients on /mcp and stdio, the bridges that registered themselves, and the calls \
+             made as a seat with no session.",
+            schema::<NoParams>(),
+        ),
+        e(
+            "agent.session.events",
+            "read",
+            "What the agent sessions called, {seq, ts, session, kind: opened|call|result|closed, \
+             ...}: the newest (the host keeps 2,000), or with since the first limit after it; \
+             last is the cursor to ask again with, missed counts what left the ring.",
+            schema::<crate::sessions::EventsParams>(),
+        ),
+        e(
+            "agent.session.open",
+            "control",
+            "Registers the caller as an agent session with a developer client of its own (with \
+             seat: that seat's player) and answers its row and a handle; its calls are POST \
+             /api/call {handle, method, params}, listed under its id and named in the history.",
+            schema::<crate::sessions::OpenParams>(),
+        ),
+        e(
+            "agent.session.close",
+            "control",
+            "Closes a registered session: by the handle its opener holds, or a bridge session by \
+             its id (session) when its process is gone.",
+            schema::<crate::sessions::CloseParams>(),
         ),
     ]
 }
@@ -549,6 +581,11 @@ impl Host {
                     None => Err(not_available("capture", method)),
                 }
             }
+            // The host's own state: answered without the game, also while the debugger holds it.
+            "agent.session.list"
+            | "agent.session.events"
+            | "agent.session.open"
+            | "agent.session.close" => self.agent_session(method, &params),
             m if m.starts_with("debug.") => {
                 let hub = self.0.debug.read().ok().and_then(|h| h.clone());
                 match hub {

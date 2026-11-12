@@ -138,4 +138,33 @@ export const CATALOG: CatalogCommand[] = [
     doc: "What the last ticks cost the game thread (default 60), in ms per tick: each system's own time, tick.other, loop.present and loop.publish, and each phase; ticks the debugger held are counted in held and left out.",
     params: obj({ ticks: int("The last this many ticks, default 60 (the ring keeps 600).") }),
   },
+  // The host's agent sessions (docs/spec/server.md 3.5).
+  {
+    name: "agent.session.list",
+    kind: "read",
+    doc: "The host's agent sessions in opening order, {sessions: [{id, transport, role, seat, label, calls, failed_calls, last_method, live, opened_ts, last_ts}], last}.",
+    params: obj(),
+  },
+  {
+    name: "agent.session.events",
+    kind: "read",
+    doc: "What the agent sessions called, {seq, ts, session, kind: opened|call|result|closed, ...}: the newest (the host keeps 2,000), or with since the first limit after it; last is the cursor to ask again with, missed counts what left the ring.",
+    params: obj({
+      since: int("Events after this stream number, oldest first; without it, the newest."),
+      limit: int("At most this many, default 100 (the host keeps the newest 2,000)."),
+      session: str("One session's events, by its id (mcp-3)."),
+    }),
+  },
+  {
+    name: "agent.session.open",
+    kind: "control",
+    doc: "Registers the caller as an agent session (with seat: that seat's player) and answers its row and a handle.",
+    params: obj({ label: str("What the session is called in the list."), seat: str("The seat the session plays; without it the session is a developer's.") }),
+  },
+  {
+    name: "agent.session.close",
+    kind: "control",
+    doc: "Closes a registered session: by the handle its opener holds, or a bridge session by its id (session) when its process is gone.",
+    params: obj({ handle: str("The handle agent.session.open answered."), session: str("A bridge session's id (mcp-3).") }),
+  },
 ];
