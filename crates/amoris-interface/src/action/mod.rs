@@ -26,6 +26,7 @@ pub mod refs;
 pub mod request;
 pub mod sailing;
 pub mod state;
+pub mod third_person;
 pub mod validate;
 pub mod view;
 pub mod web;

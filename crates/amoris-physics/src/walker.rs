@@ -734,7 +734,17 @@ fn overlaps_fixed(physics: &Physics, lo: [f64; 3], hi: [f64; 3]) -> bool {
 }
 
 /// `physics.walk.clear`: ends the tick's pulses, so each acts in exactly one tick.
-pub(crate) fn clear(mut walkers: Query<&mut Walker>, mut buttons: Query<&mut Buttons>) {
+pub(crate) fn clear(
+    mut walkers: Query<&mut Walker>,
+    mut buttons: Query<&mut Buttons>,
+    mut seats: Query<&mut crate::third_person::ThirdPerson>,
+) {
+    #[allow(clippy::disallowed_methods)] // per-entity writes: the order changes nothing
+    for mut tp in seats.iter_mut() {
+        if tp.pulsed() {
+            *tp = tp.cleared();
+        }
+    }
     #[allow(clippy::disallowed_methods)] // per-entity writes: the order changes nothing
     for mut w in walkers.iter_mut() {
         if w.jump || w.primary || w.secondary {

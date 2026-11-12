@@ -45,6 +45,7 @@ pub mod shallow;
 mod shapes;
 pub mod solver;
 pub mod terrain;
+pub mod third_person;
 pub mod vessel;
 pub mod volumes;
 pub mod walk;
@@ -65,6 +66,7 @@ pub use sea::{GRAVITY, Rain, Sea, SeaLook, Water, Wave, WaveField, Wind};
 pub use sensors::SensorOverlaps;
 pub use solver::{BodyIndex, ContactLog, Physics, RebuiltSolver};
 pub use terrain::{Terrain, TerrainFeature, TerrainLayer, TerrainLook};
+pub use third_person::{Lockable, MoveFrame, ThirdPerson};
 pub use vessel::{Hole, Vessel};
 pub use walker::{Buttons, Walker};
 pub use water::{
@@ -115,6 +117,8 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     ComponentRegistry::register::<walker::Buttons>(w, None)?;
     ComponentRegistry::register::<nav::NavGrid>(w, None)?;
     ComponentRegistry::register::<avatar::CameraRig>(w, None)?;
+    ComponentRegistry::register::<ThirdPerson>(w, None)?;
+    ComponentRegistry::register::<Lockable>(w, None)?;
     ComponentRegistry::register::<Board>(w, None)?;
     ComponentRegistry::register::<amoris_sim::voxels::Voxels>(w, None)?;
     ComponentRegistry::register::<WaterRegion>(w, None)?;
@@ -132,6 +136,12 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     let mut water_system = IntoSystem::into_system(water::water);
     water_system.initialize(w);
     let always = RunCondition::Always;
+    sim.add_system(
+        "physics.third_person",
+        TickPhase::Control,
+        always,
+        third_person::drive,
+    )?;
     sim.add_system("anim.graph", TickPhase::Forces, always, avatar::animate)?;
     sim.add_system("physics.wind", TickPhase::Forces, always, forces::wind)?;
     sim.add_exclusive(

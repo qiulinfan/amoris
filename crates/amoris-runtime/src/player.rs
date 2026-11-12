@@ -44,7 +44,7 @@ use serde_json::{Map, Value, json};
 pub const CONTRACT: &str = "0.2";
 
 /// The engine's action catalogs a project can name in `[player] actions`.
-pub const CATALOGS: &[&str] = &["sailing", "first_person", "none"];
+pub const CATALOGS: &[&str] = &["sailing", "first_person", "third_person", "none"];
 
 /// `[player]` in `project.toml`: what the game declares for its players.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -55,7 +55,8 @@ pub struct PlayerManifest {
     #[serde(default = "default_perception")]
     pub perception: String,
     /// The engine's action catalog: `sailing` (the sailing controls, intents with Rust executors,
-    /// the crate's affordance and the `sail.*` codes) or `none`.
+    /// the crate's affordance and the `sail.*` codes), `first_person` (voxels.md 6),
+    /// `third_person` (player.md 5.1) or `none`.
     #[serde(default = "default_actions")]
     pub actions: String,
     /// The default decision filter of every seat (time.md, Decision points).
@@ -65,7 +66,7 @@ pub struct PlayerManifest {
     /// (time.md, Episodes). None: the episode never ends by itself.
     #[serde(default)]
     pub done_event: Option<String>,
-    /// Who aims the player view while a first-person seat plays: the mouse's look
+    /// Who aims the player view while a walker's seat plays: the mouse's look
     /// (`look`, the default) or the game's rules, which pose the scene's active camera (`game`).
     #[serde(default)]
     pub camera: PlayerCamera,
@@ -173,6 +174,7 @@ impl PlayerSpec {
         let catalog = match self.actions.as_str() {
             "sailing" => action::sailing::game_catalog(&defs)?,
             "first_person" => action::first_person::game_catalog(&defs)?,
+            "third_person" => action::third_person::game_catalog(&defs)?,
             "none" => ActionCatalog::none(),
             other => {
                 let valid: Vec<amoris_contract::Candidate<'_>> = CATALOGS

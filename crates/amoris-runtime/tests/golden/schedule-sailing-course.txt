@@ -1,5 +1,6 @@
 Begin sim.begin always
 Control interface.intents always
+Control physics.third_person always
 Update script.update always
 Forces physics.wind always
 Forces physics.water always

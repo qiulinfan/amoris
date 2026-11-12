@@ -74,6 +74,7 @@ const FIELDS: &[(&str, &str)] = &[
     ("Lake", "WaterRegion.bed.Voxels.volume"),
     ("Gauge", "WaterProbe.region"),
     ("Spring", "WaterSource.region"),
+    ("Rider", "ThirdPerson.lock"),
 ];
 
 #[test]
@@ -81,11 +82,11 @@ fn a_saved_scene_names_the_same_entities_after_a_destroy() {
     common::big_stack(|| {
         let scene = json!([
             {"name": "Old"},
-            {"name": "Rider", "components": {"Walker": {"mount": 4}}},
+            {"name": "Rider", "components": {"Walker": {"mount": 4}, "ThirdPerson": {"lock": 4}}},
             {"name": "Body", "components": {
                 "Avatar": {"walker": 2, "target": 1},
                 "Attach": {"to": 2, "joint": "hand"}}},
-            {"name": "Horse", "components": {"Tag": {"on": 3}}},
+            {"name": "Horse", "components": {"Tag": {"on": 3}, "Lockable": {}}},
             {"name": "Cam", "components": {"CameraRig": {"target": 2, "look_at": 4}}},
             {"name": "Bed", "components": {"Voxels": {}}},
             {"name": "Lake", "components": {"WaterRegion": {"cell_m": 1, "size": [16, 16],
@@ -109,7 +110,8 @@ fn a_saved_scene_names_the_same_entities_after_a_destroy() {
                 json!("Horse"),
                 json!("Bed"),
                 json!("Lake"),
-                json!("Lake")
+                json!("Lake"),
+                json!("Horse")
             ]
         );
         call(
@@ -126,6 +128,7 @@ fn a_saved_scene_names_the_same_entities_after_a_destroy() {
         let comp = |i: usize, c: &str| file["entities"][i]["components"][c].clone();
         assert_eq!(file["entities"][0]["name"], json!("Rider"));
         assert_eq!(comp(0, "Walker")["mount"], json!(3));
+        assert_eq!(comp(0, "ThirdPerson")["lock"], json!(3));
         assert_eq!(comp(1, "Avatar")["walker"], json!(1));
         assert_eq!(comp(1, "Avatar")["target"], Value::Null);
         assert_eq!(comp(1, "Attach")["to"], json!(1));
@@ -189,6 +192,7 @@ fn the_engine_components_that_hold_entity_ids() {
                 "ObserverEvents",
                 "Parent",
                 "SensorOverlaps",
+                "ThirdPerson",
                 "Walker",
                 "WaterDrain",
                 "WaterProbe",

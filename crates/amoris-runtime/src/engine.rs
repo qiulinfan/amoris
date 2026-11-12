@@ -93,7 +93,7 @@ where
 /// Every engine component a scene or `world_edit` can name (`Name` is the entity's own `name`);
 /// the first three are the player layer's (perception.md: who observes, what can be perceived,
 /// what blocks sight).
-pub fn engine_components() -> [EngineComponent; 52] {
+pub fn engine_components() -> [EngineComponent; 54] {
     [
         entry::<amoris_interface::perception::Observer>(),
         entry::<amoris_interface::perception::Perceivable>(),
@@ -131,6 +131,8 @@ pub fn engine_components() -> [EngineComponent; 52] {
         entry::<amoris_physics::Buttons>(),
         entry::<amoris_physics::nav::NavGrid>(),
         entry::<amoris_physics::CameraRig>(),
+        entry::<amoris_physics::ThirdPerson>(),
+        entry::<amoris_physics::Lockable>(),
         entry::<Wind>(),
         entry::<Rain>(),
         voxels_entry(),
@@ -1014,6 +1016,132 @@ fn camera_rig_fns() -> EngineFns<amoris_physics::CameraRig> {
             let mut r = amoris_physics::CameraRig::default();
             write(&mut r, v);
             r
+        },
+    }
+}
+
+const FRAMES: [&str; 3] = ["camera", "world", "body"];
+
+fn third_person_schema() -> Result<ComponentSchema, Problem> {
+    let d = amoris_physics::ThirdPerson::default();
+    let n = |name, value, doc| (name, FieldType::F64, FieldValue::F64(value), doc);
+    let b = |name, doc| (name, FieldType::Bool, FieldValue::Bool(false), doc);
+    let e = |name, doc| (name, FieldType::Entity, FieldValue::Entity(None), doc);
+    schema(
+        "ThirdPerson",
+        amoris_physics::ThirdPerson::VERSION,
+        "A walker played from behind (player.md 5.1): the third_person seat's inputs and lock; the engine writes the walker's move and turns its look to the lock.",
+        vec![
+            n("forward", 0.0, "The move ahead in frame, -1 to 1."),
+            n(
+                "strafe",
+                0.0,
+                "The move sideways in frame, -1 (left) to 1 (right).",
+            ),
+            (
+                "frame",
+                FieldType::Enum(FRAMES.map(Box::from).into()),
+                FieldValue::Enum(0),
+                "What the move is relative to: the camera, the world (north, east) or the body.",
+            ),
+            n(
+                "zoom",
+                d.zoom,
+                "The camera arm's length as a share of its rig's distance, 0.5 to 2.",
+            ),
+            b("guard", "Held: guard or aim, as the rules say."),
+            b("dodge", "A one-tick pulse: dodge."),
+            b(
+                "interact",
+                "A one-tick pulse: interact with what is in front.",
+            ),
+            e(
+                "interact_target",
+                "What interact_with named this tick, or none.",
+            ),
+            b(
+                "lock_toggle",
+                "A one-tick pulse: lock on to the best target in front, or let go.",
+            ),
+            e(
+                "lock_request",
+                "A one-tick pulse: lock on to this entity if it is Lockable.",
+            ),
+            e(
+                "lock",
+                "The entity locked on to: the engine keeps it; rules may set or clear it.",
+            ),
+            n(
+                "lock_range_m",
+                d.lock_range_m,
+                "How far a lock reaches, metres; it ends at 1.5 times this.",
+            ),
+            n(
+                "lock_turn_rate",
+                d.lock_turn_rate,
+                "The fastest a lock turns the look, radians a second.",
+            ),
+            n(
+                "facing",
+                0.0,
+                "The way the body faced at the tick's start, as a walker's yaw. Engine-written.",
+            ),
+        ],
+    )
+}
+
+fn third_person_fns() -> EngineFns<amoris_physics::ThirdPerson> {
+    use amoris_physics::MoveFrame;
+    fn id(x: f64) -> Option<amoris_sim::EntityId> {
+        amoris_sim::EntityId::from_f64(x).ok()
+    }
+    fn of(id: Option<amoris_sim::EntityId>) -> f64 {
+        id.map_or(0.0, |id| id.to_f64())
+    }
+    fn write(t: &mut amoris_physics::ThirdPerson, v: &ProjectValues) {
+        let n = &v.nums;
+        (t.forward, t.strafe) = (n[0], n[1]);
+        t.frame = if n[2] == 1.0 {
+            MoveFrame::World
+        } else if n[2] == 2.0 {
+            MoveFrame::Body
+        } else {
+            MoveFrame::Camera
+        };
+        (t.zoom, t.guard, t.dodge, t.interact) = (n[3], n[4] != 0.0, n[5] != 0.0, n[6] != 0.0);
+        (t.interact_target, t.lock_toggle) = (id(n[7]), n[8] != 0.0);
+        (t.lock_request, t.lock) = (id(n[9]), id(n[10]));
+        (t.lock_range_m, t.lock_turn_rate, t.facing) = (n[11], n[12], n[13]);
+    }
+    EngineFns {
+        read: |t| {
+            let frame = match t.frame {
+                MoveFrame::Camera => 0.0,
+                MoveFrame::World => 1.0,
+                MoveFrame::Body => 2.0,
+            };
+            nums(&[
+                t.forward,
+                t.strafe,
+                frame,
+                t.zoom,
+                bit(t.guard),
+                bit(t.dodge),
+                bit(t.interact),
+                of(t.interact_target),
+                bit(t.lock_toggle),
+                of(t.lock_request),
+                of(t.lock),
+                t.lock_range_m,
+                t.lock_turn_rate,
+                t.facing,
+            ])
+        },
+        write,
+        make: |v| {
+            let mut t = amoris_physics::ThirdPerson::default();
+            write(&mut t, v);
+            t
         },
     }
 }
@@ -1932,6 +2060,19 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
         )?),
     )?;
     ComponentRegistry::register::<amoris_physics::CameraRig>(world, Some(camera_rig_schema()?))?;
+    ComponentRegistry::register::<amoris_physics::ThirdPerson>(
+        world,
+        Some(third_person_schema()?),
+    )?;
+    ComponentRegistry::register::<amoris_physics::Lockable>(
+        world,
+        Some(schema(
+            "Lockable",
+            amoris_physics::Lockable::VERSION,
+            "Something a third-person seat may lock on to (player.md 5.1). Create with {}; remove it from what can no longer be fought, which ends a lock on it.",
+            vec![],
+        )?),
+    )?;
     ComponentRegistry::register::<Voxels>(world, None)?;
     ComponentRegistry::register::<WaterRegion>(world, None)?;
     ComponentRegistry::register::<WaterResident>(world, None)?;
@@ -2062,6 +2203,15 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
         },
     )?;
     register_engine::<amoris_physics::CameraRig>(world, camera_rig_fns())?;
+    register_engine::<amoris_physics::ThirdPerson>(world, third_person_fns())?;
+    register_engine::<amoris_physics::Lockable>(
+        world,
+        EngineFns {
+            read: |_| nums(&[]),
+            write: |_, _| {},
+            make: |_| amoris_physics::Lockable {},
+        },
+    )?;
     register_engine::<amoris_assets::anim::AnimGraph>(world, anim_graph_fns())?;
     register_engine::<amoris_assets::anim::Attach>(world, attach_fns())?;
     register_engine::<UiText>(world, ui_text_fns())?;
