@@ -23,6 +23,8 @@ serde_json.workspace = true
 winit = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# The native window's gamepads (feature `window`; docs/spec/input.md 6).
+gilrs = { workspace = true, optional = true }
 pollster.workspace = true
 image.workspace = true
 # RenderDoc's in-application API for one-frame captures (renderdoc.rs); both already come with
@@ -33,8 +35,8 @@ renderdoc-sys = "1"
 [features]
 import = ["amoris-assets/import"]
 default = ["window", "import"]
-# A native window runner (winit) for examples and the `amoris` binary.
-window = ["dep:winit"]
+# A native window runner (winit, with gilrs's gamepads) for examples and the `amoris` binary.
+window = ["dep:winit", "dep:gilrs"]
 
 [dev-dependencies]
 blake3.workspace = true

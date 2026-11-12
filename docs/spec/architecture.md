@@ -711,6 +711,7 @@ spec-persist adds `serde-reflection =0.6.0`, `xxhash-rust =0.8.19` and `blake3 =
 | `lz4_flex` | assets | `=0.14.0`, safe encoding and checked decoding: the bounded lossless blocks of resident water checkpoints in the feed (water.md 39), on `wasm32` too |
 | `wgpu` | render, viewport, app, web (`wasm32` only, for the worker's GPU water) | `webgpu` backend on the web; no WebGL |
 | `winit` | render (feature `window`, which `amoris-app` enables) | the native window's runner (`amoris_render::app`) |
+| `gilrs` | render (feature `window`, natively) | the native window's gamepads in the standard layout (`amoris_render::pad`; charter 4.1, input.md 6) |
 | `pollster`, `fontdue`, `log`, `libloading`, `renderdoc-sys` | render (`pollster`, `libloading` and `renderdoc-sys` natively; `log` also in audio and viewport) | `pollster` blocks on wgpu's futures; `fontdue` draws the game UI's text; `libloading` and `renderdoc-sys` load RenderDoc's in-application API (`AMORIS_RENDERDOC_FRAME`) |
 | `naga`, `ash` | render, dev-dependencies only | `naga =30.0.1` translates the shaders in tests; `ash` reads Vulkan timestamps in an example |
 | `kira` | audio | native only, with its `cpal` backend (4.19) |
