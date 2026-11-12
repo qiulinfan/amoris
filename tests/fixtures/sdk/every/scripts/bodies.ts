@@ -1,0 +1,43 @@
+// Rigid bodies from scripts (docs/sdk.md, Rigid bodies): the guide's example, and the types the
+// generated declarations give RigidBody, Collider and ExternalForce.
+import { system } from "amoris";
+import type { Entity, EnumColumn, Vec3Columns } from "amoris";
+
+export const bodies = system({
+    name: "every_body", phase: "update", doc: "Makes, tunes and pushes a rigid body.",
+    events: ["physics."],
+    queries: { bodies: { with: ["RigidBody", "Collider", "ExternalForce"] } },
+    run(ctx, { bodies }) {
+        const ball = ctx.world.spawn({
+            Transform: { position: { y: 2 } }, Velocity: {}, ExternalForce: {},
+            RigidBody: { kind: "Dynamic" },
+            Collider: { kind: "Ball", radius: 0.2, density: 500 },
+        });
+        ctx.world.set(ball, "Collider", { friction: 0.9, restitution: 0.3 });
+        ctx.world.set(ball, "ExternalForce", { force: { y: 40 } });
+        const force: Vec3Columns = bodies.cols.ExternalForce.force;
+        const fx: Float64Array = bodies.cols.ExternalForce.force.x;
+        const kinds: EnumColumn = bodies.cols.Collider.kind;
+        for (let r = 0; r < bodies.len; r++) {
+            bodies.cols.RigidBody.gravity_scale[r] = 0;
+            fx[r] += 12;
+            force.x[r] += 6 / ctx.dt;
+            // A hull, a mesh, a compound or a heightfield: its friction can still change.
+            if (kinds[r] > 2) bodies.cols.Collider.friction[r] = 0.9;
+        }
+        const rb = ctx.world.get(ball, "RigidBody");
+        const co = ctx.world.get(ball, "Collider");
+        if (rb && co) {
+            const kind: "Dynamic" | "Fixed" = rb.kind;
+            const shape: "Ball" | "Cuboid" | "Capsule" | "ConvexHull" | "TriMesh" | "Compound" | "HeightField" = co.kind;
+            const sum: number = rb.mass_kg + rb.inertia.x + rb.center_of_mass.y + rb.linear_damping
+                + co.radius + co.half_height + co.half_extents.z + co.density;
+            void [kind, shape, sum];
+        }
+        for (const ev of ctx.events) {
+            if (ev.kind !== "physics.contact_began") continue;
+            const other: Entity = (ev.data as { other: Entity }).other;
+            void [ev.subject, other];
+        }
+    },
+});

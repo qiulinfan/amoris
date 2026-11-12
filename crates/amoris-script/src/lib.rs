@@ -43,7 +43,10 @@ pub mod sourcemap;
 pub mod types;
 pub mod web;
 
-pub use access::{ComponentAccess, EngineFns, ScriptAccess, register_engine, register_project};
+pub use access::{
+    ComponentAccess, EngineFns, ScriptAccess, SlotRefusal, SlotRule, register_engine,
+    register_engine_rule, register_project,
+};
 pub use call::CallCounts;
 #[cfg(feature = "transpile")]
 pub use compile::{CompileOptions, CompileReport, compile, compile_with_report};

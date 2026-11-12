@@ -362,6 +362,8 @@ pub fn merge(target: &mut Value, patch: &Map<String, Value>) -> Result<(), Strin
     Ok(())
 }
 
+mod bodies;
+
 // --- Script schemas and slot functions -----------------------------------------------------------
 
 fn f(name: &'static str, doc: &'static str) -> (&'static str, FieldType, FieldValue, &'static str) {
@@ -1987,9 +1989,9 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
             "A sink: water taken at a region's column each tick, never more than is there.",
         )?),
     )?;
-    ComponentRegistry::register::<RigidBody>(world, None)?;
-    ComponentRegistry::register::<Collider>(world, None)?;
-    ComponentRegistry::register::<ExternalForce>(world, None)?;
+    ComponentRegistry::register::<RigidBody>(world, Some(bodies::rigid_body_schema()?))?;
+    ComponentRegistry::register::<Collider>(world, Some(bodies::collider_schema()?))?;
+    ComponentRegistry::register::<ExternalForce>(world, Some(bodies::external_force_schema()?))?;
     ComponentRegistry::register::<Floater>(world, None)?;
     ComponentRegistry::register::<Vessel>(world, None)?;
     ComponentRegistry::register::<Sail>(world, None)?;
@@ -2024,6 +2026,7 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     }
     register_engine::<Transform>(world, transform_fns())?;
     register_engine::<Velocity>(world, velocity_fns())?;
+    bodies::register(world)?;
     register_engine::<Boat>(world, boat_fns())?;
     register_engine::<Board>(world, board_fns())?;
     register_engine::<Wind>(world, wind_fns())?;

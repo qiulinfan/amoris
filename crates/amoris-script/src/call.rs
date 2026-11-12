@@ -15,7 +15,7 @@ use bevy_ecs::prelude::World;
 use rquickjs::{Object, Persistent};
 use serde_json::json;
 
-use crate::access::{ComponentAccess, ScriptAccess};
+use crate::access::{ComponentAccess, ScriptAccess, SlotRefusal, SlotRule};
 use crate::error::{ErrorPhase, ScriptError};
 
 /// A component a call names, resolved in its world.
@@ -24,6 +24,15 @@ pub(crate) struct Comp {
     pub id: ComponentId,
     pub schema: Arc<ComponentSchema>,
     pub access: Arc<dyn ComponentAccess>,
+    /// Its slot rule, which judges every write to it (script-host.md 7.2); most have none.
+    pub rule: Option<SlotRule>,
+}
+
+/// `script.write_not_held`: the component's slot rule refused a value its flat form cannot hold.
+pub(crate) fn not_held(comp: &Comp, refusal: SlotRefusal, phase: ErrorPhase) -> ScriptError {
+    ScriptError::new("script.write_not_held", refusal.message, phase)
+        .component(&comp.schema.name)
+        .field(refusal.field)
 }
 
 /// `script.unknown_component`, with the nearest names.
@@ -57,6 +66,7 @@ pub(crate) fn resolve_comp(world: &World, name: &str) -> Result<Comp, ScriptErro
             id: e.id,
             schema,
             access,
+            rule: accessors.rule(e.id),
         })
     });
     found.ok_or_else(|| unknown_component(world, name))

@@ -10,7 +10,7 @@ use serde_json::json;
 
 use super::{NResult, arg, with_call};
 use crate::access::defaults;
-use crate::call::{CallState, Command, Comp, resolve_comp};
+use crate::call::{CallState, Command, Comp, not_held, resolve_comp};
 use crate::convert::{self, is_plain_object};
 use crate::error::{ErrorPhase, ScriptError, num};
 use crate::js;
@@ -115,7 +115,17 @@ pub fn set<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
         let overlay = &call.overlay;
         let patch = convert::patch_from_js(ctx, &comp.schema, &p, &|x| overlay.alive(world, x))
             .map_err(|err| with_entity(err, id))?;
-        patch.apply(&mut value);
+        match comp.rule {
+            // The rule sees the value before and after the patch, and the overlay takes the value
+            // as the rule settles it: what the component will read once the patch is written.
+            Some(rule) => {
+                let before = value.clone();
+                patch.apply(&mut value);
+                rule(Some(&before), &mut value)
+                    .map_err(|r| with_entity(not_held(&comp, r, ErrorPhase::Run), id))?;
+            }
+            None => patch.apply(&mut value),
+        }
         call.overlay.put(id, comp.id, Some(value));
         call.commands.push(Command::Set {
             id,
@@ -153,6 +163,10 @@ pub fn insert<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
             .map_err(|err| with_entity(err, id))?;
         let mut value = defaults(&comp.schema);
         patch.apply(&mut value);
+        if let Some(rule) = comp.rule {
+            rule(None, &mut value)
+                .map_err(|r| with_entity(not_held(&comp, r, ErrorPhase::Run), id))?;
+        }
         call.overlay.put(id, comp.id, Some(value.clone()));
         call.commands.push(Command::Insert { id, comp, value });
         Ok(())
@@ -221,6 +235,10 @@ pub fn spawn<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
                     convert::patch_from_js(ctx, &comp.schema, &p, &|x| overlay.alive(world, x))?;
                 let mut value = defaults(&comp.schema);
                 patch.apply(&mut value);
+                // A component's rule runs after its own fields and before the next component.
+                if let Some(rule) = comp.rule {
+                    rule(None, &mut value).map_err(|r| not_held(&comp, r, ErrorPhase::Run))?;
+                }
                 comps.push((comp, value));
             }
         }

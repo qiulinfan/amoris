@@ -69,6 +69,14 @@ fn the_declarations_type_check_every_field_type_and_api() {
         components.contains("readonly a_enum: \"calm\" | \"cross\";"),
         "{components}"
     );
+    // Rigid bodies (scripts/bodies.ts): the kinds are unions of the scene's names, a force columns.
+    for declared in [
+        "readonly kind: \"Dynamic\" | \"Fixed\";",
+        "readonly kind: \"Ball\" | \"Cuboid\" | \"Capsule\" | \"ConvexHull\" | \"TriMesh\" | \"Compound\" | \"HeightField\";",
+        "readonly force: Vec3Columns;",
+    ] {
+        assert!(components.contains(declared), "{declared}: {components}");
+    }
     // The check writes into the engine's directory only; tsc ran with its tsconfig.json.
     assert!(!dir.join("tsconfig.json").exists());
     assert!(dir.join(".amoris/types/tsconfig.json").is_file());

@@ -330,8 +330,11 @@ row's entity) or `QueryResult.each` (the row being processed when `fn` threw).
 problem only: positional arguments left to right; within an object, keys in ECMAScript's own-key
 order (integer-like keys ascending, then strings in insertion order); within a `spawn`, components
 in that order and each component's fields in that order. Column write-backs are checked query by
-query in creation order, rows in ascending id, slots in declaration order. So which code a call with
-several problems reports is the same in every build.
+query in creation order, rows in ascending id, slots in declaration order. A component's slot rule
+(script-host.md 7.2) runs after that component's own fields: in a `set` or an `insert` after the
+patch's keys, in a `spawn` after each component's fields and before the next component, in a
+write-back after the cells of one row and component. So which code a call with several problems
+reports is the same in every build.
 
 ### 5.2 Source mapping
 
@@ -357,6 +360,7 @@ so locations are the same in every build.
 | `script.unknown_component`, `script.unknown_field`, `script.entity_missing`, `script.component_present`, `script.component_missing`, `script.single_count`, `script.event_reserved`, `script.bad_data` | Run | A host call refused its arguments (script-host.md 5.3 to 5.5, 5.8) |
 | `script.restricted`, `script.undeclared_code` | Run | An intent executor called what its restricted context lacks, or rejected with a code the game does not declare for `Fail` (script-host.md 5.5) |
 | `script.write_not_finite`, `script.write_not_integer`, `script.write_out_of_range`, `script.write_type`, `script.write_too_long` | Run, WriteBack | script-host.md 6 |
+| `script.write_not_held` | Run, WriteBack | A component's slot rule refused a value its flat form cannot hold, naming the field (script-host.md 7.2) |
 | `script.budget_exceeded`, `script.call_depth` | Run, Load | 4.1, 4.3 |
 | `script.out_of_memory`, `script.stack_overflow` | Run, Load | Faults (4.3) |
 | `script.async_work` | Run | Jobs were pending after the call |

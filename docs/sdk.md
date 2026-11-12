@@ -134,6 +134,47 @@ Writes apply when `run` returns (none if it throws); `get`/`has`/`exists` see th
 `ctx.tick`, `ctx.dt`, `ctx.time`; `Math.random()` is the system's stream. Events: declare
 `events: ["crate."]`, read `ctx.events`.
 
+## Rigid bodies
+
+An entity with a `Transform` and a `Collider` has a body in the solver: fixed without a `RigidBody`,
+moved by gravity, forces and contacts with `RigidBody: { kind: "Dynamic" }`. Give a moving body a
+`Velocity` (without one a rebuilt body restarts at rest) and an `ExternalForce` to push it. A body a
+script spawns is built and stepped in that same tick.
+
+```ts
+const ball = ctx.world.spawn({
+    Transform: { position: { y: 2 } }, Velocity: {}, ExternalForce: {},
+    RigidBody: { kind: "Dynamic" },
+    Collider: { kind: "Ball", radius: 0.2, density: 500 },
+});
+ctx.world.set(ball, "Collider", { friction: 0.9, restitution: 0.3 });
+ctx.world.set(ball, "ExternalForce", { force: { y: 40 } });  // newtons, over this tick's step
+// columns of a query with: ["RigidBody", "ExternalForce"]
+bodies.cols.RigidBody.gravity_scale[r] = 0;
+bodies.cols.ExternalForce.force.x[r] += 12;          // add: other rules push the body too
+bodies.cols.ExternalForce.force.x[r] += 6 / ctx.dt;  // an impulse of 6 N s
+```
+
+- Shapes: `kind: "Ball"` takes `radius`, `"Cuboid"` takes `half_extents`, `"Capsule"` (along +y)
+  takes `radius` and `half_height`. Hulls, meshes, compounds and heightfields are scene data: a
+  script reads their `kind` with sizes of 0 and changes their friction and restitution. The scene's
+  `"shape": {"Ball": {"radius": 0.2}}` is `kind` and `radius` here.
+- Mass comes from exactly one place: `density` on a ball, cuboid or capsule, or the `RigidBody`'s
+  `mass_kg` with `inertia` (and `center_of_mass`); each reads 0 when the other gives the mass. A
+  dynamic body with neither or both, or a size of 0, is not built: no throw and no halt, but
+  `physics.step` reports `sim.body_invalid`, `sim.collider_invalid` or `sim.collider_density` with
+  the entity every tick (`amoris step`, `amoris logs`) until a write mends it.
+- Pushing: `ExternalForce` is applied by this tick's step and is zero after it, so add to it in
+  every tick you push. `torque` is about the centre of mass; a fixed body drops both. For a known
+  change of speed write `Velocity`.
+- Tuning: a change to `RigidBody` or `Collider` rebuilds the body in that tick's step. Its pose and
+  `Velocity` are kept; its contacts end and begin again. Change them on events, not every tick.
+- Contacts arrive a tick later: declare `events: ["physics."]` and read `physics.contact_began` and
+  `physics.contact_ended` from `ctx.events`, `subject` the lower id, `data.other` the other.
+- Limits: no continuous collision detection, so a small fast body passes through a thin one (keep
+  `ctx.physics.sweep` for bullets); no joints, sensors or kinematic bodies; a `Walker` stands on
+  fixed colliders only, and dynamic bodies neither block nor push it.
+
 ## Block volumes
 
 A `Voxels` entity holds a world of blocks in 16 x 16 x 16 chunks with a palette (index 0 is air);
@@ -232,6 +273,7 @@ done_event = "course.finished"   # emitting it ends the episode; its data are th
 | queries in a `const` | `Type 'string' is not assignable to type 'ComponentName'.` (add `as const`) |
 | `crew.take[r] = 5` | `Type '5' is not assignable to type '0 \| (number & ...)'` (an `Entity`) |
 | `tally.taken[r] = n / 2` | at run time: `script.write_not_integer` |
+| `Collider: { shape: "Ball" }`; `set(e, "Collider", { radius: 1 })` on a Cuboid | `'shape' does not exist in type 'Patch<...>'`; at run time: `script.write_not_held` |
 | a component not in `game({components})` | `'"Cargo"' is not assignable to parameter of type 'ComponentName'.` |
 
 Runtime errors name the TypeScript file and line (`amoris logs`).

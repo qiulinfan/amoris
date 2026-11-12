@@ -980,7 +980,9 @@ step can confirm it or change the layout.
    scripts. The `ScriptComponent` derive (script-host.md 7.2) replaces the hand-written functions
    when it lands in a crate physics may depend on. The same module holds the JSON forms of every
    engine component for scenes and `world_edit`, through `bevy_ecs`'s typed access, hence `bevy_ecs`
-   in the runtime (6).
+   in the runtime (6). The runtime also gives `RigidBody`, `Collider` and `ExternalForce` schemas
+   (2026-11-12; `crates/amoris-runtime/src/engine/bodies.rs`), the first whose Rust forms are not
+   flat (script-host.md 7.2).
 10. **Slice 1: what `amoris-app` links.** `amoris-app` links `amoris-runtime` (features `thread` and
     `transpile`), `amoris-check` (feature `native`, which turns on the runtime's `transpile` to read
     projects from disk), `amoris-link`, `amoris-sim` and `amoris-contract`; it does not link
