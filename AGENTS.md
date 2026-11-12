@@ -44,7 +44,7 @@ it are charter 5.4.
   `sailing-course`, `anim`, `town-walk`, `windward`, `emberlight`, `wellspring`, `thornkeep` and the six water games with a README (`pool-party`,
   `river-falls`, `surf-beach`, `water-pool`, `water-storm`, `water-valley`).
   `tests/fixtures/`: projects only tests and checks read: the checks' negative controls, the SDK's
-  type test, and `scenes/`, the scenes that tests, checks and measurement tools read (eight
+  type test, `intents/errand` (a TypeScript intent and executor under the four checks), and `scenes/`, the scenes that tests, checks and measurement tools read (eight
   `water-*` scenes, `gi-room`, `pt-lab`, `hierarchy`). xtask runs every `samples/*/check.toml` and `tests/fixtures/**/check.toml`.
 - `bench/`: benchmark workloads and comparison harnesses (`agent-dev/`, `physics/`, `rules/`,
   `web/threejs_cubes.html`).
