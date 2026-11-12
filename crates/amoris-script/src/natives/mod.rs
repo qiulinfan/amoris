@@ -106,6 +106,8 @@ const NATIVES: &[(&str, Native, bool)] = &[
     ("animSocket", anim::socket, false),
     ("animWeight", anim::weight, false),
     ("animSetWeight", anim::set_weight, true),
+    ("animIk", anim::ik, false),
+    ("animSetIk", anim::set_ik, true),
     ("physicsSweep", physics::sweep, false),
     ("physicsSphere", physics::sphere, false),
     ("waterRemove", water::remove, true),

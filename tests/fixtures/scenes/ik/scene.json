@@ -1,0 +1,537 @@
+{
+ "format": "amoris-scene",
+ "version": 1,
+ "entities": [
+  {
+   "name": "Sun",
+   "components": {
+    "Transform": {
+     "position": [
+      0,
+      20,
+      0
+     ],
+     "rotation": [
+      -0.3826834,
+      0.0,
+      0.0,
+      0.9238795
+     ]
+    },
+    "Light": {
+     "kind": "directional",
+     "intensity": 3.0,
+     "shadows": true
+    }
+   }
+  },
+  {
+   "name": "Floor",
+   "components": {
+    "Transform": {
+     "position": [
+      0.0,
+      -0.25,
+      0.0
+     ],
+     "rotation": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ]
+    },
+    "RigidBody": {
+     "kind": "Fixed"
+    },
+    "Collider": {
+     "shape": {
+      "Cuboid": {
+       "half_extents": [
+        8.0,
+        0.25,
+        8.0
+       ]
+      }
+     }
+    },
+    "Model": {
+     "mesh": "cube",
+     "scale": [
+      16.0,
+      0.5,
+      16.0
+     ],
+     "color": [
+      0.55,
+      0.55,
+      0.5,
+      1.0
+     ],
+     "roughness": 0.9
+    }
+   }
+  },
+  {
+   "name": "Slope",
+   "components": {
+    "Transform": {
+     "position": [
+      -3.935295239,
+      0.058518543,
+      0.0
+     ],
+     "rotation": [
+      0.0,
+      0.0,
+      0.13052619222,
+      0.991444861374
+     ]
+    },
+    "RigidBody": {
+     "kind": "Fixed"
+    },
+    "Collider": {
+     "shape": {
+      "Cuboid": {
+       "half_extents": [
+        1.5,
+        0.25,
+        1.5
+       ]
+      }
+     }
+    },
+    "Model": {
+     "mesh": "cube",
+     "scale": [
+      3.0,
+      0.5,
+      3.0
+     ],
+     "color": [
+      0.5,
+      0.6,
+      0.45,
+      1.0
+     ],
+     "roughness": 0.9
+    }
+   }
+  },
+  {
+   "name": "Step",
+   "components": {
+    "Transform": {
+     "position": [
+      1.0,
+      0.1,
+      0.0
+     ],
+     "rotation": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ]
+    },
+    "RigidBody": {
+     "kind": "Fixed"
+    },
+    "Collider": {
+     "shape": {
+      "Cuboid": {
+       "half_extents": [
+        1.0,
+        0.1,
+        1.5
+       ]
+      }
+     }
+    },
+    "Model": {
+     "mesh": "cube",
+     "scale": [
+      2.0,
+      0.2,
+      3.0
+     ],
+     "color": [
+      0.6,
+      0.5,
+      0.45,
+      1.0
+     ],
+     "roughness": 0.9
+    }
+   }
+  },
+  {
+   "name": "Stair1",
+   "components": {
+    "Transform": {
+     "position": [
+      4.0,
+      0.075,
+      -2.6
+     ],
+     "rotation": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ]
+    },
+    "RigidBody": {
+     "kind": "Fixed"
+    },
+    "Collider": {
+     "shape": {
+      "Cuboid": {
+       "half_extents": [
+        1.0,
+        0.075,
+        3.4
+       ]
+      }
+     }
+    },
+    "Model": {
+     "mesh": "cube",
+     "scale": [
+      2.0,
+      0.15,
+      6.8
+     ],
+     "color": [
+      0.5,
+      0.5,
+      0.6,
+      1.0
+     ],
+     "roughness": 0.9
+    }
+   }
+  },
+  {
+   "name": "Stair2",
+   "components": {
+    "Transform": {
+     "position": [
+      4.0,
+      0.15,
+      -2.8
+     ],
+     "rotation": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ]
+    },
+    "RigidBody": {
+     "kind": "Fixed"
+    },
+    "Collider": {
+     "shape": {
+      "Cuboid": {
+       "half_extents": [
+        1.0,
+        0.15,
+        3.2
+       ]
+      }
+     }
+    },
+    "Model": {
+     "mesh": "cube",
+     "scale": [
+      2.0,
+      0.3,
+      6.4
+     ],
+     "color": [
+      0.5,
+      0.5,
+      0.6,
+      1.0
+     ],
+     "roughness": 0.9
+    }
+   }
+  },
+  {
+   "name": "Stair3",
+   "components": {
+    "Transform": {
+     "position": [
+      4.0,
+      0.225,
+      -3.0
+     ],
+     "rotation": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ]
+    },
+    "RigidBody": {
+     "kind": "Fixed"
+    },
+    "Collider": {
+     "shape": {
+      "Cuboid": {
+       "half_extents": [
+        1.0,
+        0.22499999999999998,
+        3.0
+       ]
+      }
+     }
+    },
+    "Model": {
+     "mesh": "cube",
+     "scale": [
+      2.0,
+      0.44999999999999996,
+      6.0
+     ],
+     "color": [
+      0.5,
+      0.5,
+      0.6,
+      1.0
+     ],
+     "roughness": 0.9
+    }
+   }
+  },
+  {
+   "name": "Stair4",
+   "components": {
+    "Transform": {
+     "position": [
+      4.0,
+      0.3,
+      -3.2
+     ],
+     "rotation": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ]
+    },
+    "RigidBody": {
+     "kind": "Fixed"
+    },
+    "Collider": {
+     "shape": {
+      "Cuboid": {
+       "half_extents": [
+        1.0,
+        0.3,
+        2.8
+       ]
+      }
+     }
+    },
+    "Model": {
+     "mesh": "cube",
+     "scale": [
+      2.0,
+      0.6,
+      5.6
+     ],
+     "color": [
+      0.5,
+      0.5,
+      0.6,
+      1.0
+     ],
+     "roughness": 0.9
+    }
+   }
+  },
+  {
+   "name": "SlopeWalker",
+   "components": {
+    "Transform": {
+     "position": [
+      -4.0,
+      1.9735898384862247,
+      0.0
+     ]
+    },
+    "Walker": {
+     "yaw": 0.0,
+     "eye_m": 1.6,
+     "height_m": 1.8,
+     "half_width_m": 0.2,
+     "speed_mps": 1.2,
+     "run_mps": 3.0,
+     "jump_mps": 0.0,
+     "gravity_mps2": 20.0
+    }
+   }
+  },
+  {
+   "name": "SlopeWalkerBody",
+   "components": {
+    "Transform": {
+     "position": [
+      -4.0,
+      0.37358983848622457,
+      0.0
+     ],
+     "rotation": [
+      0.0,
+      1.0,
+      0.0,
+      0.0
+     ]
+    },
+    "Model": {
+     "mesh": "models/figure.gltf"
+    },
+    "AnimGraph": {
+     "graph": "anim/figure.anim.json"
+    },
+    "Avatar": {
+     "walker": 9,
+     "turn_rate": 6.0,
+     "yaw": 0.0,
+     "last": [
+      -4.0,
+      0.37358983848622457,
+      0.0
+     ]
+    }
+   }
+  },
+  {
+   "name": "StepWalker",
+   "components": {
+    "Transform": {
+     "position": [
+      0.05,
+      1.82,
+      0.0
+     ]
+    },
+    "Walker": {
+     "yaw": 0.0,
+     "eye_m": 1.6,
+     "height_m": 1.8,
+     "half_width_m": 0.2,
+     "speed_mps": 1.2,
+     "run_mps": 3.0,
+     "jump_mps": 0.0,
+     "gravity_mps2": 20.0
+    }
+   }
+  },
+  {
+   "name": "StepWalkerBody",
+   "components": {
+    "Transform": {
+     "position": [
+      0.05,
+      0.22,
+      0.0
+     ],
+     "rotation": [
+      0.0,
+      1.0,
+      0.0,
+      0.0
+     ]
+    },
+    "Model": {
+     "mesh": "models/figure.gltf"
+    },
+    "AnimGraph": {
+     "graph": "anim/figure.anim.json"
+    },
+    "Avatar": {
+     "walker": 11,
+     "turn_rate": 6.0,
+     "yaw": 0.0,
+     "last": [
+      0.05,
+      0.22,
+      0.0
+     ]
+    }
+   }
+  },
+  {
+   "name": "StairWalker",
+   "components": {
+    "Transform": {
+     "position": [
+      4.0,
+      1.62,
+      2.5
+     ]
+    },
+    "Walker": {
+     "yaw": 0.0,
+     "eye_m": 1.6,
+     "height_m": 1.8,
+     "half_width_m": 0.2,
+     "speed_mps": 1.2,
+     "run_mps": 3.0,
+     "jump_mps": 0.0,
+     "gravity_mps2": 20.0
+    }
+   }
+  },
+  {
+   "name": "StairWalkerBody",
+   "components": {
+    "Transform": {
+     "position": [
+      4.0,
+      0.02,
+      2.5
+     ],
+     "rotation": [
+      0.0,
+      1.0,
+      0.0,
+      0.0
+     ]
+    },
+    "Model": {
+     "mesh": "models/figure.gltf"
+    },
+    "AnimGraph": {
+     "graph": "anim/figure.anim.json"
+    },
+    "Avatar": {
+     "walker": 13,
+     "turn_rate": 6.0,
+     "yaw": 0.0,
+     "last": [
+      4.0,
+      0.02,
+      2.5
+     ]
+    }
+   }
+  },
+  {
+   "name": "Gauge",
+   "components": {
+    "Gauge": {
+     "slope": 10,
+     "step": 12,
+     "stairs": 13,
+     "climber": 14
+    }
+   }
+  }
+ ]
+}

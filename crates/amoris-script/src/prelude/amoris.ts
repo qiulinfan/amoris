@@ -427,6 +427,20 @@ export interface AnimAccess {
     /** Holds every morph target named `target` at `weight` from the next evaluation on, in place
      * of what the graph gives; null gives it back to the graph. */
     setWeight(e: Entity, target: string, weight: number | null): void;
+    /** A script's goal for the graph's IK node `node` as set (this call's own over it), or null
+     * (docs/spec/animation.md 6a). */
+    ik(e: Entity, node: string): AnimIkGoal | null;
+    /** Sets the goal of the graph's IK node `node` from the next evaluation on: a two-bone tip or a
+     * look-at goes toward `target` (a point in the world), a two-bone bend toward `pole`, and
+     * `weight` (default 1) multiplies the node's own (0 turns a feet node off); null releases it. */
+    setIk(e: Entity, node: string, goal: AnimIkGoal | null): void;
+}
+
+/** A goal of an animation graph's IK node (docs/spec/animation.md 6a). */
+export interface AnimIkGoal {
+    readonly target?: Triple | null;
+    readonly pole?: Triple | null;
+    readonly weight?: number;
 }
 
 /** Where a ray met a block (docs/spec/voxels.md 4). */
@@ -632,6 +646,11 @@ const anim: AnimAccess = Object.freeze({
     weight: (e: Entity, target: string): number | null => host.animWeight(e, target),
     setWeight: (e: Entity, target: string, weight: number | null): void => {
         host.animSetWeight(e, target, weight);
+    },
+    ik: (e: Entity, node: string): AnimIkGoal | null => host.animIk(e, node),
+    setIk: (e: Entity, node: string, goal: AnimIkGoal | null): void => {
+        if (goal === null) host.animSetIk(e, node, true, null, null, 1);
+        else host.animSetIk(e, node, false, goal.target ?? null, goal.pole ?? null, goal.weight ?? 1);
     },
 });
 

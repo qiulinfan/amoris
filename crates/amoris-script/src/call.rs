@@ -204,6 +204,12 @@ pub(crate) enum Command {
         name: String,
         weight: Option<f64>,
     },
+    /// An IK node's goal by the node's name, or its release (animation.md 6a).
+    Ik {
+        id: EntityId,
+        goal: amoris_assets::anim::IkGoal,
+        release: bool,
+    },
 }
 
 /// A column handed to the script, kept to compare after the call.
@@ -388,6 +394,9 @@ pub(crate) fn apply(
             }
             Command::Morph { id, name, weight } => {
                 crate::natives::anim::apply_weight(world, id, name, weight);
+            }
+            Command::Ik { id, goal, release } => {
+                crate::natives::anim::apply_ik(world, id, goal, release);
             }
             Command::Water { id, column, m3 } => {
                 if let Some(e) = entity::entity(world, id)

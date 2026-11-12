@@ -1,0 +1,9 @@
+# Inverse kinematics (docs/spec/animation.md 6a): figures whose graph places their feet on a slope,
+# astride a step and up a flight of stairs, one of them reaching with a hand and turning its head
+# toward scripts' goals, through the charter's checks.
+name = "ik"
+rate = 60
+seed = 1
+
+[animation]
+graphs = ["anim/figure.anim.json"]

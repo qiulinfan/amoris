@@ -33,6 +33,7 @@ pub mod body;
 mod cache;
 mod forces;
 pub mod geom;
+mod ik;
 pub mod joints;
 pub mod nav;
 pub mod probe;
@@ -246,6 +247,7 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
         always,
         avatar::avatars,
     )?;
+    sim.add_system("anim.ik", TickPhase::Physics, always, ik::ik)?;
     sim.add_system("anim.attach", TickPhase::Finish, always, avatar::attach)?;
     sim.add_system("camera.rig", TickPhase::Finish, always, avatar::rigs)?;
     sim.add_system(

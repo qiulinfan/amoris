@@ -270,11 +270,14 @@ leaves its pose, its sockets and its state alone, and no entity of it gets an `A
 ```json
 "ik": [
   {"name": "feet", "feet": {"pelvis": "pelvis", "legs": ["foot_l", "foot_r"]}},
-  {"name": "hand_r", "two_bone": {"tip": "hand_r"}, "weight": "reach"},
   {"name": "look", "look_at": {"joints": ["chest", "neck", "head"], "axis": [0, 0, 1],
-                               "limit_deg": 70}}
+                               "limit_deg": 70}},
+  {"name": "hand_r", "two_bone": {"tip": "hand_r"}, "weight": "reach"}
 ]
 ```
+
+Each node works on the pose the nodes before it left, so a node that turns the chest comes before
+one that places a hand hanging from it (else the hand is carried off its target).
 
 Every node has a unique `name` and a `weight`: a number (default 1) or the name of a graph
 parameter, either clamped to 0..1. Its effect is that weight times its goal's (below). A node whose
@@ -308,15 +311,15 @@ each foot, a ray goes down from `probe_up_m` above the body's origin at the anim
 `probe_up_m + probe_down_m` long, against the fixed colliders (terrain, the level; not sensors, not
 moving bodies). The hit's height over the body's origin is that foot's ground (no hit: 0, the foot
 keeps its animated height), kept in `AnimIk.ground_m` and moved toward a new value by `rate_mps` at
-most (an entity's first tick takes it at once). The pelvis goes down by the lowest ground, clamped
-to `-max_drop_m..max_raise_m`, so the lower foot reaches down and the higher one bends; each foot is
-then brought by two-bone IK to its animated place raised by its ground, and turned by the shortest
-rotation from up to its hit's normal, clamped to `tilt_deg`. Its effect fades with speed: the node's
-weight times the goal's, times 1 at `still_mps` or slower falling linearly to `moving_weight` at
-`moving_mps` (the `Avatar`'s measured `speed`), times 0 while the avatar's walker is not grounded;
-`AnimIk.weight` moves toward that by `dt / blend_s` a tick, so a landing or a stop fades in. A
-graph's feet node is on by its declaration; an entity that is no `Avatar` places its feet as if
-standing still.
+most. The pelvis goes down by the lowest ground, clamped to `-max_drop_m..max_raise_m`, so the lower
+foot reaches down and the higher one bends; each foot is then brought by two-bone IK to its animated
+place raised by its ground, and turned by the shortest rotation from up to its hit's normal, clamped
+to `tilt_deg`. Its effect fades with speed: the node's weight times the goal's, times 1 at
+`still_mps` or slower falling linearly to `moving_weight` at `moving_mps` (the `Avatar`'s measured
+`speed`), times 0 while the avatar's walker is not grounded; `AnimIk.weight` moves toward that by
+`dt / blend_s` a tick, so a landing or a stop fades in (an entity's first tick takes the weight and
+the grounds at once). A graph's feet node is on by its declaration; an entity that is no `Avatar`
+places its feet as if standing still.
 
 **Goals and scripts.** `AnimIk` (persisted, version 1) holds `goals`, by node name, each an optional
 `target` and `pole` (points in the world) and a `weight` (default 1), and the feet's engine-written

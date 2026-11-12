@@ -180,3 +180,40 @@ impl Default for Attach {
         }
     }
 }
+
+/// A script's goal for one IK node (animation.md 6a): points in the world and a weight.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct IkGoal {
+    /// The IK node's name in the graph.
+    pub node: String,
+    /// Where a two-bone tip reaches or a look-at looks; none leaves those nodes idle.
+    pub target: Option<[f64; 3]>,
+    /// A point the two-bone bend turns toward.
+    pub pole: Option<[f64; 3]>,
+    /// Multiplies the node's own weight, 0 to 1.
+    pub weight: f64,
+}
+
+impl Default for IkGoal {
+    fn default() -> Self {
+        IkGoal {
+            node: String::new(),
+            target: None,
+            pole: None,
+            weight: 1.0,
+        }
+    }
+}
+
+/// An animated body's inverse kinematics (animation.md 6a): scripts' goals by node, and the feet
+/// node's state (engine-written).
+#[derive(Component, Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct AnimIk {
+    pub goals: Vec<IkGoal>,
+    /// The feet node's weight now, moving toward what its speed and grounding want.
+    pub weight: f64,
+    /// Each leg's ground over the body's origin, metres, as the feet follow it.
+    pub ground_m: Vec<f64>,
+}

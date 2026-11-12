@@ -139,11 +139,11 @@ fn body_rotation(yaw: f64) -> [f64; 4] {
     yaw_q(yaw + std::f64::consts::PI)
 }
 
-fn f32x3(v: [f64; 3]) -> [f32; 3] {
+pub(crate) fn f32x3(v: [f64; 3]) -> [f32; 3] {
     [geom::f32_of(v[0]), geom::f32_of(v[1]), geom::f32_of(v[2])]
 }
 
-fn f32x4(v: [f64; 4]) -> [f32; 4] {
+pub(crate) fn f32x4(v: [f64; 4]) -> [f32; 4] {
     [
         geom::f32_of(v[0]),
         geom::f32_of(v[1]),
@@ -153,7 +153,7 @@ fn f32x4(v: [f64; 4]) -> [f32; 4] {
 }
 
 /// The entity's frame: its transform and its model's scale.
-fn frame(tf: &Transform, scale: [f64; 3]) -> Xform {
+pub(crate) fn frame(tf: &Transform, scale: [f64; 3]) -> Xform {
     Xform {
         t: f32x3(tf.position),
         r: f32x4(tf.rotation),

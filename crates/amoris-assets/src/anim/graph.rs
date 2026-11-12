@@ -11,6 +11,7 @@ use serde_json::Value;
 use amoris_sim::math::{max, min};
 
 use super::clip::{Bound, ClipSet, Skeleton};
+use super::ik::{IkDef, IkNode};
 use super::math::{self, V3, Xform};
 use super::state::{AnimParam, AnimState, LayerState, SlotState};
 
@@ -121,6 +122,9 @@ pub struct GraphDef {
     pub montages: Vec<MontageDef>,
     /// Joints whose place the simulation keeps each tick (`AnimState.sockets`).
     pub sockets: Vec<String>,
+    /// The IK nodes that bend the pose after the layers, in order (animation.md 6a).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ik: Vec<IkDef>,
 }
 
 fn num(v: &Value, what: &str) -> Result<f64, String> {
@@ -340,6 +344,9 @@ impl GraphDef {
                 });
             }
         }
+        if let Some(ik) = o.get("ik") {
+            g.ik = IkDef::parse_list(ik, &g.params)?;
+        }
         Ok(g)
     }
 
@@ -516,6 +523,8 @@ pub struct Rig {
     /// The root's parent in the file's space at rest (root motion is taken in that space).
     root_parent: Xform,
     sockets: Vec<(String, usize)>,
+    /// The IK nodes bound to the skeleton (animation.md 6a).
+    ik: Vec<IkNode>,
 }
 
 impl Rig {
@@ -605,6 +614,11 @@ impl Rig {
             sockets.push((s.clone(), j));
         }
         let morph_at = skeleton.morph_offsets();
+        let ik = def
+            .ik
+            .iter()
+            .map(|d| IkNode::bind(d, &skeleton))
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(Rig {
             def,
             skeleton,
@@ -616,6 +630,7 @@ impl Rig {
             root,
             root_parent,
             sockets,
+            ik,
         })
     }
 
@@ -703,6 +718,11 @@ impl Rig {
             .iter()
             .enumerate()
             .flat_map(|(j, x)| x.targets.iter().map(move |n| (n.as_str(), j)))
+    }
+
+    /// The graph's IK nodes, in order (animation.md 6a); empty for most graphs.
+    pub fn ik(&self) -> &[IkNode] {
+        &self.ik
     }
 
     /// The model-space transforms of the graph's sockets for a pose.
