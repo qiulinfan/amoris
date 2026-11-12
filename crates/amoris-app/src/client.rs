@@ -339,6 +339,11 @@ fn post_call(
 ) -> Result<Value, Problem> {
     let body = body.to_string();
     let failed = |e: ureq::Error| match e {
+        // No connection within the agent's 2 s is no host: Windows takes about 2 s to refuse a
+        // port nothing listens on (it retries the SYN), where other systems refuse at once.
+        ureq::Error::Timeout(ureq::Timeout::Resolve | ureq::Timeout::Connect) => {
+            unreachable(url, "nothing accepted the connection within 2 s")
+        }
         ureq::Error::Timeout(_) => timed_out(url, method, timeout),
         e => unreachable(url, &e.to_string()),
     };
