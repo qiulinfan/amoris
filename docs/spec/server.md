@@ -643,11 +643,12 @@ agent must never choose what the host runs):
 ```
 
 `name` is `^[a-z0-9][a-z0-9_.-]*$`, unique; `command` is the program and its arguments, run without
-a shell; `label` names the sessions (default: the name); `env` adds variables. The file is strict,
-and a refused file ends `amoris serve` with exit 1 and
-`host.agents_invalid {file, reason, problem?}`. The engine holds no model, key or credential: the
-program inherits the environment `amoris serve` was started with, and what model it runs and with
-whose key is the program's and its owner's.
+a shell (on Windows a program named without an extension is looked up with `PATHEXT`'s extensions,
+as `cmd.exe` would, so npm's `claude.cmd` is found by `claude`); `label` names the sessions
+(default: the name); `env` adds variables. The file is strict, and a refused file ends
+`amoris serve` with exit 1 and `host.agents_invalid {file, reason, problem?}`. The engine holds no
+model, key or credential: the program inherits the environment `amoris serve` was started with, and
+what model it runs and with whose key is the program's and its owner's.
 
 - `agent.session.agents {}` lists the programs by `name` and `label` (never their commands), with
   how many run and the limit (4).
@@ -659,16 +660,17 @@ whose key is the program's and its owner's.
   answer is the row with the program's `agent` and `pid`, never the handle. Each line the program
   writes (stdout, stderr; cut to 1,000 bytes) is a `message` event of the session with its
   `stream`, beside the host's own words on it (`stream: "host"`: started, stopping, the exit
-  status). The session closes when the program exits.
+  status as `exit status: N` on every platform). The session closes when the program exits.
 - The program reaches the host as that session: `POST /api/call {handle}` with the handle, or
   `amoris mcp --attach "$AMORIS_HOST"` (1), which, given `AMORIS_AGENT_SESSION` and
   `AMORIS_AGENT_HANDLE` and no `--seat`, calls as that session (with `AMORIS_AGENT_SEAT`'s player
   tool alone for a seat) and neither registers nor closes one. So an MCP client such as Claude
   Code, started with an MCP configuration that runs `amoris mcp --attach "$AMORIS_HOST"`, is a
   session the editor started, and its calls and edits are that session's.
-- `agent.session.stop {session}` kills the program (SIGKILL) and answers the row once the session
-  is closed (at most 5 s). `agent.session.close {session}` does not take a `launch` row: only a
-  stop or the program's exit ends it.
+- `agent.session.stop {session}` kills the program (SIGKILL; on Windows its process tree,
+  `taskkill /T /F`, since a `.cmd` program runs its real one as a child of `cmd.exe`) and answers
+  the row once the session is closed (at most 5 s). `agent.session.close {session}` does not take a
+  `launch` row: only a stop or the program's exit ends it.
 - Refusals: `host.no_agents` (the host has no agents file), `request.invalid_value` for a name the
   file does not register (with suggestions), `request.out_of_range` for a goal that is empty or
   longer than 4,000 characters, `session.limit_reached` past 4 programs, the game's `seat.unknown`,

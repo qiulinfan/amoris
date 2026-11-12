@@ -1065,16 +1065,10 @@ fn ended(url: &str, session: &str) -> Vec<Value> {
     panic!("{session} did not end: {:#?}", session_told(url, session));
 }
 
-/// The process owner registers agent programs (`amoris serve --agents`, server.md 3.7) and the
-/// editor starts one by name with a goal: a session of transport `launch`, opened before the
-/// program runs, whose environment names the host, the session's handle and the goal; its
-/// output lines are the session's `message` events, its calls through the handle are the
-/// session's, and the session closes when it exits or is stopped. `amoris mcp --attach` run by
-/// such a program calls as the session the host gave it.
-#[test]
-fn the_host_starts_a_registered_agent_program_as_a_session() {
-    let (handle, host) = start();
-    let bin = env!("CARGO_BIN_EXE_amoris");
+/// The test's agent programs as the owner of a Unix machine registers them: shell scripts, a
+/// sleeper and a program that is not there.
+#[cfg(not(windows))]
+fn programs(bin: &str) -> Value {
     let script = r#"echo "goal: $AMORIS_AGENT_GOAL"
 curl -s -X POST "$AMORIS_HOST/api/call" -H 'Content-Type: application/json' \
   -d "{\"id\":1,\"method\":\"status\",\"params\":{},\"handle\":\"$AMORIS_AGENT_HANDLE\"}" >/dev/null
@@ -1087,12 +1081,71 @@ echo "to stderr" >&2"#;
   '{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"player","arguments":{{"action":"session"}}}}}}'; sleep 3) \
   | "{bin}" mcp --attach "$AMORIS_HOST" >/dev/null"#
     );
-    let file = json!({"agents": [
+    json!([
         {"name": "scripted", "label": "a scripted agent", "command": ["/bin/sh", "-c", script]},
         {"name": "mcp", "command": ["/bin/sh", "-c", mcp]},
         {"name": "sleeper", "command": ["/bin/sleep", "30"]},
         {"name": "missing", "command": ["/no/such/program"]},
-    ]});
+    ])
+}
+
+/// The same programs as the owner of a Windows machine registers them: Windows PowerShell, which
+/// every Windows has, in place of the shell, curl and sleep. It hands its pipeline to a program
+/// only once the pipeline ends, so the bridge's stdin is held open through a process of its own.
+#[cfg(windows)]
+fn programs(bin: &str) -> Value {
+    let ps = |script: &str| {
+        json!([
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script
+        ])
+    };
+    let script = "$ProgressPreference = 'SilentlyContinue'; \
+        Write-Output ('goal: ' + $env:AMORIS_AGENT_GOAL); \
+        $body = ConvertTo-Json -Compress @{id = 1; method = 'status'; params = @{}; \
+                                           handle = $env:AMORIS_AGENT_HANDLE}; \
+        Invoke-RestMethod -Method Post -Uri ($env:AMORIS_HOST + '/api/call') \
+          -ContentType 'application/json' -Body $body | Out-Null; \
+        $seat = $env:AMORIS_AGENT_SEAT; if (-not $seat) { $seat = 'none' }; \
+        Write-Output ('seat: ' + $seat); \
+        [Console]::Error.WriteLine('to stderr')";
+    let lines = [
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"fake","version":"1"}}}"#,
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"player","arguments":{"action":"session"}}}"#,
+    ]
+    .map(|l| format!("'{l}'"))
+    .join(", ");
+    let mcp = format!(
+        "$p = New-Object System.Diagnostics.Process; $s = $p.StartInfo; $s.FileName = '{bin}'; \
+         $s.Arguments = 'mcp --attach ' + $env:AMORIS_HOST; $s.UseShellExecute = $false; \
+         $s.RedirectStandardInput = $true; $s.RedirectStandardOutput = $true; \
+         [void]$p.Start(); $out = $p.StandardOutput.ReadToEndAsync(); \
+         foreach ($l in @({lines})) {{ $p.StandardInput.WriteLine($l) }}; \
+         $p.StandardInput.Flush(); Start-Sleep 3; $p.StandardInput.Close(); $p.WaitForExit(); \
+         [void]$out.Result"
+    );
+    json!([
+        {"name": "scripted", "label": "a scripted agent", "command": ps(script)},
+        {"name": "mcp", "command": ps(&mcp)},
+        {"name": "sleeper", "command": ps("Start-Sleep 30")},
+        {"name": "missing", "command": ["/no/such/program"]},
+    ])
+}
+
+/// The process owner registers agent programs (`amoris serve --agents`, server.md 3.7) and the
+/// editor starts one by name with a goal: a session of transport `launch`, opened before the
+/// program runs, whose environment names the host, the session's handle and the goal; its
+/// output lines are the session's `message` events, its calls through the handle are the
+/// session's, and the session closes when it exits or is stopped. `amoris mcp --attach` run by
+/// such a program calls as the session the host gave it.
+#[test]
+fn the_host_starts_a_registered_agent_program_as_a_session() {
+    let (handle, host) = start();
+    let file = json!({"agents": programs(env!("CARGO_BIN_EXE_amoris"))});
     host.set_launchers(amoris_server::Launchers::parse(&file.to_string(), "test").unwrap());
     let rt = runtime();
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();

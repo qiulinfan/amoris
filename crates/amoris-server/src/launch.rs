@@ -209,6 +209,66 @@ fn cut(line: &str) -> String {
     format!("{}...", &line[..end])
 }
 
+/// The program to run for a command's first word, found as a shell finds it. On Windows a name
+/// without an extension is looked up with each of `PATHEXT`'s extensions (`.exe`, `.cmd`, ...), in
+/// the `PATH` the program is given, as `cmd.exe` does: the standard library's lookup adds `.exe`
+/// alone and would miss `claude.cmd`, which npm installs. Elsewhere, and for a name not found
+/// that way, the word as it is (whose failure to start is then the host's answer).
+fn program(first: &str, env: &BTreeMap<String, String>) -> std::path::PathBuf {
+    let given = std::path::PathBuf::from(first);
+    if !cfg!(windows) || given.extension().is_some() {
+        return given;
+    }
+    let var = |name: &str| {
+        env.iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| std::ffi::OsString::from(v))
+            .or_else(|| std::env::var_os(name))
+    };
+    let exts = var("PATHEXT")
+        .and_then(|e| e.into_string().ok())
+        .unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".to_owned());
+    let bare = given.components().count() == 1 && !given.has_root();
+    let dirs: Vec<std::path::PathBuf> = if bare {
+        var("PATH")
+            .map(|p| std::env::split_paths(&p).collect())
+            .unwrap_or_default()
+    } else {
+        vec![std::path::PathBuf::new()]
+    };
+    dirs.iter()
+        .flat_map(|d| {
+            exts.split(';')
+                .filter(|e| !e.is_empty())
+                .map(move |e| d.join(format!("{first}{e}")))
+        })
+        .find(|p| p.is_file())
+        .unwrap_or(given)
+}
+
+/// The host's words for a program's end: `exit status: N` on every platform (the standard
+/// library's Windows text is `exit code: N`), else how it ended (`signal: 9 (SIGKILL)`).
+fn exit_words(status: std::process::ExitStatus) -> String {
+    match status.code() {
+        Some(code) => format!("exit status: {code}"),
+        None => status.to_string(),
+    }
+}
+
+/// On Windows, ends the processes `child` started before it is killed itself: a `.cmd` program
+/// runs its real one as a child of `cmd.exe`, which would outlive a kill of `cmd.exe` and keep its
+/// output open. Elsewhere nothing: the program is killed alone (SIGKILL), as it was started.
+fn end_tree(child: &mut Child) {
+    if cfg!(windows) {
+        let _ = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &child.id().to_string()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
 impl Host {
     /// Registers the programs `agent.session.start` may run; once, before the host serves.
     pub fn set_launchers(&self, launchers: Launchers) {
@@ -313,7 +373,7 @@ impl Host {
             shared: false,
         });
         let id = opened.id.clone();
-        let mut cmd = Command::new(&launcher.command[0]);
+        let mut cmd = Command::new(program(&launcher.command[0], &launcher.env));
         cmd.args(&launcher.command[1..])
             .current_dir(&self.0.project)
             .stdin(Stdio::null())
@@ -397,7 +457,7 @@ impl Host {
             let status = loop {
                 let polled = child.lock().map(|mut c| c.try_wait());
                 match polled {
-                    Ok(Ok(Some(status))) => break status.to_string(),
+                    Ok(Ok(Some(status))) => break exit_words(status),
                     Ok(Ok(None)) => std::thread::sleep(Duration::from_millis(50)),
                     Ok(Err(e)) => break format!("lost: {e}"),
                     Err(_) => break "lost".to_owned(),
@@ -459,6 +519,7 @@ impl Host {
             },
         );
         if let Ok(mut c) = child.lock() {
+            end_tree(&mut c);
             let _ = c.kill();
         }
         let waited = std::time::Instant::now();
@@ -493,6 +554,28 @@ impl Host {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn a_bare_name_is_found_with_pathext_as_cmd_finds_it() {
+        let dir = std::env::temp_dir().join(format!("amoris-launch-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("agent.cmd"), "@echo hi\r\n").unwrap();
+        // The program's own PATH, as its `env` gives it, under any case.
+        let env = BTreeMap::from([("Path".to_owned(), dir.display().to_string())]);
+        let found = program("agent", &env);
+        assert!(
+            found
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&dir.join("agent.cmd").to_string_lossy()),
+            "{}",
+            found.display()
+        );
+        // A name with an extension, or one found nowhere, is left as it is.
+        assert_eq!(program("agent.cmd", &env), Path::new("agent.cmd"));
+        assert_eq!(program("nothing-here", &env), Path::new("nothing-here"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn an_agents_file_is_read_strictly() {
