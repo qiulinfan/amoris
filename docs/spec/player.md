@@ -203,6 +203,7 @@ carries `commit` yet (section 10).
 | `player.describe {entity}` / `{part?, name?}` | Read | one entity as the seat knows it (facts, affordances with why not, latest events); or the game definition for the caller within 2000 tokens (names only beyond, with the call for each part) |
 | `player.observe {budget_tokens?, projection?, since?}` | Read | instruments, active intents, the pending decision, ranked percepts, events since |
 | `player.nearby`, `player.events`, `player.affordances`, `player.intents` | Read | perception.md and actions.md's answers |
+| `player.blocks {seat?, range_m?, budget_tokens?, projection?}` | Read | the block cells the seat's eye sees, nearest first within budget, and the cell it looks at (voxels.md 6.1; the engine's, outside the contract) |
 | `player.act` | Write | `ActResult` with the events delta since the seat's push cursor |
 | `player.wait {until?, ticks?, max_wall_ms?, observe?}` | Control | time.md's `TimeResult` with the events delta (a developer's carries the world hash, a player's never) |
 | `player.continue` | Control | answers the pending decision |
@@ -245,9 +246,9 @@ no perception to keep it to. The web form plays a game with players through `pla
 The commands are projected like every catalog command:
 
 - **MCP**: the `player` tool,
-  `{action: session|describe|observe|nearby|events|affordances|intents|act|wait|continue|pacing|fork|discard|branches, ...}`.
-  Reads an LLM reads (observe, nearby, events, an entity described) come as the text projection
-  unless the call asks for JSON, sent as the text itself. A session made with
+  `{action: session|describe|observe|nearby|blocks|events|affordances|intents|act|wait|continue|pacing|fork|discard|branches, ...}`.
+  Reads an LLM reads (observe, nearby, blocks, events, an entity described) come as the text
+  projection unless the call asks for JSON, sent as the text itself. A session made with
   `amoris mcp <project> --seat skipper` (against a running host or in process) calls as the seat's
   player, lists the `player` tool alone, refuses the others with `permission.denied`, and gets
   player instructions.

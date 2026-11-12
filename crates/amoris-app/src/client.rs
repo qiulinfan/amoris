@@ -879,7 +879,7 @@ fn request(cmd: &str, args: &Args) -> Result<(String, Value), Problem> {
 }
 
 /// The `player` tool's actions (`amoris-mcp`'s, the `player.*` catalog methods).
-const PLAYER_ACTIONS: [&str; 14] = amoris_mcp::tools::PLAYER_ACTIONS;
+const PLAYER_ACTIONS: [&str; 15] = amoris_mcp::tools::PLAYER_ACTIONS;
 
 /// `amoris player <action> ['<json params>'] [--seat s]` (docs/spec/player.md): a `player.*`
 /// method. Observations, nearby percepts, events and a described entity come as their text
@@ -908,7 +908,7 @@ fn player_request(args: &Args) -> Result<(String, Value), Problem> {
         },
         None => Map::new(),
     };
-    let reads_text = matches!(action, "observe" | "nearby" | "events")
+    let reads_text = matches!(action, "observe" | "nearby" | "blocks" | "events")
         || (action == "describe" && p.contains_key("entity"));
     if reads_text && !args.has("json") && !p.contains_key("projection") {
         p.insert("projection".into(), json!("text"));

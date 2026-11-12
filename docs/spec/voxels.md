@@ -29,7 +29,7 @@ In this slice:
 - The native window driving the seat from the keyboard and mouse (8).
 - The browser (9) and the checks (10).
 
-Not in this slice (11): perceiving blocks as an agent, block entities with state (chests, doors),
+Not in this slice (11): block entities with state (chests, doors),
 light propagation and smooth lighting, fluids that flow, rotated or scaled volumes, more than 255
 block kinds in a volume, editing a volume in the editor beyond its fields.
 
@@ -249,6 +249,36 @@ the entity with `Observer {seat: "player"}` and `Walker`.
 - Every `player.act` that sets these is recorded and replayed (player.md, replay.md): a session's
   block edits replay tick for tick.
 
+### 6.1 What a seat sees of the blocks
+
+An agent perceives the block world through `player.blocks {seat?, range_m?, budget_tokens?,
+projection?}` (2026-11-12; `amoris_runtime::blocks`), a player command and a Read, which settles
+open question 1 (11) with the first of its two answers: the surface cells the seat's eye sees.
+
+- **The seat's sight decides.** Rays leave the eye (the body's `Transform` and the profile's
+  `sight.eye_m`; a walker's `Transform` is its eye, 5.2) over a grid of 32 columns across the
+  profile's `fov_deg` and 12 rows across 60 degrees up and down, turned by the body's rotation (+y
+  up, -z forward), at most `range_m` (default 16) and never past the sight's `range_m` or 32 m. A
+  blind profile casts no ray. Each ray stops at the first cell of any volume that is not air
+  (`Voxels::raycast`, nearest volume first), so a cell behind another, the floor under a floor's
+  top layer, is never seen: occlusion holds by construction, whatever the profile's `occlusion`
+  says of entities. A liquid stops a ray as a solid does. One more ray along the look gives
+  `looking_at`, the cell a walker's hands would meet first (blockcraft reaches 5 m of it).
+- **The answer.**
+  `{tick, seat, eye, look, range_m, rays, looking_at?, blocks: [{block, at, face, distance_m}], omitted?, tokens}`:
+  each cell seen once, at the distance of the nearest ray that met it, nearest first (ties by volume
+  and cell), `at` the cell's centre in world metres and `face` the face a ray entered by (`+y` for a
+  top); numbers to two decimals. The budget (default 600 tokens, 50 to
+  8000) keeps the nearest that fit and counts the rest in `omitted`, by the contract's estimate
+  (`ceil(bytes / 4)`); a head that does not fit is `perception.budget_too_small`. The text
+  projection, the default over MCP and the CLI, writes a head line, `looking_at` and a line `block
+  x,y,z face distance` per cell, then `omitted n farther`.
+- **Roles.** A player reads its own seat (another is `seat.not_yours`); a developer names one, or
+  follows the only seat. It changes no hash, journal or random stream, and the same world, seat and
+  parameters give the same bytes (the deterministic math library).
+- **Not built**: blocks in `player.observe` (an agent asks for them beside it), a column-height
+  projection, block changes as perceived events, and seeing through cross-shaped plants.
+
 ## 7. Rendering
 
 ### 7.1 The feed
@@ -338,8 +368,8 @@ draw paths are checked under the WebGPU baseline with the existing draw-path too
 
 ## 11. Open questions
 
-1. How an agent perceives a block world: an instrument listing the visible surface cells within
-   range, or a projection of the column heights; the walker's own instruments come first.
+1. (Settled 2026-11-12, 6.1.) How an agent perceives a block world: `player.blocks` lists the
+   surface cells the seat's eye sees within range; a projection of the column heights is not built.
 2. (Settled 2026-10-17.) The worker's per-tick snapshot with a large volume: 0.075 ms for
    blockcraft's whole world on an M5 ([bench/voxels.md](../bench/voxels.md)); the worker keeps
    snapshotting without the cache.

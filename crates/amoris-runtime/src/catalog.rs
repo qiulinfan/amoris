@@ -292,6 +292,12 @@ pub const CATALOG: &[CommandDef] = &[
         schema::<amoris_interface::perception::NearbyRequest>,
     ),
     def(
+        "player.blocks",
+        Kind::Read,
+        "The block volumes as your seat sees them: the cells (block, centre, face, distance) its rays reach over its field of view within range_m (default 16, at most its sight's range and 32), nearest first within budget_tokens, and the cell you look at.",
+        schema::<crate::blocks::BlocksParams>,
+    ),
+    def(
         "player.events",
         Kind::Read,
         "Your perceived events after a seq, oldest first.",

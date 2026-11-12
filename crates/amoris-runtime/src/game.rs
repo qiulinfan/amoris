@@ -799,6 +799,7 @@ impl Game {
                 crate::player::observe(world, &mut self.player, cmd.source, p)
             }
             "player.nearby" => crate::player::nearby(self.sim.world(), cmd.source, p),
+            "player.blocks" => crate::blocks::blocks(self.sim.world(), cmd.source, p),
             "player.events" => crate::player::events(self.sim.world(), cmd.source, p),
             "player.affordances" => crate::player::affordances(self.sim.world(), cmd.source, p),
             "player.intents" => crate::player::intents(self.sim.world(), cmd.source, p),

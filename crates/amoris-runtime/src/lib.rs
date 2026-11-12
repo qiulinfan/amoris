@@ -20,6 +20,7 @@
     clippy::cast_precision_loss
 )]
 
+pub mod blocks;
 pub mod boundary;
 pub mod branches;
 mod catalog;

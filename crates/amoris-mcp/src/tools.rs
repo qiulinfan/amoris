@@ -255,6 +255,7 @@ pub fn tools() -> Vec<ToolDef> {
                 kinds|events|codes|..., name} or one entity you know {entity}; observe: \
                 instruments, intents, pending decision, ranked percepts (Name#id), events \
                 {since, budget_tokens, projection: text|json}; nearby {kinds, within_m, sector}; \
+                blocks: the block cells your eye sees, nearest first {range_m, budget_tokens}; \
                 events {since}; affordances; intents; act {actions: [{do: start, intent, target, \
                 params} | {do: use, entity, verb} | {do: set, controls} | {do: cancel, \
                 intent_id}], resume}; wait: time runs until your next decision point {until, \
@@ -274,6 +275,7 @@ pub fn tools() -> Vec<ToolDef> {
                     "since": {"type": "integer"},
                     "kinds": strings,
                     "within_m": {"type": "number"},
+                    "range_m": {"type": "number"},
                     "sector": {"type": "object"},
                     "visibility": strings,
                     "limit": {"type": "integer"},
@@ -299,11 +301,12 @@ pub fn tools() -> Vec<ToolDef> {
 }
 
 /// The `player` tool's actions: the `player.*` catalog methods.
-pub const PLAYER_ACTIONS: [&str; 14] = [
+pub const PLAYER_ACTIONS: [&str; 15] = [
     "session",
     "describe",
     "observe",
     "nearby",
+    "blocks",
     "events",
     "affordances",
     "intents",
@@ -321,7 +324,7 @@ pub const PLAYER_ACTIONS: [&str; 14] = [
 fn text_by_default(action: &str, args: &Map<String, Value>) -> bool {
     !args.contains_key("projection")
         && match action {
-            "observe" | "nearby" | "events" => true,
+            "observe" | "nearby" | "blocks" | "events" => true,
             "describe" => args.contains_key("entity"),
             _ => false,
         }
