@@ -142,14 +142,29 @@ fn opens(method: &Method, path: &str, role: Role) -> Result<(), Problem> {
     }
 }
 
+/// The most of a refused request's body the admission reads before it answers: a JSON-RPC call's
+/// or an MCP message's, never a file's.
+const REFUSED_BODY_BYTES: usize = 64 * 1024;
+
+/// Reads a refused request's body, up to [`REFUSED_BODY_BYTES`], so that its refusal arrives. A
+/// connection closed with the body unread is reset by the kernel (its unread bytes), and a client
+/// still sending it or about to read the answer then gets a reset or, on macOS, `EINVAL` from
+/// setting its socket's timeouts, instead of the 401 or the 403 (seen in `locked_host.rs` under
+/// load). A body past the bound is left: the client may lose the answer, as before.
+async fn drain(req: Request) {
+    let _ = axum::body::to_bytes(req.into_body(), REFUSED_BODY_BYTES).await;
+}
+
 /// The admission, inside the loopback guard: no grant, no answer but the 401; a route the
 /// grant's role may not open, the 403. A request it lets through carries its grant.
 async fn admit(State(host): State<Host>, mut req: Request, next: Next) -> Response {
     let who = presented(req.headers(), req.uri().path()).and_then(|token| host.granted(token));
     let Some(who) = who else {
+        drain(req).await;
         return unauthorized();
     };
     if let Err(p) = opens(req.method(), req.uri().path(), who.role) {
+        drain(req).await;
         return problem_response(StatusCode::FORBIDDEN, &p);
     }
     req.extensions_mut().insert(who);

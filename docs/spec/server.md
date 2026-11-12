@@ -557,7 +557,9 @@ taken says nothing of a registered token. A missing token, a malformed one and o
 the same answer, byte for byte, on every route: `401` with `WWW-Authenticate: Bearer` and
 `{"error": host.unauthorized}`. A route the grant's role may not open is `403 permission.denied
 {request, role, needs}`, where `request` is the method and the route (`GET /assets`), never the
-path.
+path. Before either refusal the host reads the request's body, up to 64 KiB, and drops it: a
+connection closed with unread bytes is reset, and a client sending a body would get the reset (on
+macOS `EINVAL` from its socket's timeouts) instead of the refusal.
 
 | Route | player | checker | developer |
 |---|---|---|---|
