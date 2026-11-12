@@ -25,5 +25,9 @@ export function mistakes(ctx: SystemContext): void {
     system({ name: "1every", phase: "update", doc: "A bad name.", run() {} });
     // @ts-expect-error and holds lowercase letters, digits and _ only
     system({ name: "every/api", phase: "update", doc: "A bad name.", run() {} });
+    // @ts-expect-error a collider's shape is its kind and its sizes here, not the scene's nesting
+    ctx.world.spawn({ Collider: { shape: { Ball: { radius: 1 } } } });
+    // @ts-expect-error the kinds are spelt as the scene spells them: "Dynamic"
+    ctx.world.spawn({ RigidBody: { kind: "dynamic" } });
     void col;
 }

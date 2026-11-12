@@ -1,0 +1,5 @@
+# The hierarchy under the charter's four checks (simulation.md 7.3 and 12): a world whose rule
+# and inputs parent, move, free and despawn entities with what is under them.
+name = "hierarchy"
+rate = 60
+seed = 1

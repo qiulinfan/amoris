@@ -1,0 +1,13 @@
+# Determinism, fork, replay and reload of a hierarchy that scripts and edits keep changing
+# (checks.md 8.1). The inputs name roots, which the rule never despawns.
+[run]
+ticks = 120
+seeds = [1, 2]
+inputs = "checks/inputs.jsonl"
+
+[fork]
+at = [30, 70]
+ticks = 20
+
+[reload]
+at = [30, 70]

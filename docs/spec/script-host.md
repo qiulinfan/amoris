@@ -256,8 +256,9 @@ its defaults and then the patch; `spawn` returns the new entity's id at once.
 Every call validates its arguments in the order of script-sandbox.md 5.1 and throws at the calling
 line on the first problem, recording nothing of that call: an unknown component or field
 (`script.unknown_component`, `script.unknown_field`, with the nearest names by edit distance), a
-value of the wrong type or range (6, 5.8), or one of the conditions of 5.4. `single(name)` throws
-`script.single_count` unless exactly one entity has the component.
+value of the wrong type or range (6, 5.8), a value the component's flat form cannot hold
+(`script.write_not_held`, naming the field; 7.2), or one of the conditions of 5.4. `single(name)`
+throws `script.single_count` unless exactly one entity has the component.
 
 ### 5.4 Writes are deferred; a system is a transaction
 
@@ -273,6 +274,9 @@ own commands applied in call order:
 | `get` or `has` naming a despawned or never-spawned id | `undefined` and `false`; no throw |
 | `set`, `insert` or `remove` naming a despawned or never-spawned id, or an `entity` field given one | Throws `script.entity_missing` |
 | `despawn` of an id already despawned (in the world or the overlay); of a never-allocated id | A no-op (simulation.md 7.3); throws `script.entity_missing` |
+| `despawn` of an entity with entities under it by `Parent` | Takes them all: `exists` is false for each from that call on, and a later write naming one throws `script.entity_missing` |
+| `set` or `insert` of `Parent` naming the entity itself or an entity under it in the overlay | Throws `script.parent_cycle`, with the chain from the parent up to the entity |
+| `set`, `insert` or `spawn` of `Parent` with no parent (`{parent: null}`, or no value) | Throws `script.write_not_held` (7.2): `remove` the component to make the entity a root |
 | `insert` of a component the entity has in the overlay | Throws `script.component_present` |
 | `set` of a component the entity lacks in the overlay | Throws `script.component_missing`, with the hint to `insert` it (`world_edit`'s `Set` adds a missing component; a script says which it means) |
 | `remove` of a component the entity lacks in the overlay | A no-op |
@@ -282,6 +286,17 @@ of the call's commands (so an `entity` cell may name an id the call spawned), th
 column write-backs of each query in creation order (rows in ascending id), then the commands in call
 order, a later write to a field winning; events get their sequence numbers as they are appended
 [sim]. All of it lands before the next system starts.
+
+The hierarchy (2026-11-12; simulation.md 7.3). A despawn takes the entities under the despawned one
+at the call, in the overlay, and at the commit, in the world, and the two must take the same
+entities, or a command staged for an entity the call still saw alive would find it gone
+(`sim.internal`). Both therefore read the hierarchy as the call's commands before the despawn leave
+it: the call keeps one in step with each `set`, `insert` and `remove` of `Parent`, each spawn with
+one and each despawn, and the commit reads the world its earlier commands made. This is why the
+column `Parent.parent` is read but not written: columns are written back before every command, so
+a cell changed there would move an entity behind the call's despawns. A changed cell of it fails
+the system at the write-back with `script.write_not_held`; `set`, `insert` and `remove` are how a
+script changes a parent.
 
 When `run` throws, exceeds its budget or its call depth (script-sandbox.md 4) or a write-back fails
 a check (6), the host discards the call's commands, columns and events and rolls back to the marks
@@ -445,6 +460,47 @@ comments, and slot accessors (`read_num(&self, slot)`, `write_num(&mut self, slo
 `ScriptEnum`. An undocumented field is refused, since the docs become the `.d.ts` comments agents
 read (master `docs/agent-first.md`, principle 4).
 
+**Components whose Rust form is not flat** (2026-11-12). `RigidBody` holds an optional `MassProps`
+and `Collider` an optional density and a tagged `Shape`, some of whose variants hold meshes. Their
+schemas are flat projections, written by hand in `amoris-runtime` (14, choice 8) under these rules:
+
+- An optional number is a slot whose 0 is none (`Collider.density`, `RigidBody.mass_kg`).
+- A tagged value is its tag as an enum, the variants named as the JSON form names them, plus one
+  field per size of the variants a script builds; a size reads 0 on a variant that has none.
+- The slot functions write in place and by part: a part of the component is replaced only when its
+  slots differ bit for bit from what the component reads. So `write(c, read(c))` leaves every
+  component as it was, what the slots do not hold is kept, and a write of unchanged values keeps
+  the component's bytes (a body's spec hash with them).
+- A component may register a **slot rule** (`register_engine_rule`), a function of the values
+  before a write (none for an insert or a spawn) and after it. It refuses what the flat form cannot
+  say with `script.write_not_held`, naming the field, at the calling line for `set`, `insert` and
+  `spawn` and at the write-back for a row's cells (script-sandbox.md 5.1), and settles the staged
+  values to what the component reads back once written, so `world.get` later in the call shows
+  what the commit leaves. A rule judges each write against the values before that write (for a
+  query's cells: the world as the system started), never the transaction's end. It judges no range
+  and no rule that spans components: those stay with the system that uses the component.
+- A script field named like a field of the JSON form holds all of that field, because the write
+  trace reads a path's change from the slots of the script field of its name (debugger.md 13).
+  Hence `Collider.kind`, not `shape`, and `RigidBody.mass_kg`, not `mass`.
+
+| Component | Fields | The rule refuses |
+|---|---|---|
+| `RigidBody` | `kind` (`Dynamic`, `Fixed`), `mass_kg`, `center_of_mass`, `inertia`, `linear_damping`, `angular_damping`, `gravity_scale` | a `center_of_mass` or an `inertia` without `mass_kg` |
+| `Collider` | `kind` (`Ball`, `Cuboid`, `Capsule`, read only `ConvexHull`, `TriMesh`, `Compound`, `HeightField`), `radius` (ball, capsule), `half_height` (capsule), `half_extents` (cuboid), `density`, `friction`, `restitution` | a read-only kind the collider does not already have; a size the kind does not take |
+| `CollisionFilter` | `sensor`, `groups`, `mask` (`u32` masks; simulation.md 8.5) | no rule: the component is flat |
+| `Joint` | `kind` (`Fixed`, `Revolute`, `Prismatic`, `Spherical`), `with`, `anchor`, `other_anchor`, `axis`, `limited`, `min`, `max` (the optional `limits`), `contacts` (simulation.md 8.5) | a `with` of none: a joint names its other body |
+| `ExternalForce` | `force`, `torque` | no rule |
+| `Parent` | `parent` | no parent (a slot of 0): an entity without a parent has no `Parent` |
+
+A scene's hull, mesh, compound or heightfield reads as its kind with sizes of 0, and a script
+changes its friction and restitution without the mesh being cloned, lost or built again; a ball, a
+cuboid or a capsule asked for over it replaces it. A body a script spawns in Update is built by that
+tick's `physics.step`, which also takes each `ExternalForce` once and zeroes it (simulation.md 4.4).
+Whether a body can be built (sizes above 0, the mass rule of numeric.md 5) is that step's to judge,
+for a script's bodies as for a scene's: a script that breaks it sees no throw, and every tick's
+report carries `sim.system_failed` for `physics.step` with the entity and the cause until a write
+mends it (numeric.md 11, choice 11).
+
 ### 7.3 Project components
 
 A project declares its components in TypeScript (charter 4.2.4):
@@ -500,10 +556,12 @@ component, event kinds (`IsEventKind`: snake_case words joined by dots, with non
 `emit` refuses; a unit test of `natives/events.rs` keeps `ReservedEventPrefix` equal to its
 `RESERVED`) and system names (`IsWord`, `^[a-z][a-z0-9_]*$`; the 56-byte limit is checked at load
 only). A kind or name held in a `string` is checked at run time only. Registered components without
-a script schema (the visual components a game does not animate: `Camera`, `Splat`, `UiBar`,
-`AudioSource`, `ParticleEmitter`, ...) are listed in a comment and are not `ComponentName`s.
-`Model`, `Light` and `Environment` have schemas, so a game can animate a look, a lamp or the dawn
-(`docs/sdk.md`).
+a script schema (`Camera`, `Splat`, `AudioSource`, `Animator`, `Floater`, `Vessel`, `Hull`, `Sail`,
+`Sea`, ...) are listed in a comment and are not `ComponentName`s. `Model`, `Light`, `Environment`,
+`UiBar` and `ParticleEmitter` have schemas, so a game can animate a look, a lamp or the dawn, and so
+do `RigidBody`, `Collider`, `CollisionFilter`, `Joint` and `ExternalForce` (7.2), so its rules can
+make, tune, filter, join and push rigid bodies and make sensors (`docs/sdk.md`). `SensorOverlaps`,
+which the engine keeps on a walker, has none: scripts read sensors by their events.
 
 Departures from the first design of this section, which listed more files: a component's value is
 reached as `Components["Boat"]` (or `ComponentValue<"Boat">`), not as a named interface per
@@ -682,7 +740,7 @@ All run in the local check command [arch]; those marked web also run in the wasm
 | 2. Mathematics (web) | each replaced `Math` function over a fixed input sweep gives the bits of [sim]'s Rust library, pinned by a hash; `2 ** 0.5` transpiles to `Math.pow` and equals it; sweeps of the kept operations that reach the C library (`%` with subnormal, huge, negative and negative-zero operands, `Math.floor`, `ceil`, `trunc`, `sqrt`, `min`, `max`), of `Number.prototype.toString(radix)`, of `parseInt` with a radix and of the edge cases of `toFixed`, `toPrecision` and `toExponential` give pinned hashes natively and in the web worker, as numeric.md 10's `math.golden` does for Rust's `%`; a script that stores 0/0 into a `Float64Array` and a `Float32Array` and reads their bytes reads the canonical NaN on both targets (P6) |
 | 3. Steps (web) | a fixed workload counts the same, pinned, steps twice in a process, in a fresh process, after a reload, in a fork, natively, on the web and instrumented by the debugger |
 | 4. Budget and transactions | an endless loop, in a system or in a promise job it queued, fails with `script.budget_exceeded` after exactly the configured steps; a system that writes columns, sets, spawns, emits and draws random numbers, then throws, leaves world, event inbox, RNG table and entity allocator unchanged, and without the throw applies them in the documented order |
-| 5. Writes and columns | each refusal of 5.3, 5.4, 5.8 and 6 (an unknown field with its suggestion, 2.5 into a `u32`, NaN, a missing entity, `insert` of a present component, `set` of a missing one, 5 in a `bool` column, a write to a `world.get` copy, a getter, a Proxy, a class instance, a hole, an `undefined` and a lone surrogate in `Data`, a getter on the columns object that calls back into the host, a detached typed array) gives its code, location and entity, applies nothing and never aborts the process; each row of 5.4's table holds; an `entity` cell naming an id spawned in the same call is accepted; a call with two bad fields reports the first in own-key order; only changed cells are written back, `-0` is a change, rows follow ascending ids; `world.get` copies list keys in declaration order; `console.log` of an object with a getter, `toJSON` and `toString` runs none of them and spends the same steps with the log limit at 0 and at 100 |
+| 5. Writes and columns | each refusal of 5.3, 5.4, 5.8 and 6 (an unknown field with its suggestion, 2.5 into a `u32`, NaN, a missing entity, `insert` of a present component, `set` of a missing one, 5 in a `bool` column, a write to a `world.get` copy, a getter, a Proxy, a class instance, a hole, an `undefined` and a lone surrogate in `Data`, a getter on the columns object that calls back into the host, a detached typed array) gives its code, location and entity, applies nothing and never aborts the process; a slot rule's refusal (7.2) of a `set`, an `insert`, a `spawn` and a row's cells does the same with `script.write_not_held` and its field, after that component's own field checks, and an accepted write reads back in the call and after the commit as the rule settled it (`tests/slot_rules.rs`); each row of 5.4's table holds; an `entity` cell naming an id spawned in the same call is accepted; a call with two bad fields reports the first in own-key order; only changed cells are written back, `-0` is a change, rows follow ascending ids; `world.get` copies list keys in declaration order; `console.log` of an object with a getter, `toJSON` and `toString` runs none of them and spends the same steps with the log limit at 0 and at 100; a `despawn` takes the entities under the entity in the call and at the commit, over a hierarchy with a loop too, and a write to one of them is refused at its line (`tests/writes.rs`); a script's `set`, `insert`, `remove` and `spawn` of `Parent`, its refusals (`script.parent_cycle`, no parent, a dead parent, the column) and one call that despawns and reparents in turn (amoris-runtime `tests/hierarchy.rs`) |
 | 6. Module state and errors | every lint rule has a refused and an accepted fixture (an import's method call mutating another module's value included, which the script-native spike's lint let through; a class with `static #n` and one with `static #cache = {}`; a load-time spread of an object with `*[Symbol.iterator]()`, `x + 1` on an object with `valueOf`, `instanceof` against a class with a static `[Symbol.hasInstance]`, a read of `C.prototype`; `RE.compile(...)` on a frozen regex); `harden` refuses a top-level `Map`; a module that mutates another module's `export default {}` throws at the mutation; a throw at a known TypeScript line reports that line and the column QuickJS-ng gives (the script-native spike found it points into the statement, not at `throw`) through nested calls and the prelude, with the entity when thrown inside `each`; a failed system's `script.failed` event data is exactly `{system, code}` |
 | 7. Types | the generated declarations type-check fixtures using every field type and API of 5.1; a project component's builder-inferred type and its emitted interface are mutually assignable |
 | 8. Reload and fork | reload equivalence and fork consistency with script systems ([hot-update.md](hot-update.md), 9; checks.md 8.3 and 8.5, with the `module-state` controls of 8.6); the budgets of 11 are measured and reported in [arch]'s framework, never a pass condition |
@@ -780,7 +838,15 @@ a `ctx` over a snapshot exported as JSON [persist] (not in slice 1).
    for an engine component already registered with its schema. The crate composing the game
    registers the engine components' functions until the `ScriptComponent` derive of 7.2 exists.
    `ScriptHost::instantiate` takes the `World` (its registry and accessors) rather than the registry
-   alone; project components register at the swap.
+   alone; project components register at the swap. Slot rules (7.2; 2026-11-12) are in the same
+   resource: `register_engine_rule::<C>(world, rule)` gives a component that already has its slot
+   functions a `SlotRule`, `fn(before: Option<&ProjectValues>, after: &mut ProjectValues) ->
+   Result<(), SlotRefusal>` with `SlotRefusal { field, message }`, and `ScriptAccess::rule(id)`
+   hands it to the natives, which call it for `set`, `insert` and `spawn` and for a row's changed
+   cells; a component without one takes the path it took before. `EngineFns` is unchanged. The
+   first rules are `RigidBody`'s and `Collider`'s, beside their schemas and slot functions in
+   `crates/amoris-runtime/src/engine/bodies.rs`; the derive, when it exists, has to accept such
+   hand-written rules or generate them.
 9. **Slice 1: not built.** An `executor(...)` among the systems is refused at instantiate
    (`script.bad_definition`) and `ctx.intent` throws `script.restricted`, until slice 2's intents;
    derived facts, instruments and predicates (`Program::call`); the compile cache of 8.2; bytecode
@@ -798,7 +864,8 @@ a `ctx` over a snapshot exported as JSON [persist] (not in slice 1).
     (`script.bad_definition`). `ctx.part.entity(e)` is a frozen `{__amorisEntityPart: e}`; a forged
     one names the same stream, which is harmless. The reserved event prefixes are `entity.`,
     `component.`, `script.`, `scripts.`, `sim.`, `intent.`, `contact.`, `physics.`, `interface.`,
-    `time.`, `decision.` and `perception.`.
+    `time.`, `decision.`, `perception.` and, since 2026-11-12, `scene.` (simulation.md 7.6: the
+    engine's `scene.loaded`, and `scene.load_requested`, which `ctx.scene.load` stages).
 13. **Slice 1: crate edges.** `amoris-script` links `amoris-sim`, `amoris-contract`, `bevy_ecs`
     (architecture.md 6), `rquickjs`, `serde` and `serde_json`, and oxc under `transpile`; its edges
     to `amoris-physics` and `amoris-interface` stay unused until physics queries and perception for

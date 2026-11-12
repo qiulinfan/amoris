@@ -1,0 +1,2 @@
+{"tick": 10, "source": {"developer": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "Loose", "component": "Parent", "value": {"parent": 2}}]}}
+{"tick": 50, "source": {"developer": 0}, "name": "world_edit", "params": {"edits": [{"op": "destroy", "entity": "Base"}]}}

@@ -168,6 +168,28 @@ fn run_value_step(
     Ok(())
 }
 
+/// A save's header (its label and meta), read without its snapshot: what a listing of saves shows.
+/// The same checks of the magic and the format as [`load_save`].
+pub fn save_header(bytes: &[u8]) -> Result<SaveHeader, Problem> {
+    if bytes.len() < 12 || &bytes[..8] != SAVE_MAGIC {
+        return Err(error::format(
+            "the magic P3DSAVE",
+            &String::from_utf8_lossy(&bytes[..bytes.len().min(8)]),
+        ));
+    }
+    let format = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
+    if format != SAVE_FORMAT {
+        return Err(error::version_format("save", format, SAVE_FORMAT));
+    }
+    let mut d = Decoder::new(bytes, false);
+    (|| {
+        d.take(12)?;
+        let n = usize::try_from(d.uleb()?).unwrap_or(usize::MAX);
+        pce::from_bytes::<SaveHeader>(d.take(n)?, false)
+    })()
+    .map_err(|e| e.problem(0))
+}
+
 /// Reads a save into a snapshot in the current versions (6.2), before any world is touched:
 /// renames, then per section keep, migrate, drop (retired) or list a cache to rebuild. `world` is
 /// the world it will be restored into, whose component registry gives the project components'

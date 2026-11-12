@@ -78,13 +78,14 @@ files).
 | `catalog.list` | read | `{}` | the catalog |
 | `status` | read | `{}` | `{tick, t_s, pacing, paused, halted, behind_ms, mode, epoch, world_hash, entities, bundle, writes, poisoned, steps_due, kept, tainted}`; while the debugger holds the game, from the last publication with `state: "breakpoint"` and `paused_at` (3.4) |
 | `project.info` | read | `{}` | `{name, root, rate, scenes, scripts, assets}` |
-| `project.save` | request | `{}` | `{files: ["scene.json"], entities}`: the edit world, one entity per line, every component whole |
-| `world.tree` | read | `{root?, depth?, filter?, with?, limit?}` | `[{id, name, components: [name], children: []}]` (no hierarchy yet; `depth` is accepted) |
+| `project.save` | request | `{}` | `{files: ["scene.json"], entities}`: the edit world, one entity per line, every component whole, entity ids as places in the file (simulation.md 7.4) |
+| `world.tree` | read | `{root?, depth?, filter?, with?, limit?}` | `[{id, name, components: [name], children: [...], more?}]`: the roots (entities without a live parent) with their children nested by `Parent`, roots and children in ascending id order; `root` lists one entity with what is under it; `depth` is the levels below the roots, by default and at most 48, and an entity whose children it left out carries their number in `more` (read on with `root`); `filter` and `with` list what matches with the entities it is under; `limit` counts listed entities, a parent before its children |
 | `world.get` (`world_get`) | read | `{entity, components?, fields?}` | `{id, name, components: {Name: value}, fields?: {"C.f.path": value}}`; `fields` (or a dotted entry of `components`) reads `Component.field` or a path into it alone, `null` where the entity lacks the component; a path the component lacks is refused with its fields and a suggestion |
 | `world.query` | read | `{with: [C], fields?: ["C.f.path"], name?, limit? = 100}` | `[{id, name, "C.f": value}]` |
 | `world.schema` | read | `{component?}` | `[{name, origin, version, doc, schema}]`, or one |
 | `world.edit` | write | `{ops: [op], label?, group?}` | `{tick, applied, spawned: [id], results, label}`; all or nothing; consecutive edits of one `group` from one caller are one undo entry (3.1) |
 | `world_edit` | write | `{edits: [{op: ...}]}` | the canonical recorded form (below) |
+| `scene.load` | write | `{path, mode? = "replace"}` | `{path, mode, spawned, first, despawned}`: another scene file of the project spawned at this boundary, replacing the world's entities or beside them; not undoable, clears the history; recorded as `scene_load {path, mode, scene}` with the scene's bytes as the recording's data (simulation.md 7.6) |
 | `history.list` | read | `{}` | `{undo: [label], redo: [label], entries: {undo: [entry], redo: [entry]}}`: each stack most recent last (the next to undo or redo last), `entries` the same entries in the same order as `{label, source, group?, session?}` (3.1) |
 | `history.undo` / `history.redo` | write | `{group?}` / `{}` | as `world.edit`, with the entry's `label`; an undo with `group` only when the next entry is the whole of that group, else `history.group` (3.1) |
 | `time.control` (`time_control`) | control | `{pause?, speed?, pacing?}` | `status` |
@@ -94,6 +95,9 @@ files).
 | `snapshots.list` | read | `{}` | `{every, keep, snapshots: [{tick, world_hash}]}` |
 | `snapshots.restore` | control | `{tick, bundle? = "applied"}` | `status` with `restored` (the kept tick at or before `tick`) and `scripts: {bundle, kept: "applied"\|"snapshot", snapshot_bundle, swapped?, swap_refused?}` (3.3) |
 | `snapshot` | read | `{}` | `{tick, writes, world_hash}` |
+| `saves.list` | read | `{}` | `{dir, saves: [{name, bytes, label, tick, world_hash}]}` (a save whose header does not read: `{name, unreadable: code}`; 3.3) |
+| `saves.write` | request | `{name, label?}` | `{name, path, bytes, tick, world_hash}`: the world shown written as a save (3.3) |
+| `saves.load` | control | `{name}` | `status` with `loaded: {name, tick, world_hash, migrated, renamed, dropped, caches_rebuilt}` (3.3) |
 | `scripts.list` | read | `{}` | `[{path, bytes, diagnostics}]` |
 | `scripts.read` | read | `{path, lines?, numbered?}` | `{path, text}`; with `lines` (`50-80`, `50-`, `-20`, `67`; 1-based, inclusive) or `numbered`, the text of those lines (each `67\| ` prefixed when numbered) and `{first, last, total}` |
 | `scripts.write` | request | `{path, text}` | `{path, bytes, diagnostics}` (compiled, not swapped) |
@@ -125,6 +129,23 @@ Ops are externally tagged: `{"spawn": {name?, prefab?, components?}}`,
 entity is an id, a name or `Name#id`. The call is checked whole against the world as the earlier ops
 leave it, then applied at one boundary; a refusal names the op as written (`/ops/1/set/entity`).
 
+The hierarchy (2026-11-12; simulation.md 7.1 and 7.3): an entity is placed under another by a `set`
+of `Parent {parent}` (the parent's id), taken out by a `remove` of it, and spawned under one by
+naming `Parent` among the spawn's components.
+
+- A `destroy` takes the entity and every entity under it and answers how many went
+  (`{op: "destroyed", count}`). A later op of the same call naming one of them is refused like one
+  naming the destroyed entity (`sim.entity_not_found` with `destroyed_by`), a second destroy
+  included: destroy children before their parent, as the editor does, or the parent alone.
+- A `Parent`'s parent must be alive as the earlier ops leave the world (`sim.entity_not_found`,
+  `sim.entity_id_invalid`; `path` is the parent in the request, `/ops/0/set/value/parent`) and must
+  not be the entity itself.
+- Whether a `Parent` closes a loop is judged once, on the hierarchy the whole call leaves
+  (`sim.parent_cycle {entity, parent, chain, path}`). A call may pass through a loop: swapping a
+  parent with its child takes two sets, and the hierarchy between them holds one.
+- A `Parent` names its parent by id: `world.edit` does not resolve a name inside an engine
+  component's value.
+
 Every edit is recorded as `world_edit {edits}` with entity names resolved to ids (threads.md 5.3),
 the same write for `world.edit`, undo and redo, so a recording replays without the history.
 
@@ -134,10 +155,18 @@ touched: entities it spawned (or revived) are destroyed; entities it destroyed a
 their ids** with their name and every component (`{op: "revive"}` in `world_edit`, which calls the
 new `amoris_sim::entity::revive`; `sim.entity_alive` when the id is live); components it set or
 removed on the other entities get their values from before the call back (`set` with `replace`, or
-`remove`). Undo applies that list as an edit and keeps the list's own inverse for redo; a new edit
-empties redo. 500 entries per stack. An entry whose edits no longer apply (a tick destroyed what it
-names) is dropped with `history.stale`; an empty stack answers `history.empty`. A restore (and
-Play's fork) starts with an empty history. The history is never persisted or hashed.
+`remove`). The list is in the order that applies as one call (2026-11-12): first one `revive` for
+everything the call destroyed, the entities a destroy took from under its entity as the edit's
+`others: [{entity, name?, components?}]` (so the undo of any subtree is one edit, within the 64 of a
+call; the entities of a `revive` are checked together, and an entity field or a `Parent` of one may
+name another, or an entity an earlier edit of the call revives); then the sets and removes; then the
+destroys, of the topmost entities alone, since a destroy takes what is under it. A restore may thus
+put an entity back under one the revive brings back, and takes an entity out from under one a
+destroy removes before that destroy. Undo applies that list as an edit and keeps the list's own
+inverse for redo; a new edit empties redo. 500 entries per stack. An entry whose edits no longer
+apply (a tick destroyed what it names) is dropped with `history.stale`; an empty stack answers
+`history.empty`. A restore (and Play's fork) starts with an empty history. The history is never
+persisted or hashed.
 
 Groups (2026-10-15, editor.md 8 item 1): `world.edit` takes `group`, a string the caller picks. An
 edit of a group right after an edit of the same group by the same source merges into that entry
@@ -228,9 +257,25 @@ gone `null`. A step stopped by the debugger and answered at the stop has none.
   `kept`, the snapshot's bundle and `swapped`; when the applied scripts do not load on the restored
   world it runs the snapshot's and says so (`swap_refused`). The status line prints
   `restored tick 0; scripts 4381c2… (applied)`, and `status` always has the running `bundle`.
-- Each replacement of the world shown (Play, Stop, restore) bumps the reader's **epoch**
-  (`SnapshotReader::world()`: `{mode, epoch}`); presenters reset what they derived (the render
-  feed's `reset: true`, `world.changed {reset}`).
+- **Saves** (2026-11-12; versions.md 6). `saves.write {name, label?}` writes the world shown
+  (Play's while playing, unlike `project.save`) with amoris-persist's `write_save` to
+  `<project>/.amoris/saves/<name>.save`, through a temporary file so a failed write keeps the save
+  it would replace; the header's meta holds the tick and world hash that `saves.list` shows. A
+  name is 1 to 64 letters, digits, `_` and `-` (`request.invalid_value`); a game without a project
+  directory answers `project.no_root`. `saves.load {name}` reads the save into the current versions
+  (`load_save`: renames, the engine's steps, retired types dropped, a cache of another identity
+  listed and rebuilt from the components after the restore) and restores it as
+  `snapshots.restore` restores a kept snapshot: the world shown is replaced under the scripts
+  applied now, a waiting `time.step` is answered `saves.loaded`, the history is cleared, kept
+  snapshots after the save's tick are dropped and the epoch is bumped. A recording sees a rebase
+  onto the loaded world (replay.md 2.5), and a second one after a cache rebuild. TypeScript steps
+  of project components are not built (versions.md 8.3), so a save holding an older version of
+  one is refused with `migrate.missing_step` and the world is left as it was. A game driven
+  directly (`Game::apply`, the tests, `amoris run`) loads too, without the loop's bookkeeping.
+  Scripts neither save nor load yet (11).
+- Each replacement of the world shown (Play, Stop, restore, a loaded save) bumps the reader's
+  **epoch** (`SnapshotReader::world()`: `{mode, epoch}`); presenters reset what they derived (the
+  render feed's `reset: true`, `world.changed {reset}`).
 
 ### 3.4 A host the debugger holds
 
@@ -409,9 +454,9 @@ parameters loosely and the runtime's decoder refuses unknown ones with suggestio
 
 | Tool | Actions -> methods |
 |---|---|
-| `world` | tree, get, query, schema, edit -> `world.*` |
+| `world` | tree, get, query, schema, edit -> `world.*`; load -> `scene.load` |
 | `scripts` | guide, list, read, write, apply, check, status, types -> `scripts.*` |
-| `time` | status -> `status`; pause, resume, speed -> `time.control`; step -> `time.step`; snapshots -> `snapshots.list`; rewind -> `snapshots.restore`; profile -> `profile.frame` |
+| `time` | status -> `status`; pause, resume, speed -> `time.control`; step -> `time.step`; snapshots -> `snapshots.list`; rewind -> `snapshots.restore`; saves -> `saves.list`; save -> `saves.write`; load -> `saves.load`; profile -> `profile.frame` |
 | `play` | start, stop |
 | `history` | undo, redo, list |
 | `assets` | list |
@@ -443,9 +488,9 @@ Schema, so help never drifts from what the host takes.
 |---|---|
 | `amoris call <method> ['<json>'|-]` | any |
 | `amoris status`, `info`, `save`, `catalog`, `docs <words..>` | `status`, `project.info`, `project.save`, `catalog.list`, `docs.search` |
-| `amoris world tree [filter] [--with C,..]` | `world.tree` |
+| `amoris world tree [filter] [--with C,..] [--root e] [--depth n] [--limit n]` | `world.tree` (each entity's children two spaces deeper; an entity the depth cut ends with `(+N below: --root <id>)`) |
 | `amoris world get <entity> [C.. \| C.f,C.g..]`, `query <C,..> [--fields C.f,..]`, `schema [C]` | `world.get` (dotted names are `fields`), `world.query`, `world.schema` |
-| `amoris world edit '<ops>'`, `set <entity> <C> f=v..`, `spawn [name] [--prefab j]`, `remove <e> <C>`, `destroy <e>..` | `world.edit` |
+| `amoris world edit '<ops>'`, `set <entity> <C> f=v..`, `spawn [name] [--prefab j]`, `remove <e> <C>`, `destroy <e>..` | `world.edit` (`set <e> Parent parent=<id>` places an entity under another, `remove <e> Parent` makes it a root) |
 | `amoris step [ticks] [--until event:<name>|tick:<n>|<e>.<C>.<f><op><v>] [--watch <e>.<C>.<f>[~v]] [--sample <e>.<C>.<f>,.. [--every k]] [--trace <e>.<C>[.<f>]]` | `time.step` (`--trace`: the write trace's table after the status line) |
 | `amoris time pause|resume|speed <x>|stepped` | `time.control` |
 | `amoris play start [--speed x] [--paused]|stop` | `play.*` |
@@ -453,6 +498,7 @@ Schema, so help never drifts from what the host takes.
 | `amoris scripts list|read <p> [--lines a-b] [--numbers]|write <p> [file|-]|apply [--force]|check|types|guide|status` | `scripts.*` (`--lines` numbers the lines) |
 | `amoris events [--since n] [--name n.*] [--limit n]`, `--why <seq>` | `events.*` |
 | `amoris logs [--since n]`, `snapshots [list]|restore <tick> [--bundle snapshot]`, `assets [dir]` | `log.since`, `snapshots.*`, `assets.list` |
+| `amoris saves [list]`, `saves write <name> [--label text]`, `saves load <name>` | `saves.*` |
 | `amoris profile [--ticks n]` | `profile.frame` (a table: ms per tick, max, share of the game thread) |
 | `amoris scripts profile [--ticks n] [--interval steps] [--top n] [--folded <file>]` | `scripts.profile` (by system: its steps, then its functions, lines and stacks with self and total steps; `--folded` writes the folded stacks to the file) |
 | `amoris debug break <file>:<line> [--if <expr>] [--log <text>]`, `clear [id]`, `list` | `debug.breakpoints.*` (`file` may be the module's end, `helm.ts`) |
@@ -486,9 +532,13 @@ error exits 2. Every call waits 60 s at most (`--timeout <s>`, `AMORIS_TIMEOUT`)
 | `history.empty`, `history.stale` | nothing to undo or redo; an entry that no longer applies (dropped) |
 | `history.group` | `history.undo {group}` when the next entry is not the whole of the group (3.1) |
 | `play.running`, `play.not_running` | `play.start` while playing; `play.stop` while editing |
-| `play.started`, `play.stopped`, `snapshots.restored` | a waiting `time.step` whose world was replaced |
+| `play.started`, `play.stopped`, `snapshots.restored`, `saves.loaded` | a waiting `time.step` whose world was replaced |
 | `snapshots.none` | no kept snapshot at or before the tick |
+| `scene.place_invalid` | an entity number in a loaded scene that is no place in its file (`path`, `place`, `entities`; simulation.md 7.6) |
+| `saves.not_found` | `saves.load` of a name with no save (`saves`, `suggestion?`) |
+| `saves.unwritable` | a save's folder or file could not be written or read (`path`, `error`) |
 | `sim.entity_alive` | a revive names a live id (simulation.md 11) |
+| `sim.parent_cycle` | a `world.edit` (or a scene) that would leave an entity under itself or under an entity that is under it (3.1; simulation.md 11) |
 | `project.no_root` | a file command on a game built from data |
 | `events.not_found` | `events.why` for a stream number the ring no longer holds |
 | `host.forbidden`, `host.not_found`, `host.unreachable`, `host.bind_failed` | the guard; no file; the CLI finds no host; the port is taken |
@@ -500,23 +550,33 @@ error exits 2. Every call waits 60 s at most (`--timeout <s>`, `AMORIS_TIMEOUT`)
 ## 10. Verification
 
 `tools/host/smoke_server.py` (standard library only) starts `amoris serve` on a copy of
-`samples/sailing` and checks the CLI (status, tree, set, undo, step with an event and a field
-condition, a refused typo with its suggestion, Play and Stop, help), `/api/call` and `/api/catalog`
-(a destroy undone revives the entity under its id), `/ws` (status on connect, subscribe, an edit
-with its `history` and `world.changed` pushes, undo, steps, Play's reset), `events.since`/`why`, and
-MCP over HTTP (initialize, `tools/list` with its size, calls and refusals), a host the debugger
-holds (3.4: the step that returns at the breakpoint, reads while held, `scripts apply` refused at
-once, the debugger's short forms, restores with and without the applied scripts), then that
-`.amoris/host.json` is gone after SIGTERM (Ctrl-Break on Windows, where it now runs:
+`samples/sailing` and checks the CLI (status, tree, set, undo, a crate parented to the Sloop with
+the tree indented by it, `--root` and `--depth`, a refused loop and the undo, step with an event and
+a field condition, a save written, listed, loaded and refused, a refused typo with its suggestion,
+Play and Stop, help), `/api/call` and `/api/catalog` (a destroy undone revives the entity under its
+id), `/ws` (status on connect, subscribe, an edit with its `history` and `world.changed` pushes,
+undo, steps, Play's reset), `events.since`/`why`, and MCP over HTTP (initialize, `tools/list` with
+its size, calls and refusals), a host the debugger holds (3.4: the step that returns at the
+breakpoint, reads while held, `scripts apply` refused at once, the debugger's short forms, restores
+with and without the applied scripts), then that `.amoris/host.json` is gone after SIGTERM
+(Ctrl-Break on Windows, where it now runs:
 [smoke-server.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/smoke-server.txt),
 0 failures, 2026-10-09). Its WebSocket client keeps the pushes that arrive before a request's answer
 for the next wait (Play's reset can come first), which `tools/tests/test_smoke_server.py` checks
 against a scripted server. The Python `mcp` client package (2.3.0, `uv run --with mcp`) drove both
 transports (`amoris mcp --own` over stdio and `/mcp`). `crates/amoris-runtime/tests/host.rs` tests
 undo and redo of a spawn, a set and a destroy, the readers, the stop conditions, Play and Stop, and
-the kept snapshots; `tests/agent_reads.rs` the field reads, line ranges, samples and restores under
-the applied scripts (with a recording that replays); amoris-app's `tests/paused_host.rs` a held host
-through `Host::call` (also that `profile.frame` answers while held and leaves the held tick out);
+the kept snapshots; `tests/hierarchy.rs` the hierarchy (set and remove of `Parent`, every refusal
+with its path, a call through a loop, destroys of subtrees with their undo and redo, one of 100
+entities in one call each way, scenes, `project.save`, scripts, a recording, a fork, a restore, the
+storage shuffle, `world.tree`'s parameters); `tests/saves.rs` the saves (a loaded save continues as
+the saved world did, also in a fresh game; refused names, a missing and a damaged save; an older
+project component; a recording that loads one replays; the thread's load drops later kept snapshots
+and bumps the epoch); `tests/agent_reads.rs` the field reads, line ranges, samples and restores
+under the applied scripts (with a recording that replays); amoris-app's `tests/paused_host.rs` a
+held host through `Host::call` (also that `profile.frame` answers while held and leaves the held
+tick out, and that the held host answers every nested `world.tree` as the game does) and
+`tests/history_host.rs` a parent destroyed by an MCP session and undone whole by the editor;
 `tests/thread.rs` that ticks are profiled by system and phase once a host serves the profile (a
 reader alone turns nothing on) and that Play starts the ring again; amoris-link's `profile` tests
 the summaries, the rows' order, the world's ticks only, and that a reader holding the ring never
@@ -524,7 +584,11 @@ stops the game thread.
 
 ## 11. Open
 
-1. A hierarchy component (`Parent`) for `world.tree`'s `children` and `depth`.
+1. The hierarchy is built (2026-11-12: `Parent`, `world.tree` nested by it, a destroy that takes
+   the subtree; 3 and 3.1). Still open: children do not follow their parent's `Transform`
+   (simulation.md 14, choice 17); `world.get` does not answer an entity's `parent`, `children` or
+   `path`, and `world.edit`'s spawn takes no nested `children` (shared/contract/mcp.md 6 and 6.1);
+   the MCP `world` tool's schema does not name `root` and `depth` yet.
 2. `debug.rewind`'s replay forward from a kept snapshot needs the recorded inputs between them (a
    recorder on the edit world). It replays under the applied scripts by default (3.3).
 3. The type check runs `tsc` (TypeScript 7) only when installed: `AMORIS_TSC`, else the first
@@ -539,3 +603,6 @@ stops the game thread.
 4. The web worker's loop (`amoris-web`) runs plain step counts; stop conditions, Play and kept
    snapshots are native only, and it refuses a write trace (`time.trace_unavailable`, debugger.md
    13).
+5. Saves (3.3) are the host's: scripts neither write nor load one, the browser has no store for
+   them (its worker answers `project.no_root`), and a save holding an older version of a project
+   component waits for the TypeScript migration steps (versions.md 8.3).

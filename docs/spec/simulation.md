@@ -219,7 +219,7 @@ this table and the schedule golden of section 12 together.
 | 7a | Forces | `physics.board` | amoris-physics | each `Board`'s planing, glide, rail and fin forces at its Floater points, implicit over each point's share of its mass, and its rider's paddling, carving and pop-up (water.md 50) |
 | 7b | Forces | `physics.terrain` | amoris-physics | each `Terrain` whose hash changed given its fixed triangle-mesh `Collider` again (water.md 65.1) |
 | 8 | Physics | `physics.step` | amoris-physics | sync changed bodies in, one step of `dt`, write back positions, velocities and readouts |
-| 9 | Physics | `physics.contacts` | amoris-physics | contact begin and end events, in pair order (section 8.4) |
+| 9 | Physics | `physics.contacts` | amoris-physics | each `Walker`'s box tested against the sensors; contact begin and end events and sensor entries and exits, in pair order (sections 8.4 and 8.5) |
 | 9b | Physics | `physics.walk` | amoris-physics | each `Walker` moved against the volumes' solid cells and its eye written (voxels.md 5.2) |
 | 9c | Physics | `physics.mount` | amoris-physics | each mounted `Walker`'s eye carried with its board's integrated pose; a board turned over throws its rider (water.md 50) |
 | 10 | Finish | `interface.perception` | amoris-interface | every observer's memory and perceived events from the events appended since its last run: the boundary writes' (the inbox from `boundary_from`, 5.1) and the tick's own (still in the outbox), in `EventSeq` order (shared/contract/perception.md, The perception update) |
@@ -465,6 +465,14 @@ impl EntityId {
   UTF-8 bytes, not necessarily unique, persisted like any component. The shared contract resolves an
   `EntityRef` given as a string through it (shared/contract/README.md, Positions and entity
   references).
+- `Parent { parent: EntityId }` places an entity under another (2026-11-12). It sits on the child
+  and is the hierarchy's only stored fact: an entity without a parent has no `Parent`, and no list
+  of children, depth or root is kept anywhere. Who is under whom is read from the `Parent` rows
+  when it is asked for (`amoris_sim::Hierarchy`: each child's parent, each parent's children in
+  ascending id order), so a restore, a fork, a replay and the storage shuffle have nothing to
+  rebuild, and a world without a `Parent` row snapshots and hashes as it did before the component
+  existed. It is persisted like any component (section `Parent`, version 1), and every world
+  registers it. `Transform` stays in world space: a child does not follow its parent yet (14).
 
 ### 7.2 Allocation
 
@@ -507,16 +515,46 @@ impl EntityAllocator {
   despawn it does nothing and returns `false`, so two rules that remove the same crate in one tick
   are not an error (`script-host.md`, 5.4: "a second `despawn` is a no-op"). An id that was never
   allocated (0, at least `next`, or not an integer) is refused with `sim.entity_id_invalid`.
-- Despawning never despawns other entities implicitly. Components that pointed at a despawned entity
-  keep the id; reading through it finds nothing: a script's `get` answers `undefined` and a write
-  naming it throws `script.entity_missing` (`script-host.md`, 5.4). A hierarchy feature that wants
-  recursive despawn says so in its own specification.
+- A despawn takes the entity and every entity under it by `Parent` (2026-11-12), by every route:
+  `entity::despawn` and `Boundary::despawn` (what `world_edit`'s destroy and a replay of it call), a
+  script's `ctx.world.despawn` (the call sees the entities gone at once and its commit removes the
+  same ones, `script-host.md` 5.4) and an engine system's `SimCommands::despawn`.
+  `entity::despawn_tree` answers the ids it took: the entity first, then a parent before its
+  children and siblings in ascending id order. `SimCommands::despawn` takes the entity out of the
+  index at the call and the entities under it when the system returns: those the world shows once
+  the commands staged before it have applied, so a child staged after the call is not taken and
+  comes into a world whose parent is gone.
+- Nothing else is despawned implicitly. A component that refers to a despawned entity in another
+  way keeps the id; reading through it finds nothing: a script's `get` answers `undefined` and a
+  write naming it throws `script.entity_missing` (`script-host.md`, 5.4).
+- A `Parent` is checked where the world is in view: `world_edit` (`server.md` 3.1), a scene's load
+  (7.4) and a script's write (`script-host.md` 5.4) refuse one that names the entity itself, an
+  entity under it (`sim.parent_cycle`, `script.parent_cycle`) or nothing alive. Decoding sees no
+  world, so a snapshot made by hand or a component inserted from Rust can hold such a `Parent`. It
+  is tolerated: every walk of the hierarchy is a loop over a list that remembers where it has been
+  (none recurses, none loops), an entity whose parent is itself or is not live lists as a root, the
+  entities no root reaches (a loop and what hangs under it) are listed once each (the lowest id
+  among them as one more root, until all have a place), and a despawn inside a loop takes the loop.
 
 ### 7.4 Scenes, restore and fork
 
-- Loading a scene or instantiating a prefab allocates ids in document order, depth first, a parent
-  before its children, and rewrites the document's local references to the new ids. The same
-  document loaded into the same world state yields the same ids.
+- A scene (`scene.json`) is a flat list of entities, spawned in file order, so in a new world the
+  ids are the entities' places in the file, from 1. An entity field of a component, `Parent.parent`
+  among them, is the place of the entity it names; every entity is spawned before any component is
+  checked, so a field may name an entity later in the file. The same document loaded into the same
+  world state yields the same ids. Nested scene files and prefabs with children are not built
+  (14).
+- A scene's `Parent`s are checked together once its entities are in the world: each names a live
+  entity (`sim.entity_not_found`, or `sim.entity_id_invalid` for a place past the file) and none
+  closes a loop (`sim.parent_cycle`), with `path` at the parent in the file
+  (`/entities/<i>/components/Parent/parent`). A refused scene is rolled back whole.
+- `project.save` writes the world back as a scene: the live entities in id order, each entity id
+  inside a component renumbered to the entity's place in the file, and one naming an entity that is
+  gone written as `null`. Project components are renumbered by their schema's entity fields and
+  engine components by their JSON Schema (every place typed `EntityId`, nested ones and those
+  inside tagged variants included; ids that are a map's keys are left as they are). A `Parent`
+  whose parent is gone is left out, since a `Parent` always names an entity: the entity is a root
+  of the saved scene.
 - Restore (spec-persist) recreates every entity with its recorded `EntityId` and restores the
   allocator. The `bevy_ecs::Entity` values and the storage order of the restored world differ from
   the original's; nothing observable depends on them (section 8).
@@ -534,6 +572,48 @@ pub struct EntityIndex { by_id: Vec<(EntityId, Entity)> } // ascending by id
 Since committed ids only increase, inserting a spawned entity is a push that keeps the vector
 sorted; a despawn marks its slot, and `sim.finish` compacts the vector once per tick. Lookup by id
 is a binary search. Restore and fork rebuild the index in one sorted pass.
+
+### 7.6 Loading a scene at run time
+
+A project may hold more scene files than `scene.json` (`scenes/level2.json`); the game starts with
+`scene.json` and loads another at a boundary (2026-11-12):
+
+- **`scene.load {path, mode}`** (server.md 3), a Write. `path` is a `.json` file inside the project
+  (`request.invalid_value` otherwise); it is read, checked as a scene and its cells files resolved
+  into it, as `scene.json` is. `mode: "replace"` (the default) spawns the scene's entities and then
+  despawns every entity that was there before, in id order, each with what is under it; `"add"`
+  spawns them beside the world's. The scene is spawned and checked whole first, so a refused
+  load (`project.missing_file`, a bad component, `scene.place_invalid`) changes nothing.
+- **Ids.** Ids are never reused (7.2), so a loaded scene's entities take the allocator's next ids,
+  in file order. An entity number inside a component is the place of an entity in the file
+  (7.4), rewritten to the id that entity was spawned with, by the same walk over project schemas
+  and engine JSON Schemas as `project.save`; a number past the file is `scene.place_invalid
+  {path, place, entities}`. A name inside a value resolves against the world as the load finds it,
+  old entities included, so a loaded scene names its own entities by place.
+- **What stays.** The tick, the clock, the seed and the random streams, the events, the scripts
+  and the persisted resources (players' declarations among them) are the world's, not the
+  scene's: a load replaces entities, never the run. A replaced body's contacts end at the next
+  step, as a despawn's do.
+- **Events and history.** The load appends `scene.loaded {path, mode, entities}`, which systems
+  that declare `scene.` read in the next tick. It is not undoable, and it clears the history, whose
+  entries named a world a replace has despawned.
+- **Scripts.** `ctx.scene.load(path, {mode})` stages `scene.load_requested {path, mode}`, an
+  event of the engine's (the `scene.` prefix is reserved), committed with the call's other
+  commands, so a system that throws asks for nothing. After the tick, before anything else happens
+  at that boundary, the game applies a Host `scene.load` for each request of the tick in event
+  order; a refused one joins the tick's report as an error and the world stays.
+- **Determinism and replays.** A load is recorded as `scene_load {path, mode, scene}`, `scene` the
+  content hash (context `Amoris loaded scene v1`) of the scene's canonical JSON as it was read,
+  and the recorder keeps those bytes as data (replay.md 2.4, Data). A replay, which applies the
+  recorded writes and therefore does not apply the script's requests again, spawns the recorded
+  bytes and never reads the file: a scene changed or deleted on disk after a run does not change
+  its replay, a fork made before the load loads the same file the same way, and the world hash
+  after the load follows from the bytes. `scene_load` is the host's: sent by anyone else it is
+  `command.host_only`.
+- **Not built.** Loading from the browser (its package carries `scene.json` alone; the worker
+  answers `project.no_root`), a scene that keeps chosen entities across a replace (a player
+  carried into the next level is spawned again by the next scene, or `add`ed into), and unloading
+  what an `add` brought in other than by despawning it.
 
 ## 8. Iteration order
 
@@ -584,8 +664,10 @@ order survives a call inside the VM.
   and growth history, which a restored or forked world does not share. A hash map may serve lookups
   only behind a type that offers no iteration, with a comment saying why (`checks.md`, 5.3). rustc
   guards the same hazard in its own code with the internal lint `potential_query_instability`.
-- Child order in a hierarchy is explicit data (a `Vec<EntityId>` in the parent's component, in
-  insertion order), never derived from storage.
+- An entity's children are the entities whose `Parent` names it, in ascending `EntityId` order
+  (7.1). The order is read from the rows by id when it is asked for, never from storage. An
+  authored sibling order (an earlier draft kept a `Vec<EntityId>` in the parent's component)
+  would be explicit data added to `Parent` with a version bump.
 - Ties in any sort that affects state are broken by `EntityId`.
 
 ### 8.5 Physics
@@ -596,6 +678,68 @@ order. The solver's internal order (Rapier's arena handles, its contact graph) d
 sequence of insertions and removals, which a solver rebuilt from components does not reproduce. The
 solver's state is therefore a Cache that snapshot and fork carry as it is (charter 3.3;
 `persistence.md`, 8).
+
+**Sensors and collision groups** (2026-11-12). `CollisionFilter {sensor, groups, mask}` on a
+collider's entity says how it meets others; without one a collider is solid, in every group and
+meets every group (`groups` and `mask` are 32-bit masks, default all bits).
+
+- Two colliders meet, solid or sensor, when `a.groups & b.mask` and `b.groups & a.mask` are both
+  non-zero (Rapier's interaction groups in its `And` test). Colliders that do not meet neither
+  touch nor report. The block volumes' chunks are in every group with every group in their mask.
+  Every group, not group 1 alone as in Godot's layers or Unity's default layer, is the default
+  because it is how Rapier's builder made every collider before the filter existed: another
+  default would change every body's state in the physics cache and every recorded hash chain. A
+  game whose bodies pass through some colliders therefore puts those colliders in groups too.
+- A sensor (Rapier's sensor collider) pushes nothing and is pushed by nothing; the walkers, the ray
+  casts, the overlaps and the sweeps of 4.4's queries, perception's occlusion test and the
+  navigation bake pass through it. It reports what enters and leaves it.
+- `physics.step` builds a new body's collider with its filter and sets a changed filter on a built
+  collider in place (no rebuild: the pose, velocity and the other contacts stay), comparing the
+  filter with the collider as the solver holds it, so a filter changed by any route is seen, and
+  a collider without one is compared with the default. The filter is part of the solver's state,
+  in the physics cache.
+- `physics.contacts` turns the step's touches into events. Rapier marks an overlap's begin and end
+  with its `SENSOR` flag; a begun or ended contact between two solid colliders is
+  `physics.contact_began` or `physics.contact_ended`, subject the lower id, and an overlap is
+  `physics.sensor_entered` or `physics.sensor_left`, subject the sensor (once for each sensor of
+  the pair), `data.other` the other entity in both. An overlap that ended because its sensor was
+  removed or made solid in the step is reported as the sensor it was.
+- A `Walker` is no Rapier body, so before the events `physics.contacts` tests each walker's box
+  (without a `Collider` of its own: such a walker is reported through its body) against the
+  sensors where the step left them, with the walker's `CollisionFilter` (all groups without one;
+  on a walker it decides only which sensors notice it, never what it stands on). It keeps the
+  sensors overlapped in the walker's `SensorOverlaps {sensors}` (ascending ids, present only while
+  not empty), persisted like any component, so a fork, a restore and a replay report the same
+  entries and exits; a sensor in the list and not overlapped now (moved, made solid or despawned)
+  is left. The walkers' touches join the step's, and all are emitted by pair `(min id, max id)`
+  (8.4), a pair's in the order they were found.
+- A world without a `CollisionFilter` builds every collider as before, and `SensorOverlaps` has no
+  row, so its snapshots, hashes and recorded chains are unchanged.
+
+**Joints** (2026-11-12). `Joint {kind, with, anchor, other_anchor, axis, limits, contacts}` on a
+body's entity ties its body to the body on `with` with one of Rapier's impulse joints: `Fixed`
+(the two move as one), `Revolute` (a turn about `axis`), `Prismatic` (a slide along `axis`) or
+`Spherical` (a turn every way about the anchor). The anchors are points in each body's own frame,
+`axis` is in this body's frame (normalized with `amoris_sim::math::sqrt` before the solver gets
+it), `limits` bounds the turn (radians) or travel (metres) from the frames' alignment, and
+`contacts` says whether the two bodies still collide (default no). The joint frames' rotations are
+the identity, so a `Fixed` joint keeps the two bodies turned alike and a hinge's turn is measured
+from that alignment.
+
+- `physics.step` syncs the joints after the bodies, in `EntityId` order: a solver joint whose
+  entity lost its `Joint`, whose `Joint` changed, or whose bodies were rebuilt or removed (Rapier
+  removes a body's joints with it) is removed, then the missing ones are inserted. Each solver
+  joint carries its entity in the low 64 bits of its `user_data` and a hash of its `Joint` in the
+  high 64, inside the physics cache, as bodies do: nothing derived is rebuilt after a restore, and
+  a changed `Joint` is seen by any route without change detection.
+- A joint that cannot be built (`with` its own entity, either entity without a body, a zero or
+  non-finite axis for the kinds that use one, limits not finite or upside down) is not built and
+  `physics.step` reports `sim.joint_invalid {entity, reason}` every tick until a write mends it.
+- One `Joint` per entity: a body held by two joints (a door on two hinges, a chain link held
+  from both ends) has the second on the other body's entity. Multibody (reduced-coordinate)
+  joints, motors and breaking forces are not built.
+- A world without a `Joint` has no solver joint, so its snapshots, hashes and chains are
+  unchanged.
 
 ## 9. Why this is deterministic
 
@@ -683,6 +827,7 @@ order of 4.4 is total by construction, so there is no ambiguity to detect (14, c
 | `sim.entity_id_invalid` | an id that was never allocated, 0, or not an integer in range | `{id, next}` |
 | `sim.entity_not_found` | an operation needs a live entity and the id's entity is despawned | `{id}` |
 | `sim.entity_alive` | a revival (the editor's undo of a destroy, `entity::revive`) names an id whose entity is live | `{id}` |
+| `sim.parent_cycle` | a `Parent` that would put an entity under itself or under an entity that is under it, in a `world_edit` or a scene (7.3; scripts report `script.parent_cycle`) | `{entity, parent, chain, path?}`: `chain` from `parent` up to `entity`, `path` the parent in the request or the scene |
 | `sim.system_failed` | an invocation failed; its effects were discarded | `{tick, phase, system, entity?, cause}`, `cause` in the error protocol's shape |
 | `sim.internal` | a system panicked | `{tick, phase, system, message}` |
 | `sim.world_poisoned` | `step` on a world whose last tick panicked | `{tick}` |
@@ -743,6 +888,36 @@ what tick semantics add.
    logic.
 10. **Debug against release** and **native against web** (`checks.md`, 7.2): the determinism
     comparison of the sailing scene across build profiles and targets gives the same hash chain.
+11. **Hierarchy** (`sim.hierarchy`): amoris-sim's unit tests of `Hierarchy` and the listing
+    (children and descendants in id order whatever the insertion order; loops, self parents and
+    dangling parents end every walk; a chain of 20,000 is walked without recursion; the listing's
+    roots, depth, `more`, filter, limit and nesting) and `tests/entities.rs` (a despawn takes the
+    subtree and answers its ids, a system's despawn takes it when the system returns, the hierarchy
+    is the same after the storage shuffle); amoris-script's `tests/writes.rs` (a script's despawn
+    in the call and at the commit); amoris-runtime's `tests/hierarchy.rs` (`world.edit`, the undo
+    and redo of destroys, scenes, `project.save`, scripts, a recording that verifies, a fork, a
+    restore and a run with the storage shuffled before every tick, `world.tree`) and
+    `tests/save.rs` (the renumbering of engine components' entity fields); and the check project
+    `tests/fixtures/scenes/hierarchy`, whose rule and inputs parent, move, free and despawn
+    entities through determinism, fork, replay and reload.
+12. **Sensors and groups** (8.5): amoris-physics' `tests/sensors.rs` (a ball falls through a
+    sensor onto the ground with its entry and exit; queries pass through the sensor; groups and
+    masks decide what meets; a floor made a sensor under a resting ball ends the contact and
+    reports the overlap; walkers walk through a sensor, reported only when its mask holds their
+    group, standing inside says nothing, a despawned sensor is left) and amoris-runtime's
+    `tests/sensors.rs` (a script's sensor, its events and a filter written from a script; the
+    walker's `SensorOverlaps` through a snapshot, a fork and a replay).
+13. **Scenes loaded at run time** (7.6): amoris-runtime's `tests/scenes.rs` (`replace` and `add`
+    with the file's places renumbered to the new ids, `scene.loaded`, the cleared history; every
+    refusal changes nothing; a script's load applied after its tick, a fork, and a recording that
+    replays identically after the file is deleted, while the same request with the file gone is a
+    tick error).
+14. **Joints** (8.5): amoris-physics' `tests/joints.rs` (a pendulum keeps its length and falls away
+    once its `Joint` is removed; a hinged door turns within its limits about its hinge; a slider
+    keeps to its axis and stops at its travel; welded boxes fall as one and a lengthened weld is
+    rebuilt; each refusal is reported every tick) and amoris-runtime's `tests/joints.rs` and
+    `engine/bodies.rs` tests (a scene's hinge and a script's pendulum, a script's `with` of none
+    refused, the slots round trip; a recording, a fork and a restore through a changed joint).
 
 ## 13. Performance
 
@@ -806,6 +981,15 @@ is built.
    invocations and boundary writes as transactions, and reserved ids; 12, sorted iteration helpers;
    13, `EntityId::from_f64` has no `next`; 14, the component registry and its checks; 15, decoding
    checks what constructors check; 16, the physics rows as built. Section 13 has their measurements.
+17. **The hierarchy (2026-11-12).** Built as 7.1, 7.3, 7.4 and 8.4 say: the relation is `Parent` on
+    the child, children are read in id order, a despawn takes the subtree. The alternative of 8.4's
+    earlier draft (a `Vec<EntityId>` of children in the parent's component) stores the relation
+    twice and has to be kept in step by every write, restore and fork. Still open: children do not
+    follow their parent (`Transform` is in world space; local transforms, their propagation and
+    scale come with the next step), prefabs with children and nested scene files, an authored
+    sibling order, and a kept child index, which is worth building only if reading the `Parent`
+    rows on demand (once for a despawn at a boundary, once at the call and once at the commit for a
+    script call that despawns, once for a `world.tree`) proves too slow.
 
 ## 15. References
 

@@ -1,12 +1,15 @@
 //! The project's files as commands see them (docs/spec/host-protocol.md 4): `project.info`,
-//! `project.save` (the world written back as `scene.json`), and `scripts.list`, `scripts.read` and
-//! `scripts.write` under `scripts/`. Paths are relative to the project root and may not leave it.
+//! `project.save` (the world written back as `scene.json`, its entity ids renumbered to the
+//! entities' places in the file), and `scripts.list`, `scripts.read` and `scripts.write` under
+//! `scripts/`. Paths are relative to the project root and may not leave it.
 //! None of these changes the world; `scripts.apply` is what loads what was written.
 
+use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
 use amoris_contract::{Problem, detail};
 use amoris_sim::registry::FieldType;
+use amoris_sim::{ComponentRegistry, Parent, Persisted};
 use bevy_ecs::prelude::World;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -14,6 +17,7 @@ use serde_json::{Map, Value, json};
 
 use crate::edit::components_json;
 use crate::scene::{SCENE_FORMAT, project_component};
+use crate::values;
 
 /// `scripts.read`'s parameters.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -245,16 +249,17 @@ pub fn info(root: &Path, name: &str, rate: u32) -> Value {
 }
 
 /// The world as a scene: every live entity in id order with its name and every component whole.
-/// A scene spawns its entities in file order from id 1, so entity fields are renumbered to the
-/// entities' places in the file (a field naming a destroyed entity becomes `null`).
+/// A scene spawns its entities in file order from id 1, so every entity id inside a component is
+/// renumbered to the entity's place in the file, and one naming an entity that is gone becomes
+/// `null`: a project component's entity fields by its schema, an engine component's by its JSON
+/// Schema ([`values::entity_refs`]: every place typed `EntityId`, nested ones included; ids that
+/// are a map's keys are left). A `Parent` whose parent is gone is left out: the entity is a root.
 pub fn scene_of(world: &World) -> Value {
     let live: Vec<(amoris_sim::EntityId, bevy_ecs::prelude::Entity)> =
         world.resource::<amoris_sim::EntityIndex>().iter().collect();
-    let place = |id: u64| -> Value {
-        live.iter()
-            .position(|(i, _)| i.get() == id)
-            .map_or(Value::Null, |n| json!(n + 1))
-    };
+    let places: BTreeMap<u64, u64> = live.iter().map(|(id, _)| id.get()).zip(1u64..).collect();
+    let place = |id: u64| -> Value { places.get(&id).map_or(Value::Null, |n| json!(n)) };
+    let registry = world.resource::<ComponentRegistry>();
     let mut entities = Vec::with_capacity(live.len());
     for (_, e) in &live {
         let mut comps = components_json(world, *e);
@@ -267,16 +272,30 @@ pub fn scene_of(world: &World) -> Value {
             *v = json!({});
         }
         for (cname, v) in comps.iter_mut() {
-            let Some((schema, _)) = project_component(world, cname) else {
-                continue;
-            };
-            for f in schema.fields.iter().filter(|f| f.ty == FieldType::Entity) {
-                if let Some(slot) = v.get_mut(&*f.name)
-                    && let Some(id) = slot.as_u64()
-                {
-                    *slot = place(id);
+            if let Some((schema, _)) = project_component(world, cname) {
+                for f in schema.fields.iter().filter(|f| f.ty == FieldType::Entity) {
+                    if let Some(slot) = v.get_mut(&*f.name)
+                        && let Some(id) = slot.as_u64()
+                    {
+                        *slot = place(id);
+                    }
+                }
+            } else if let Some(entry) = registry.get(cname) {
+                for pointer in values::entity_refs(&entry.json_schema, v) {
+                    if let Some(slot) = v.pointer_mut(&pointer)
+                        && let Some(id) = slot.as_u64()
+                    {
+                        *slot = place(id);
+                    }
                 }
             }
+        }
+        // A `Parent` never holds none: an entity whose parent is gone is a root of the scene.
+        if comps
+            .get(Parent::NAME)
+            .is_some_and(|p| p.get("parent").is_some_and(Value::is_null))
+        {
+            comps.remove(Parent::NAME);
         }
         let mut ent = Map::new();
         if let Some(n) = world.get::<amoris_sim::Name>(*e) {

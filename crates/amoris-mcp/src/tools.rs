@@ -54,11 +54,12 @@ pub fn tools() -> Vec<ToolDef> {
                 query {with, fields ['Boat.speed'], name, limit}: rows. schema {component}. edit \
                 {ops, label}: one undoable transaction, ops [{spawn:{name,prefab,components}} | \
                 {set:{entity,component,value}} (fields merge) | {remove:{entity,component}} | \
-                {destroy:{entity}}]. While the debugger holds the game, reads answer from the \
-                last tick's end (paused_at).",
+                {destroy:{entity}}]. load {path, mode}: load another scene file of the project \
+                ('scenes/two.json'; mode replace or add). While the debugger holds the game, \
+                reads answer from the last tick's end (paused_at).",
             schema: obj(
                 json!({
-                    "action": action(&["tree", "get", "query", "schema", "edit"]),
+                    "action": action(&["tree", "get", "query", "schema", "edit", "load"]),
                     "entity": entity,
                     "components": strings,
                     "filter": {"type": "string"},
@@ -69,6 +70,8 @@ pub fn tools() -> Vec<ToolDef> {
                     "component": {"type": "string"},
                     "ops": {"type": "array", "items": {"type": "object"}},
                     "label": {"type": "string"},
+                    "path": {"type": "string"},
+                    "mode": {"type": "string", "enum": ["replace", "add"]},
                 }),
                 &["action"],
             ),
@@ -118,12 +121,13 @@ pub fn tools() -> Vec<ToolDef> {
                 changed the field, with values and a script's statement); snapshots: kept every \
                 60 ticks; \
                 rewind {tick, bundle}: restore the kept snapshot at or before tick under the \
-                applied scripts (bundle 'snapshot': its own); profile {ticks}: what the last \
-                ticks cost, ms per tick by system and phase.",
+                applied scripts (bundle 'snapshot': its own); saves; save {name, label}: write \
+                the world shown as a save; load {name}: restore a save; profile {ticks}: what \
+                the last ticks cost, ms per tick by system and phase.",
             schema: obj(
                 json!({
                     "action": action(&["status", "pause", "resume", "speed", "step", "snapshots",
-                                       "rewind", "profile"]),
+                                       "rewind", "saves", "save", "load", "profile"]),
                     "ticks": {"type": "integer"},
                     "speed": {"type": "number"},
                     "until": {"type": "object"},
@@ -137,6 +141,8 @@ pub fn tools() -> Vec<ToolDef> {
                         "required": ["entity", "component"]},
                     "tick": {"type": "integer"},
                     "bundle": {"type": "string", "enum": ["applied", "snapshot"]},
+                    "name": {"type": "string", "description": "save, load: the save's name"},
+                    "label": {"type": "string"},
                 }),
                 &["action"],
             ),
@@ -331,6 +337,7 @@ pub fn route(tool: &str, mut args: Map<String, Value>) -> Result<(String, Value)
     let need = |a: Option<String>| a.ok_or_else(|| format!("{tool} needs an action"));
     let rest = |args: Map<String, Value>| Value::Object(args);
     let (method, params) = match tool {
+        "world" if action.as_deref() == Some("load") => ("scene.load".into(), rest(args)),
         "world" | "scripts" | "history" | "assets" | "debug" => {
             (format!("{tool}.{}", need(action)?), rest(args))
         }
@@ -346,6 +353,9 @@ pub fn route(tool: &str, mut args: Map<String, Value>) -> Result<(String, Value)
             "step" => ("time.step".into(), rest(args)),
             "snapshots" => ("snapshots.list".into(), rest(args)),
             "rewind" => ("snapshots.restore".into(), rest(args)),
+            "saves" => ("saves.list".into(), rest(args)),
+            "save" => ("saves.write".into(), rest(args)),
+            "load" => ("saves.load".into(), rest(args)),
             "profile" => (
                 "profile.frame".into(),
                 Value::Object(take(&mut args, &["ticks"])),

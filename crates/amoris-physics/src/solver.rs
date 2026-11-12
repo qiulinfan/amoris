@@ -3,7 +3,9 @@
 //! `physics.contacts`.
 //!
 //! `physics.step` syncs the bodies in from their components in `EntityId` order (new bodies made,
-//! gone ones removed, changed ones rebuilt, moved ones teleported), applies each body's
+//! gone ones removed, changed ones rebuilt, moved ones teleported, a changed `CollisionFilter` set
+//! on the built collider in place, then the joints synced to the bodies as built, `crate::joints`),
+//! applies each body's
 //! `ExternalForce` after resetting Rapier's user forces, steps once, and writes `Transform`,
 //! `Velocity` and the boats' readings back in `EntityId` order. Each body carries its entity in
 //! the low 64 bits of its `user_data` and a hash of its `RigidBody` and `Collider` in the high 64
@@ -19,23 +21,26 @@ use amoris_sim::sim::system_failed;
 use amoris_sim::voxels::Voxels;
 use amoris_sim::{EntityId, SimClock, SystemKey, TickOutput, TickPhase};
 use bevy_ecs::change_detection::DetectChanges;
-use bevy_ecs::prelude::{Query, Ref, Res, ResMut, Resource, With, Without};
+use bevy_ecs::prelude::{Commands, Entity, Query, Ref, Res, ResMut, Resource, With, Without};
 use rapier3d::prelude::{
-    ActiveEvents, ColliderBuilder, ColliderHandle, ColliderSet, CollisionEvent, ContactPair,
-    EventHandler, MassProperties, PhysicsWorld, RigidBodyBuilder, RigidBodyHandle, RigidBodySet,
-    SharedShape, SoftBodySet, SoftBodyTearEvent,
+    ActiveEvents, ColliderBuilder, ColliderHandle, ColliderSet, CollisionEvent,
+    CollisionEventFlags, ContactPair, EventHandler, MassProperties, PhysicsWorld, RigidBodyBuilder,
+    RigidBodyHandle, RigidBodySet, SharedShape, SoftBodySet, SoftBodyTearEvent,
 };
 use serde_json::json;
 
 use crate::boat::{Boat, Floater};
 use crate::body::{
-    BodyKind, Collider, ExternalForce, PartShape, RigidBody, Shape, Transform, Velocity,
+    BodyKind, Collider, CollisionFilter, ExternalForce, PartShape, RigidBody, Shape, Transform,
+    Velocity,
 };
 use crate::geom::{self, V3};
 use crate::readings;
 use crate::sea::{GRAVITY, Sea};
+use crate::sensors::{self, SensorOverlaps};
 use crate::shapes;
 use crate::volumes::{self, ChunkCollider, Volume};
+use crate::walker::Walker;
 
 /// The solver's whole cross-tick state: bodies, colliders, broad and narrow phase with contact
 /// manifolds and warm-start impulses, islands and sleep counters, joints, integration parameters,
@@ -84,11 +89,22 @@ impl BodyIndex {
     }
 }
 
-/// The contacts that began and ended during this tick's step, for `physics.contacts`. Derived:
-/// empty at every boundary.
+/// One begun or ended touch of the step: a contact between two solid colliders, or an overlap
+/// with a sensor; `a` is the lower id.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Touch {
+    pub a: EntityId,
+    pub b: EntityId,
+    pub began: bool,
+    /// Whether `a`'s and `b`'s colliders are sensors: a touch with a sensor is an overlap.
+    pub sensors: (bool, bool),
+}
+
+/// The contacts and sensor overlaps that began and ended during this tick's step, for
+/// `physics.contacts`. Derived: empty at every boundary.
 #[derive(Resource, Debug, Default)]
 pub struct ContactLog {
-    pub(crate) events: Vec<(EntityId, EntityId, bool)>,
+    pub(crate) events: Vec<Touch>,
 }
 
 /// Present after a restore whose physics cache referred to shapes that the restored components do
@@ -322,8 +338,10 @@ fn insert(
     vel: Option<&Velocity>,
     body: Option<&RigidBody>,
     collider: &Collider,
+    filter: Option<&CollisionFilter>,
 ) -> Result<RigidBodyHandle, Problem> {
     crate::body::validate(entity, body, collider)?;
+    let filter = filter.copied().unwrap_or_default();
     let pose = pose_of(entity, tf)?;
     let dynamic = body.is_some_and(|b| b.kind == BodyKind::Dynamic);
     // A fixed body's shape comes from the process's table of built shapes (`shapes`), which the
@@ -370,6 +388,8 @@ fn insert(
         .density(geom::f32_of(collider.density.unwrap_or(0.0)))
         .friction(geom::f32_of(collider.friction))
         .restitution(geom::f32_of(collider.restitution))
+        .sensor(filter.sensor)
+        .collision_groups(sensors::groups_of(&filter))
         .active_events(ActiveEvents::COLLISION_EVENTS)
         .user_data(u128::from(entity.get()))
         .build();
@@ -383,12 +403,17 @@ fn insert(
     Ok(handle)
 }
 
-/// Collects the step's contact events by entity. A collider removed before the step (its body
-/// despawned or rebuilt) is no longer in the set when Rapier reports its pairs' ends, so `removed`
-/// names its entity.
+/// Collects the step's contact and sensor events by entity. A collider removed before the step
+/// (its body despawned or rebuilt) is no longer in the set when Rapier reports its pairs' ends, so
+/// `removed` names its entity. Rapier marks an overlap's events with `SENSOR`; which side is the
+/// sensor is read from the collider, except that an ended overlap was the one before the step's
+/// changes: `was_sensor` lists the colliders that were sensors and are gone or solid now, and
+/// `now_sensor` those that became sensors in this step's sync.
 struct Collector {
-    events: Mutex<Vec<(EntityId, EntityId, bool)>>,
+    events: Mutex<Vec<Touch>>,
     removed: Vec<(ColliderHandle, EntityId)>,
+    was_sensor: Vec<ColliderHandle>,
+    now_sensor: Vec<ColliderHandle>,
 }
 
 impl EventHandler for Collector {
@@ -399,10 +424,11 @@ impl EventHandler for Collector {
         event: CollisionEvent,
         _pair: Option<&ContactPair>,
     ) {
-        let (a, b, began) = match event {
-            CollisionEvent::Started(a, b, _) => (a, b, true),
-            CollisionEvent::Stopped(a, b, _) => (a, b, false),
+        let (a, b, began, flags) = match event {
+            CollisionEvent::Started(a, b, f) => (a, b, true, f),
+            CollisionEvent::Stopped(a, b, f) => (a, b, false, f),
         };
+        let overlap = flags.contains(CollisionEventFlags::SENSOR);
         // Handles carry their generation, so a rebuilt body's new collider in a reused slot is not
         // its removed one.
         let id = |h: ColliderHandle| {
@@ -411,10 +437,35 @@ impl EventHandler for Collector {
                 .and_then(|c| entity_of(c.user_data))
                 .or_else(|| self.removed.iter().find(|r| r.0 == h).map(|r| r.1))
         };
-        if let (Some(a), Some(b)) = (id(a), id(b))
+        let sensor = |h: ColliderHandle| {
+            overlap
+                && if began {
+                    colliders.get(h).is_some_and(|c| c.is_sensor())
+                } else if self.was_sensor.contains(&h) {
+                    true
+                } else {
+                    !self.now_sensor.contains(&h) && colliders.get(h).is_some_and(|c| c.is_sensor())
+                }
+        };
+        if let (Some(ia), Some(ib)) = (id(a), id(b))
             && let Ok(mut v) = self.events.lock()
         {
-            v.push((a.min(b), a.max(b), began));
+            let (sa, sb) = (sensor(a), sensor(b));
+            v.push(if ia <= ib {
+                Touch {
+                    a: ia,
+                    b: ib,
+                    began,
+                    sensors: (sa, sb),
+                }
+            } else {
+                Touch {
+                    a: ib,
+                    b: ia,
+                    began,
+                    sensors: (sb, sa),
+                }
+            });
         }
     }
 
@@ -465,6 +516,7 @@ type BodyItem<'a> = (
     Option<&'a mut Boat>,
     Option<&'a Floater>,
     Option<&'a crate::vessel::Vessel>,
+    Option<&'a CollisionFilter>,
 );
 
 fn not_finite(entity: EntityId, what: &str) -> Problem {
@@ -499,6 +551,7 @@ pub(crate) fn step(
     mut loose: Query<(&EntityId, &mut ExternalForce), Without<Collider>>,
     volumes: Query<(&EntityId, &Voxels, Option<&Transform>), Without<Collider>>,
     clad: Query<(&EntityId, &Voxels), With<Collider>>,
+    joints: Query<(&EntityId, &crate::joints::Joint)>,
     rebuilt: Option<ResMut<RebuiltSolver>>,
 ) {
     let key = SystemKey::new("physics.step").ok();
@@ -530,6 +583,8 @@ pub(crate) fn step(
     //    contacts, which Rapier reports during the step.
     let mut kept: Vec<Option<RigidBodyHandle>> = vec![None; items.len()];
     let mut removed = Vec::new();
+    let mut was_sensor = Vec::new();
+    let mut now_sensor = Vec::new();
     let mut i = 0;
     for &(id, handle) in &index.entries {
         while i < items.len() && *items[i].0 < id {
@@ -558,8 +613,13 @@ pub(crate) fn step(
         }
         if let Some(b) = world.bodies.get(handle) {
             for &c in b.colliders() {
-                if let Some(e) = world.colliders.get(c).and_then(|c| entity_of(c.user_data)) {
+                if let Some(co) = world.colliders.get(c)
+                    && let Some(e) = entity_of(co.user_data)
+                {
                     removed.push((c, e));
+                    if co.is_sensor() {
+                        was_sensor.push(c);
+                    }
                 }
             }
         }
@@ -570,7 +630,7 @@ pub(crate) fn step(
     //    written from outside, and apply each body's gathered force.
     let mut entries = Vec::with_capacity(items.len());
     for (slot, item) in kept.iter().zip(items.iter_mut()) {
-        let (id, tf, vel, body, collider, ext, _, _, _) = item;
+        let (id, tf, vel, body, collider, ext, _, _, _, filter) = item;
         let id = **id;
         // The tick's gathered force goes to the solver once, whatever becomes of the body.
         let force = ext.as_deref_mut().map(std::mem::take).unwrap_or_default();
@@ -587,7 +647,15 @@ pub(crate) fn step(
         };
         let handle = match slot {
             Some(h) => *h,
-            None => match insert(world, id, tf, vel.as_deref(), body.as_deref(), collider) {
+            None => match insert(
+                world,
+                id,
+                tf,
+                vel.as_deref(),
+                body.as_deref(),
+                collider,
+                filter.as_deref(),
+            ) {
                 Ok(h) => h,
                 Err(p) => {
                     report(id, p);
@@ -596,6 +664,35 @@ pub(crate) fn step(
             },
         };
         entries.push((id, handle));
+        // The filter is set on the built collider in place, compared as the solver holds it:
+        // a body without a `CollisionFilter` is solid and in every group.
+        let want = filter.as_deref().copied().unwrap_or_default();
+        let groups = sensors::groups_of(&want);
+        // `get_mut` marks a collider modified, which Rapier acts on: it is taken only to change.
+        let differ: Vec<ColliderHandle> = world.bodies.get(handle).map_or(Vec::new(), |b| {
+            b.colliders()
+                .iter()
+                .copied()
+                .filter(|c| {
+                    world.colliders.get(*c).is_some_and(|co| {
+                        co.is_sensor() != want.sensor || co.collision_groups() != groups
+                    })
+                })
+                .collect()
+        });
+        for c in differ {
+            if let Some(co) = world.colliders.get_mut(c) {
+                if co.is_sensor() != want.sensor {
+                    if want.sensor {
+                        now_sensor.push(c);
+                    } else {
+                        was_sensor.push(c);
+                    }
+                }
+                co.set_sensor(want.sensor);
+                co.set_collision_groups(groups);
+            }
+        }
         let Some(b) = world.bodies.get_mut(handle) else {
             continue;
         };
@@ -628,6 +725,10 @@ pub(crate) fn step(
         }
     }
     index.entries = entries;
+    // 2b. The joints, between the bodies as now built.
+    let wanted: Vec<(EntityId, &crate::joints::Joint)> =
+        by_id(&joints).map(|(id, j)| (*id, j)).collect();
+    crate::joints::sync(world, &index, &wanted, &mut report);
     // A force gathered on an entity without a collider has no body to act on; it does not carry
     // over to the next tick either.
     for (_, mut f) in by_id_mut(&mut loose) {
@@ -668,6 +769,8 @@ pub(crate) fn step(
     let collector = Collector {
         events: Mutex::new(Vec::new()),
         removed,
+        was_sensor,
+        now_sensor,
     };
     world.step_with_events(&(), &collector);
     log.events = collector.events.into_inner().unwrap_or_default();
@@ -678,7 +781,7 @@ pub(crate) fn step(
     let time = clock.time();
     let mut e = 0;
     for item in &mut items {
-        let (id, tf, vel, _, _, _, boat, floater, vessel) = item;
+        let (id, tf, vel, _, _, _, boat, floater, vessel, _) = item;
         let id = **id;
         let Some(tf) = tf.as_deref_mut() else {
             continue;
@@ -730,30 +833,107 @@ pub(crate) fn step(
     }
 }
 
-/// `physics.contacts`: the step's contact begin and end events, by pair `(min id, max id)` and
-/// then in the order the step reported them (simulation.md 8.4): `physics.contact_began` and
-/// `physics.contact_ended`, subject the lower id, data `{other}`.
-pub(crate) fn contacts(mut log: ResMut<ContactLog>, mut emit: amoris_sim::Emit) {
+/// `physics.contacts`: the step's touches as events (simulation.md 8.4 and 8.5), by pair
+/// `(min id, max id)` and then in the order the step reported them. A contact between two solid
+/// colliders is `physics.contact_began` or `physics.contact_ended`, subject the lower id; an
+/// overlap with a sensor is `physics.sensor_entered` or `physics.sensor_left`, subject the sensor
+/// (once for each sensor of the pair), data `{other}` in both.
+///
+/// Before them, each `Walker` without a `Collider` of its own is tested against the sensors where
+/// the step left them ([`sensors::overlapped`]); a sensor it overlaps now and not in its
+/// [`SensorOverlaps`], or the other way round, is a touch of the pair, and the list is written
+/// (removed when it empties).
+pub(crate) fn contacts(
+    mut log: ResMut<ContactLog>,
+    mut emit: amoris_sim::Emit,
+    physics: Option<Res<Physics>>,
+    mut walkers: Query<WalkerItem<'static>, Without<Collider>>,
+    mut commands: Commands,
+) {
     let mut events = std::mem::take(&mut log.events);
-    events.sort_by_key(|e| (e.0, e.1));
-    for (a, b, began) in events {
-        let kind = if began {
-            "physics.contact_began"
-        } else {
-            "physics.contact_ended"
-        };
-        let (Ok(kind), Ok(data)) = (
-            amoris_sim::EventKind::new(kind),
-            amoris_sim::PlainData::object(vec![(
-                "other".into(),
-                amoris_sim::PlainData::Number(b.to_f64()),
-            )]),
-        ) else {
-            continue;
-        };
-        emit.emit(amoris_sim::NewEvent::new(kind).subject(a).data(data));
+    if let Some(physics) = physics.as_deref() {
+        for (entity, id, walker, tf, filter, overlaps) in by_id_mut(&mut walkers) {
+            let now = sensors::overlapped(physics, *id, walker, tf.position, filter);
+            let before: &[EntityId] = overlaps.as_deref().map_or(&[], |o| &o.sensors);
+            if before == now.as_slice() {
+                continue;
+            }
+            let (entered, left) = sensors::changes(before, &now);
+            for (sensor, began) in left
+                .into_iter()
+                .map(|s| (s, false))
+                .chain(entered.into_iter().map(|s| (s, true)))
+            {
+                events.push(Touch {
+                    a: sensor.min(*id),
+                    b: sensor.max(*id),
+                    began,
+                    sensors: (sensor < *id, sensor > *id),
+                });
+            }
+            match overlaps {
+                _ if now.is_empty() => {
+                    commands.entity(entity).remove::<SensorOverlaps>();
+                }
+                Some(mut o) => o.sensors = now,
+                None => {
+                    commands
+                        .entity(entity)
+                        .insert(SensorOverlaps { sensors: now });
+                }
+            }
+        }
+    }
+    events.sort_by_key(|e| (e.a, e.b));
+    for t in events {
+        let mut out = Vec::with_capacity(2);
+        match t.sensors {
+            (false, false) => out.push((
+                if t.began {
+                    "physics.contact_began"
+                } else {
+                    "physics.contact_ended"
+                },
+                t.a,
+                t.b,
+            )),
+            (sa, sb) => {
+                let kind = if t.began {
+                    "physics.sensor_entered"
+                } else {
+                    "physics.sensor_left"
+                };
+                if sa {
+                    out.push((kind, t.a, t.b));
+                }
+                if sb {
+                    out.push((kind, t.b, t.a));
+                }
+            }
+        }
+        for (kind, subject, other) in out {
+            let (Ok(kind), Ok(data)) = (
+                amoris_sim::EventKind::new(kind),
+                amoris_sim::PlainData::object(vec![(
+                    "other".into(),
+                    amoris_sim::PlainData::Number(other.to_f64()),
+                )]),
+            ) else {
+                continue;
+            };
+            emit.emit(amoris_sim::NewEvent::new(kind).subject(subject).data(data));
+        }
     }
 }
+
+type WalkerItem<'a> = (
+    Entity,
+    &'a EntityId,
+    &'a Walker,
+    &'a Transform,
+    Option<&'a CollisionFilter>,
+    Option<bevy_ecs::prelude::Mut<'a, SensorOverlaps>>,
+);
 
 /// The velocity of the body's material point `p` (world), for a body whose centre of mass is
 /// `com` and whose velocity is `v`.

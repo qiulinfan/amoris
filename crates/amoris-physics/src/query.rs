@@ -1,7 +1,8 @@
 //! Spatial queries over the solver and the fields (docs/spec/architecture.md 4.4: the general
 //! primitives perception and scripts use, charter 4.2.4): a ray cast, the bodies overlapping a
 //! ball, the water and the wind at a point. They read the world at a boundary; the solver's
-//! broad phase is as the last step left it, so a body moved since is found where it was.
+//! broad phase is as the last step left it, so a body moved since is found where it was. None of
+//! them meets a sensor (a `CollisionFilter` with `sensor`), which reports its own overlaps.
 
 use amoris_contract::codes::{Range, out_of_range};
 use amoris_contract::{Pointer, Problem};
@@ -33,7 +34,7 @@ pub fn cast_ray(
     exclude: Option<EntityId>,
 ) -> Option<RayHit> {
     let physics = world.get_resource::<Physics>()?;
-    let mut filter = QueryFilter::default();
+    let mut filter = QueryFilter::default().exclude_sensors();
     if let Some(h) = exclude.and_then(|id| world.get_resource::<BodyIndex>()?.get(id)) {
         filter = filter.exclude_rigid_body(h);
     }
@@ -132,7 +133,7 @@ pub fn cast_ray_among(
     let keep = |_: rapier3d::prelude::ColliderHandle, c: &rapier3d::prelude::Collider| {
         entity_of(c.user_data).is_some_and(accept)
     };
-    let filter = QueryFilter::default().predicate(&keep);
+    let filter = QueryFilter::default().exclude_sensors().predicate(&keep);
     let ray = Ray::new(geom::vec_in(origin), geom::vec_in(dir));
     let Some((handle, hit)) =
         physics
@@ -167,7 +168,7 @@ pub fn overlap_ball(world: &World, center: V3, radius: f64) -> Vec<EntityId> {
     let pose = geom::pose_in(center, geom::IDENTITY);
     let mut out: Vec<EntityId> = physics
         .world
-        .intersect_shape(pose, &*ball, QueryFilter::default())
+        .intersect_shape(pose, &*ball, QueryFilter::default().exclude_sensors())
         .filter_map(|(_, c)| entity_of(c.user_data))
         .collect();
     out.sort_unstable();

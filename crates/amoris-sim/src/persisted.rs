@@ -17,7 +17,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_reflection::{Samples, Tracer, TracerConfig};
 
-use crate::entity::{EntityAllocator, EntityId, EntityIndex, Name, ReservedIds};
+use crate::entity::{EntityAllocator, EntityId, EntityIndex, Name, Parent, ReservedIds};
 use crate::event::{EventCounter, EventInbox, EventKind, EventOutbox};
 use crate::registry::ComponentRegistry;
 use crate::rng::{RngTable, WorldSeed};
@@ -77,9 +77,10 @@ pub trait RegisterPersisted {
     fn rebuild(&mut self, name: &'static str, f: fn(&mut World)) -> &mut Self;
 }
 
-/// Declares this crate's types: the entities, the clock, the seed, the event counter and inbox and
-/// `Name` as persisted; the index, the RNG table, the outbox and the tick's scratch state as
-/// derived (rebuilt by [`rebuild_derived`]); the component registry as ignored.
+/// Declares this crate's types: the entities, the clock, the seed, the event counter and inbox,
+/// `Name` and `Parent` as persisted; the index, the RNG table, the outbox and the tick's scratch
+/// state as derived (rebuilt by [`rebuild_derived`]); the component registry as ignored. The
+/// hierarchy stores nothing but `Parent`, so it has nothing derived to rebuild.
 pub fn declare<R: RegisterPersisted>(r: &mut R) {
     r.entities()
         .resource::<SimClock>()
@@ -87,6 +88,7 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
         .resource::<EventCounter>()
         .resource::<EventInbox>()
         .component::<Name>()
+        .component::<Parent>()
         .derived::<EntityIndex>("rebuilt from the EntityId components in one sorted pass")
         .derived::<RngTable>("empty at every boundary; streams derive from the seed and the tick")
         .derived::<ReservedIds>("a reservation ends with its invocation, tick or boundary write")
@@ -146,6 +148,7 @@ persisted! {
     WorldSeed => "WorldSeed",
     EventCounter => "EventCounter",
     Name => "Name",
+    Parent => "Parent",
 }
 
 impl Persisted for EventInbox {
@@ -246,6 +249,7 @@ mod tests {
         EventCounter::trace(&mut t, &s).unwrap();
         EventInbox::trace(&mut t, &s).unwrap();
         Name::trace(&mut t, &s).unwrap();
+        Parent::trace(&mut t, &s).unwrap();
         t.trace_type::<EntityAllocator>(&s).unwrap();
         let reg = t.registry().unwrap();
         for name in [
@@ -261,6 +265,7 @@ mod tests {
             "PlainData",
             "EntityId",
             "Name",
+            "Parent",
         ] {
             assert!(
                 reg.contains_key(name),
@@ -314,6 +319,22 @@ mod tests {
         refused(
             from_str::<Name>(&format!("\"{}\"", "x".repeat(65))).map(drop),
             "a 65-byte name",
+        );
+        assert_eq!(
+            from_str::<Parent>(r#"{"parent":7}"#).unwrap().parent,
+            EntityId::new(7).unwrap()
+        );
+        refused(
+            from_str::<Parent>(r#"{"parent":0}"#).map(drop),
+            "a parent of 0",
+        );
+        refused(
+            from_str::<Parent>(r#"{"parent":null}"#).map(drop),
+            "a parent of none",
+        );
+        refused(
+            from_str::<Parent>(r#"{"parent":7,"order":1}"#).map(drop),
+            "a Parent with an unknown field",
         );
         refused(from_str::<EventKind>(r#""Bad""#).map(drop), "kind Bad");
         refused(

@@ -30,7 +30,9 @@ pub mod time;
 pub mod voxels;
 
 pub use data::PlainData;
-pub use entity::{EntityAllocator, EntityId, EntityIndex, MAX_ENTITY_ID, Name, SimCommands};
+pub use entity::{
+    EntityAllocator, EntityId, EntityIndex, Hierarchy, MAX_ENTITY_ID, Name, Parent, SimCommands,
+};
 pub use event::{
     Emit, Event, EventCounter, EventInbox, EventKind, EventOutbox, EventSeq, NewEvent,
 };

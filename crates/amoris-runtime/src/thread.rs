@@ -1015,6 +1015,22 @@ impl Loop {
         Ok(v)
     }
 
+    /// `saves.load` (server.md 3.3): the game loads and restores the save, then the loop does what
+    /// a restore asks of it: a waiting step is dropped, the kept snapshots after the save's tick
+    /// go, and presenters see a replaced world. A save that does not load changes nothing.
+    fn load_save(&mut self, cmd: &Command) -> Result<Value, Problem> {
+        let loaded = self.game.apply(cmd)?;
+        self.drop_steps(&problem(
+            "saves.loaded",
+            "A save was loaded; the step was dropped.".into(),
+        ));
+        self.kept.drop_after(self.game.tick().0);
+        self.world_replaced();
+        let mut v = self.status();
+        v["loaded"] = loaded["loaded"].clone();
+        Ok(v)
+    }
+
     fn time_control(&mut self, params: &Value) -> Result<Value, Problem> {
         let p: TimeControlParams = crate::decode(params, "time.control")?;
         if let Some(speed) = p.speed {
@@ -1126,6 +1142,11 @@ impl Loop {
             }
             "snapshots.restore" => {
                 let r = self.restore(&e.params);
+                e.reply.send(json(r));
+            }
+            "saves.load" => {
+                let cmd = Command::new(e.source, e.seq, &e.name, e.params);
+                let r = self.load_save(&cmd);
                 e.reply.send(json(r));
             }
             "snapshot" => {

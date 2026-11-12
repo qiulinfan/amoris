@@ -1,14 +1,14 @@
 //! Entities (docs/spec/simulation.md 7, 8 and 12): id allocation and despawn (`sim.entity_ids`),
-//! iteration in id order, the storage shuffle (`sim.shuffle`) with its negative control, and the
-//! component registry.
+//! the hierarchy a despawn takes with it, iteration in id order, the storage shuffle
+//! (`sim.shuffle`) with its negative control, and the component registry.
 
 mod common;
 
 use amoris_sim::order::{by_id, by_id_mut, shuffle_storage};
 use amoris_sim::registry::{ComponentOrigin, ComponentSchema, FieldType, FieldValue};
 use amoris_sim::{
-    ComponentRegistry, EntityAllocator, EntityId, Name, NoHooks, Persisted, RngTable, RunCondition,
-    SimCommands, TickPhase, entity,
+    ComponentRegistry, EntityAllocator, EntityId, Hierarchy, Name, NoHooks, Parent, Persisted,
+    RngTable, RunCondition, SimCommands, TickPhase, entity,
 };
 use bevy_ecs::prelude::*;
 use common::{Seen, Value, id, seen, sim, state_hash};
@@ -102,6 +102,173 @@ fn spawns_from_systems_land_when_the_system_returns() {
     s.step(&mut NoHooks).unwrap();
     assert!(seen(&s).contains(&"despawn true false".to_owned()));
     assert!(entity::entity(s.world(), id(1)).is_none());
+}
+
+/// The live ids, ascending.
+fn live(s: &amoris_sim::Sim) -> Vec<u64> {
+    let index = s.world().resource::<amoris_sim::EntityIndex>();
+    index.ids().map(EntityId::get).collect()
+}
+
+fn under(n: u64) -> Parent {
+    Parent { parent: id(n) }
+}
+
+/// 1 > (2 > (4, 5 > 7), 3), with 6 apart: ids as spawned.
+fn family() -> amoris_sim::Sim {
+    let mut s = sim(1);
+    let mut b = s.boundary();
+    b.spawn(Name::new("root").unwrap()).unwrap();
+    b.spawn(under(1)).unwrap();
+    b.spawn(under(1)).unwrap();
+    b.spawn(under(2)).unwrap();
+    b.spawn(under(2)).unwrap();
+    b.spawn(()).unwrap();
+    b.spawn(under(5)).unwrap();
+    s
+}
+
+#[test]
+fn despawning_a_parent_takes_everything_under_it() {
+    let mut s = family();
+    let next = s.world().resource::<EntityAllocator>().next();
+    // A child goes with what is under it and leaves its parent and its sibling.
+    let gone = s.boundary().despawn_tree(id(5)).unwrap();
+    assert_eq!(gone, [id(5), id(7)]);
+    assert_eq!(live(&s), [1, 2, 3, 4, 6]);
+    // The parent: itself first, then each child before its own children, siblings ascending.
+    let mut s = family();
+    let gone = s.boundary().despawn_tree(id(1)).unwrap();
+    assert_eq!(gone, [id(1), id(2), id(4), id(5), id(7), id(3)]);
+    assert_eq!(live(&s), [6], "the entity apart stays");
+    assert_eq!(s.world().resource::<EntityAllocator>().next(), next);
+    assert_eq!(s.boundary().despawn(id(1)), Ok(false), "a second despawn");
+    assert_eq!(
+        s.boundary().despawn(id(7)),
+        Ok(false),
+        "taken with its parent"
+    );
+    assert_eq!(s.boundary().despawn_tree(id(4)), Ok(vec![]));
+    assert_eq!(
+        s.boundary().despawn_tree(id(40)).unwrap_err().code,
+        "sim.entity_id_invalid"
+    );
+    // `despawn` answers whether the entity was live, as before, and takes the same entities.
+    let mut s = family();
+    assert_eq!(entity::despawn(s.world_mut(), id(2)), Ok(true));
+    assert_eq!(live(&s), [1, 3, 6]);
+    // The world steps on: the index holds what the world does.
+    s.step(&mut NoHooks).unwrap();
+    assert_eq!(live(&s), [1, 3, 6]);
+    assert_eq!(
+        s.boundary().spawn(()).unwrap().get(),
+        8,
+        "ids are not reused"
+    );
+}
+
+/// What no checked write leaves but a world may hold (a component inserted from Rust, a snapshot
+/// made by hand): a despawn ends, takes the loop it is in whole, and leaves what only names a
+/// despawned entity.
+#[test]
+fn a_despawn_ends_on_loops_and_dangling_parents() {
+    let mut s = sim(1);
+    let mut b = s.boundary();
+    b.spawn(under(2)).unwrap(); // 1 and 2 are each other's parent,
+    b.spawn(under(1)).unwrap();
+    b.spawn(under(2)).unwrap(); // 3 hangs under the loop,
+    b.spawn(under(4)).unwrap(); // 4 is its own parent,
+    b.spawn(under(9)).unwrap(); // 5 names an id never given out,
+    b.spawn(()).unwrap();
+    let h = Hierarchy::read(s.world());
+    assert_eq!(h.parent(id(5)), Some(id(9)));
+    assert_eq!(s.boundary().despawn_tree(id(4)), Ok(vec![id(4)]));
+    assert_eq!(
+        s.boundary().despawn_tree(id(1)),
+        Ok(vec![id(1), id(2), id(3)])
+    );
+    assert_eq!(live(&s), [5, 6]);
+    // 7 comes under 6; 6 is despawned behind it, so 7 names an entity that is gone and stays.
+    let child = s.boundary().spawn(under(6)).unwrap();
+    let e = entity::entity(s.world(), id(6)).unwrap();
+    s.world_mut().despawn(e);
+    amoris_sim::EntityIndex::rebuild(s.world_mut());
+    assert_eq!(live(&s), [5, child.get()]);
+    assert_eq!(s.boundary().despawn(id(6)), Ok(false));
+    assert_eq!(live(&s), [5, 7]);
+    s.step(&mut NoHooks).unwrap();
+}
+
+#[test]
+fn a_system_despawn_takes_the_descendants_when_the_system_returns() {
+    let mut s = family();
+    s.add_system(
+        "test.feller",
+        TickPhase::Update,
+        RunCondition::every(2, 1).unwrap(),
+        |mut cmd: SimCommands, q: Query<&EntityId>, mut seen: ResMut<Seen>| {
+            // A child spawned before the call goes with its parent; one staged after it does not.
+            let early = cmd.spawn(Parent { parent: id(2) }).unwrap();
+            let first = cmd.despawn(id(2)).unwrap();
+            let again = cmd.despawn(id(2)).unwrap();
+            // A descendant despawned by hand in the same system is no error.
+            let child = cmd.despawn(id(5)).unwrap();
+            let late = cmd.spawn(Parent { parent: id(2) }).unwrap();
+            seen.0.push(format!(
+                "despawn {first} {again} {child}; {} live, 4 known {}, spawned {} and {}",
+                q.count(),
+                cmd.entity(id(4)).is_some(),
+                early.get(),
+                late.get()
+            ));
+        },
+    )
+    .unwrap();
+    s.add_system(
+        "test.counter",
+        TickPhase::Forces,
+        RunCondition::Always,
+        |q: Query<&EntityId>, mut seen: ResMut<Seen>| {
+            let mut ids: Vec<u64> = by_id(&q).map(|id| id.get()).collect();
+            ids.sort_unstable();
+            seen.0.push(format!("then {ids:?}"));
+        },
+    )
+    .unwrap();
+    s.step(&mut NoHooks).unwrap();
+    assert_eq!(
+        seen(&s),
+        [
+            "despawn true false true; 7 live, 4 known true, spawned 8 and 9",
+            "then [1, 3, 6, 9]"
+        ]
+    );
+    assert_eq!(live(&s), [1, 3, 6, 9]);
+    // The late child names a parent that is gone: it lists nowhere under it, and nothing loops.
+    let h = Hierarchy::read(s.world());
+    assert_eq!(h.parent(id(9)), Some(id(2)));
+    assert!(h.descendants(id(1)).contains(&id(3)));
+    s.step(&mut NoHooks).unwrap();
+    assert_eq!(live(&s), [1, 3, 6, 9]);
+}
+
+/// The hierarchy is read from the rows by id, so it is the same whatever the storage's order.
+#[test]
+fn the_hierarchy_does_not_depend_on_storage_order() {
+    let mut s = family();
+    let before = Hierarchy::read(s.world());
+    let children =
+        |h: &Hierarchy, n: u64| -> Vec<u64> { h.children(id(n)).map(EntityId::get).collect() };
+    assert_eq!(children(&before, 1), [2, 3]);
+    assert_eq!(children(&before, 2), [4, 5]);
+    for seed in 0..5 {
+        shuffle_storage(s.world_mut(), seed);
+        assert_eq!(Hierarchy::read(s.world()), before);
+    }
+    assert_eq!(
+        s.boundary().despawn_tree(id(1)).unwrap(),
+        [id(1), id(2), id(4), id(5), id(7), id(3)]
+    );
 }
 
 #[test]
@@ -289,6 +456,23 @@ fn the_registry_names_versions_and_schemas() {
     assert_eq!(reg.suggest("Nmae"), ["Name"]);
     let e = ComponentRegistry::register::<Name>(s.world_mut(), None).unwrap_err();
     assert_eq!(e.code, "sim.component_duplicate");
+    // `Parent` is in every world: one field, an entity id that is never none.
+    let parent = reg_of(&s, "Parent");
+    assert_eq!(parent.version, Parent::VERSION);
+    assert_eq!(parent.origin, ComponentOrigin::Engine);
+    assert!(parent.doc.contains("under another"), "{}", parent.doc);
+    assert_eq!(
+        parent.json_schema["required"],
+        serde_json::json!(["parent"])
+    );
+    assert_eq!(
+        parent.json_schema["properties"]["parent"]["$ref"],
+        serde_json::json!("#/$defs/EntityId")
+    );
+    assert_eq!(
+        parent.json_schema["additionalProperties"],
+        serde_json::json!(false)
+    );
     // A project component: fields in order, slots assigned, a JSON Schema of an object.
     let schema = ComponentSchema::new(
         "Tally",
@@ -324,14 +508,14 @@ fn the_registry_names_versions_and_schemas() {
     ComponentRegistry::register_project(s.world_mut(), schema, cid).unwrap();
     let reg = s.world().resource::<ComponentRegistry>();
     let names: Vec<&str> = reg.entries().iter().map(|e| &*e.name).collect();
-    assert_eq!(names, ["Name", "Tally"]);
+    assert_eq!(names, ["Name", "Parent", "Tally"]);
     let tally = reg.get("Tally").unwrap();
     assert_eq!(
         tally.json_schema["properties"]["at"]["required"],
         serde_json::json!(["x", "y", "z"])
     );
     assert_eq!(reg.by_id(cid).map(|e| &*e.name), Some("Tally"));
-    assert_eq!(reg.info()[1].version, 2);
+    assert_eq!(reg.info()[2].version, 2);
     // Names and docs are checked.
     let bad = ComponentSchema::new("tally", ComponentOrigin::Project, 1, "", vec![]);
     assert_eq!(bad.unwrap_err().code, "sim.component_name_invalid");
@@ -346,6 +530,14 @@ fn the_registry_names_versions_and_schemas() {
         undocumented.unwrap_err().code,
         "sim.component_field_invalid"
     );
+}
+
+/// A copy of the registry's entry for `name`.
+fn reg_of(s: &amoris_sim::Sim, name: &str) -> amoris_sim::registry::ComponentEntry {
+    let reg = s.world().resource::<ComponentRegistry>();
+    reg.get(name)
+        .unwrap_or_else(|| panic!("{name} is registered"))
+        .clone()
 }
 
 /// A project declaration is checked whole before anything registers: defaults must fit their type

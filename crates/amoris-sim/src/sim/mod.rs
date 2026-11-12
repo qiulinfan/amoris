@@ -28,7 +28,7 @@ use bevy_ecs::prelude::{IntoSystem, World};
 use bevy_ecs::system::{RunSystemError, System};
 use serde_json::json;
 
-use crate::entity::{EntityAllocator, EntityIndex, Name, ReservedIds};
+use crate::entity::{EntityAllocator, EntityIndex, Name, Parent, ReservedIds};
 use crate::event::{Event, EventCounter, EventInbox, EventOutbox};
 use crate::registry::ComponentRegistry;
 use crate::rng::{RngTable, WorldSeed};
@@ -84,8 +84,8 @@ pub struct Sim {
 
 impl Sim {
     /// A new world at tick 0 with the given rate and seed (`sim.tick_rate_invalid`,
-    /// `rng.seed_invalid`), holding the simulation's resources and the `Name` component's
-    /// registration.
+    /// `rng.seed_invalid`), holding the simulation's resources and the registrations of the
+    /// `Name` and `Parent` components.
     pub fn new(config: SimConfig) -> Result<Sim, Problem> {
         let rate = TickRate::new(config.rate.0)?;
         let seed = WorldSeed::new(config.seed)?;
@@ -101,6 +101,7 @@ impl Sim {
         world.insert_resource(ComponentRegistry::default());
         crate::persisted::rebuild_derived(&mut world);
         ComponentRegistry::register::<Name>(&mut world, None)?;
+        ComponentRegistry::register::<Parent>(&mut world, None)?;
         let mut sim = Sim {
             world,
             systems: Vec::new(),

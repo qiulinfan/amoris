@@ -3,14 +3,17 @@
 //! call, the cells that changed bit for bit are checked and written back.
 
 use amoris_sim::EntityId;
-use amoris_sim::entity::EntityIndex;
+use amoris_sim::entity::{EntityIndex, entity};
 use amoris_sim::registry::FieldType;
 use bevy_ecs::prelude::World;
 use rquickjs::{Ctx, Object, Persistent, TypedArray, Value};
 use serde_json::json;
 
 use super::{NResult, Thrown, arg, with_call};
-use crate::call::{CallState, CellWrite, Column, Comp, QueryRecord, resolve_comp};
+use crate::access::SlotRefusal;
+use crate::call::{
+    CallState, CellWrite, Column, Comp, QueryRecord, not_held, parent_slot, resolve_comp,
+};
 use crate::convert::{check_number, freeze_new, is_plain_object};
 use crate::error::{ErrorPhase, ScriptError};
 use crate::host::{Shared, charge_host_bytes, shared};
@@ -281,10 +284,24 @@ pub fn changed_cells<'js>(
         }
         for (row, id) in q.ids.iter().enumerate() {
             for ((comp, cols), values) in q.comps.iter().zip(&now) {
+                let first = out.len();
                 for (col, vals) in cols.iter().zip(values) {
                     let (old, new) = (col.original[row], vals[row]);
                     if old.to_bits() == new.to_bits() {
                         continue;
+                    }
+                    // The hierarchy changes through commands, which the call follows in order;
+                    // a column is written back before all of them.
+                    if parent_slot(world, comp).is_some() {
+                        let refusal = SlotRefusal {
+                            field: "parent",
+                            message: "Parent.parent is read through its column and written with \
+                                      ctx.world.set, insert or remove, which check the hierarchy."
+                                .to_owned(),
+                        };
+                        return Err(
+                            not_held(comp, refusal, ErrorPhase::WriteBack).entity(id.to_f64())
+                        );
                     }
                     let f = &comp.schema.fields[col.field];
                     let name = if f.ty.slots() > 1 {
@@ -310,6 +327,22 @@ pub fn changed_cells<'js>(
                         slot: col.slot,
                         value,
                     });
+                }
+                // A component's slot rule judges the row's cells together, after their own
+                // checks: against the world's values, which the cells are written onto before any
+                // command applies.
+                if let Some(rule) = comp.rule
+                    && out.len() > first
+                    && let Some(before) =
+                        entity(world, *id).and_then(|e| comp.access.read(&world.entity(e)))
+                {
+                    let mut after = before.clone();
+                    for cell in &out[first..] {
+                        after.nums[usize::from(cell.slot)] = cell.value;
+                    }
+                    rule(Some(&before), &mut after).map_err(|r| {
+                        not_held(comp, r, ErrorPhase::WriteBack).entity(id.to_f64())
+                    })?;
                 }
             }
         }

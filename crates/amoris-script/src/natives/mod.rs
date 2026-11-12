@@ -69,6 +69,7 @@ const NATIVES: &[(&str, Native, bool)] = &[
     ("despawn", world::despawn, true),
     ("spawn", world::spawn, true),
     ("emit", events::emit, true),
+    ("sceneLoad", events::scene_load, true),
     ("events", events::events, false),
     ("intent", events::intent, true),
     ("rngSystem", rng::system, false),

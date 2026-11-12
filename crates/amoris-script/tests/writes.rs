@@ -1,7 +1,8 @@
 //! Test 5 of script-host.md 12 (writes and columns): every refusal of 5.3, 5.4, 5.8 and 6 gives its
 //! code, location and entity, applies nothing and never aborts the process; each row of 5.4's
 //! table holds; only changed cells are written back, `-0` is a change, rows follow ascending ids;
-//! `world.get` copies list keys in declaration order; `console.log` runs no project code.
+//! `world.get` copies list keys in declaration order; `console.log` runs no project code; a
+//! despawn takes the entities under the despawned one, in the call's view as at its commit.
 #![cfg(feature = "transpile")]
 mod common;
 
@@ -62,12 +63,27 @@ struct Case {
 }
 
 fn run(body: &str) -> Case {
+    run_under(body, &[])
+}
+
+/// [`run`] in a world whose movers are in a hierarchy: each `(child, parent)` of `links` is a
+/// `Parent` inserted from Rust after the movers are spawned (this crate's worlds give scripts no
+/// access to `Parent`; the runtime's do, and its tests cover a script's own writes of it).
+fn run_under(body: &str, links: &[(u64, u64)]) -> Case {
     let set = common::compiled(&[
         ("scripts/components.ts", COMPONENTS),
         ("scripts/main.ts", &main_ts(body)),
     ]);
     let mut sim = common::sim_with(&set, ScriptLimits::default(), 2);
     common::step(&mut sim);
+    for (child, parent) in links {
+        let id = |n: u64| amoris_sim::EntityId::new(n).unwrap();
+        let e = amoris_sim::entity::entity(sim.world(), id(*child)).unwrap();
+        let parent = amoris_sim::Parent {
+            parent: id(*parent),
+        };
+        sim.world_mut().entity_mut(e).insert(parent);
+    }
     let before = common::hash(sim.world());
     let report = common::step(&mut sim);
     let outcome = amoris_script::scripts::last_tick(sim.world()).remove(0).1;
@@ -444,4 +460,115 @@ fn console_runs_no_project_code() {
         "value { a: 1, g: [getter], toJSON: [function], toString: [function], nested: { deep: [1, \"two\", null] } } 1.5 0 1e+21"
     );
     assert_eq!(log[0].system.as_deref(), Some("probe"));
+}
+
+/// The live entities' ids.
+fn live(sim: &Sim) -> Vec<u64> {
+    let index = sim.world().resource::<amoris_sim::EntityIndex>();
+    index.ids().map(amoris_sim::EntityId::get).collect()
+}
+
+/// `despawn` takes everything under the entity (simulation.md 7.3): the call sees it at once, a
+/// write staged before the despawn is applied before it, and the commit removes the same entities
+/// the call saw go, so nothing staged names an entity that vanished (`sim.internal`).
+#[test]
+fn a_despawn_takes_the_entities_under_it_in_the_call_and_at_the_commit() {
+    // a > b > c.
+    let chain = [(2, 1), (3, 2)];
+    let c = run_under(
+        r#"        ctx.world.set(c, "Mover", { x: 9 });
+        ctx.world.set(b, "Mover", { hits: 7 });
+        ctx.world.despawn(a);
+        if (ctx.world.exists(a) || ctx.world.exists(b) || ctx.world.exists(c)) throw new Error("alive");
+        if (ctx.world.get(c, "Mover") !== undefined || ctx.world.has(b, "Mover")) throw new Error("readable");
+        ctx.world.despawn(b);
+        ctx.world.despawn(c);
+        ctx.emit("game.done", {});"#,
+        &chain,
+    );
+    assert!(
+        matches!(c.outcome, SystemOutcome::Ok(_)),
+        "{:#?}",
+        c.outcome
+    );
+    assert_eq!(live(&c.sim), [0u64; 0]);
+    assert_eq!(c.report.events.len(), 1, "{:#?}", c.report.events);
+    // The middle one: what is under it goes, what is over it stays and can still be written.
+    let c = run_under(
+        r#"        ctx.world.despawn(b);
+        if (!ctx.world.exists(a) || ctx.world.exists(c)) throw new Error("wrong entities");
+        ctx.world.set(a, "Mover", { x: 4 });"#,
+        &chain,
+    );
+    assert!(
+        matches!(c.outcome, SystemOutcome::Ok(_)),
+        "{:#?}",
+        c.outcome
+    );
+    assert_eq!(live(&c.sim), [1]);
+    assert_eq!(field(&c.sim, 1.0, "x"), json!(4.0));
+    // A child despawned first, then its parent; and siblings under one parent.
+    let c = run_under(
+        r#"        ctx.world.despawn(c);
+        ctx.world.despawn(a);
+        const fresh = ctx.world.spawn({ Mover: { x: 5 } });
+        if (!ctx.world.exists(fresh)) throw new Error("the new one");"#,
+        &[(2, 1), (3, 1)],
+    );
+    assert!(
+        matches!(c.outcome, SystemOutcome::Ok(_)),
+        "{:#?}",
+        c.outcome
+    );
+    assert_eq!(live(&c.sim), [4]);
+    // Without a hierarchy a despawn takes the one entity, as before.
+    let c = ok(r#"        ctx.world.despawn(a);"#);
+    assert_eq!(live(&c.sim), [2, 3]);
+}
+
+/// A write to an entity that went with its parent is refused at its line, like a write to the
+/// despawned entity itself, and the call applies nothing: the parent is still there.
+#[test]
+fn a_write_to_an_entity_despawned_with_its_parent_is_refused() {
+    let chain = [(2, 1), (3, 2)];
+    for body in [
+        r#"        ctx.world.despawn(a);
+        ctx.world.set(c, "Mover", { x: 1 });"#,
+        r#"        ctx.world.despawn(a);
+        ctx.world.insert(b, "Flag", {});"#,
+        r#"        ctx.world.despawn(b);
+        ctx.world.set(a, "Mover", { target: c });"#,
+    ] {
+        let c = run_under(body, &chain);
+        let SystemOutcome::Failed { error, .. } = c.outcome else {
+            panic!("{body}: {:#?}", c.outcome)
+        };
+        assert_eq!(error.code, "script.entity_missing", "{body}: {error:#?}");
+        let at = error.detail.location.clone().expect("a location");
+        assert_eq!(
+            (at.file.as_str(), at.line),
+            ("scripts/main.ts", BODY_LINE + 1)
+        );
+        assert_eq!(live(&c.sim), [1, 2, 3], "{body}");
+    }
+}
+
+/// Entities whose `Parent` a world holds unchecked (inserted from Rust here): a loop, an entity
+/// under itself and a parent that is gone end every walk, in the call and at the commit.
+#[test]
+fn a_despawn_ends_on_a_hierarchy_no_check_made() {
+    // a and b are each other's parent and c is its own.
+    let c = run_under(
+        r#"        ctx.world.despawn(c);
+        if (ctx.world.exists(c) || !ctx.world.exists(a)) throw new Error("c alone");
+        ctx.world.despawn(a);
+        if (ctx.world.exists(a) || ctx.world.exists(b)) throw new Error("the loop");"#,
+        &[(1, 2), (2, 1), (3, 3)],
+    );
+    assert!(
+        matches!(c.outcome, SystemOutcome::Ok(_)),
+        "{:#?}",
+        c.outcome
+    );
+    assert_eq!(live(&c.sim), [0u64; 0]);
 }

@@ -172,7 +172,8 @@ export type ReservedEventPrefix =
     | "interface"
     | "time"
     | "decision"
-    | "perception";
+    | "perception"
+    | "scene";
 
 type LowerLetter =
     | "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j" | "k" | "l" | "m"
@@ -263,7 +264,7 @@ export interface World {
     insert<C extends ComponentName>(e: Entity, component: C, value?: Patch<Components[C]>): void;
     /** Removes a component; a no-op when the entity lacks it. */
     remove(e: Entity, component: ComponentName): void;
-    /** Despawns the entity. */
+    /** Despawns the entity and every entity under it by `Parent`. */
     despawn(e: Entity): void;
     /** Spawns an entity with these components; its id is returned at once. */
     spawn(components: Spawn): Entity;
@@ -367,6 +368,18 @@ export interface PhysicsAccess {
     sweep(from: Triple, to: Triple, radius: number, options?: PhysicsOptions): PhysicsHit | null;
     /** The entities a ball overlaps, ascending by id. */
     sphere(center: Triple, radius: number, options?: PhysicsOptions): readonly Entity[];
+}
+
+/** The project's scene files (docs/sdk.md, Scenes). */
+export interface SceneAccess {
+    /**
+     * Loads a scene file of the project (`"scenes/two.json"`) at the boundary after this tick:
+     * `replace` (the default) despawns every entity and spawns the scene's, `add` spawns them
+     * beside the world's. Nothing happens if the system throws. The next tick's
+     * `scene.loaded {path, mode, entities}` says it was loaded; a load refused (no such file)
+     * is a tick error.
+     */
+    load(path: string, options?: { readonly mode?: "replace" | "add" }): void;
 }
 
 /** Navigation over a `NavGrid`'s walkable floors (docs/spec/animation.md 8). */
@@ -529,6 +542,8 @@ export interface SystemContext {
     readonly anim: AnimAccess;
     /** Paths over navigation grids. */
     readonly nav: NavAccess;
+    /** Scene files to load after the tick. */
+    readonly scene: SceneAccess;
 }
 
 function annotate(err: unknown, entity: number): unknown {
@@ -576,6 +591,12 @@ const physics: PhysicsAccess = Object.freeze({
         host.physicsSweep(from, to, radius, options),
     sphere: (center: Triple, radius: number, options?: PhysicsOptions): readonly Entity[] =>
         host.physicsSphere(center, radius, options),
+});
+
+const scene: SceneAccess = Object.freeze({
+    load: (path: string, options?: { readonly mode?: "replace" | "add" }): void => {
+        host.sceneLoad(path, options?.mode ?? "replace");
+    },
 });
 
 const nav: NavAccess = Object.freeze({
@@ -667,6 +688,7 @@ export function __context(info: CallInfo): SystemContext {
         physics,
         anim,
         nav,
+        scene,
     }) as SystemContext;
 }
 

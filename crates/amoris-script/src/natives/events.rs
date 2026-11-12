@@ -26,6 +26,7 @@ pub const RESERVED: &[&str] = &[
     "time.",
     "decision.",
     "perception.",
+    "scene.",
 ];
 
 pub fn emit<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
@@ -133,6 +134,49 @@ pub fn emit<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
     with_call(ctx, "ctx.emit", |call, _world| {
         call.counts.events = call.counts.events.saturating_add(1);
         call.commands.push(Command::Emit(event));
+        Ok(())
+    })?;
+    Ok(Value::new_undefined(ctx.clone()))
+}
+
+/// `ctx.scene.load(path, {mode})` (simulation.md 7.6): stages `scene.load_requested {path,
+/// mode}`, an event of the engine's, appended at the commit like any; the game loads the scene at
+/// the boundary after the tick. The path is checked there, against the project's files.
+pub fn scene_load<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
+    let (p, m) = (arg(ctx, args, 0), arg(ctx, args, 1));
+    let path = match js::text(&p) {
+        Some(Ok(t)) if !t.is_empty() => t,
+        _ => {
+            return Err(ScriptError::new(
+                "script.bad_data",
+                "ctx.scene.load takes the scene's path in the project, such as \"scenes/two.json\".",
+                ErrorPhase::Run,
+            )
+            .into());
+        }
+    };
+    let mode = match js::text(&m) {
+        Some(Ok(t)) if t == "replace" || t == "add" => t,
+        _ => {
+            return Err(ScriptError::new(
+                "script.bad_data",
+                "ctx.scene.load's mode is \"replace\" or \"add\".",
+                ErrorPhase::Run,
+            )
+            .into());
+        }
+    };
+    let data = PlainData::object(vec![
+        ("mode".into(), PlainData::String(mode)),
+        ("path".into(), PlainData::String(path)),
+    ])
+    .map_err(|p| ScriptError::new(&p.code, p.message, ErrorPhase::Run))?;
+    let kind = EventKind::new("scene.load_requested")
+        .map_err(|p| ScriptError::new(&p.code, p.message, ErrorPhase::Run))?;
+    with_call(ctx, "ctx.scene.load", |call, _world| {
+        call.counts.events = call.counts.events.saturating_add(1);
+        call.commands
+            .push(Command::Emit(NewEvent::new(kind).data(data)));
         Ok(())
     })?;
     Ok(Value::new_undefined(ctx.clone()))

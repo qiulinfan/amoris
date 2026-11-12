@@ -3,7 +3,8 @@
 //! `amoris_physics::sailing` builds) and components by name, engine or project, each a JSON value
 //! that overrides the prefab's component field by field. A scene spawns its entities by name first
 //! and then checks and inserts their components, so an entity field may name any entity of the
-//! scene; a refused scene is rolled back whole. A `world_edit` spawn is checked before anything is
+//! scene (a `Parent` too: the scene's hierarchy is checked once every entity has its components);
+//! a refused scene is rolled back whole. A `world_edit` spawn is checked before anything is
 //! spawned, so a refused one changes nothing.
 
 use std::collections::BTreeMap;
@@ -183,6 +184,19 @@ pub fn prepare(
     components: &Map<String, Value>,
     path: &Pointer,
 ) -> Result<PreparedSpawn, Problem> {
+    prepare_among(world, name, prefab, components, path, &values::none_else)
+}
+
+/// [`prepare`], where a project component's entity field may also name an entity `also` accepts:
+/// one an earlier edit of the same `world_edit`, or the same `revive`, brings back.
+pub fn prepare_among(
+    world: &bevy_ecs::prelude::World,
+    name: Option<&str>,
+    prefab: Option<&Prefab>,
+    components: &Map<String, Value>,
+    path: &Pointer,
+    also: values::AlsoAlive<'_>,
+) -> Result<PreparedSpawn, Problem> {
     let name = name.map(Name::new).transpose()?;
     let mut base = prefab.map(prefab_components).unwrap_or_default();
     let mut parts = Vec::new();
@@ -202,7 +216,7 @@ pub fn prepare(
                 .as_object()
                 .ok_or_else(|| bad_value(&at, "a component's value is an object of its fields"))?;
             let defaults = amoris_script::access::defaults(&schema);
-            let values = values::patch(world, &schema, &defaults, patch, &at)?;
+            let values = values::patch_among(world, &schema, &defaults, patch, &at, also)?;
             parts.push(Part::Project { access, values });
         } else {
             return Err(unknown_component(world, cname));
@@ -261,6 +275,74 @@ impl PreparedSpawn {
     }
 }
 
+/// `scene.place_invalid {path, place, entities}`: an entity number in a loaded scene that is no
+/// place in its file.
+fn place_invalid(path: &Pointer, place: &Value, entities: usize) -> Problem {
+    Problem::new(
+        "scene.place_invalid",
+        format!(
+            "{path}: {place} is no entity of the scene, whose entities are its places 1 to \
+             {entities}."
+        ),
+        detail([
+            ("path", json!(path.to_string())),
+            ("place", place.clone()),
+            ("entities", json!(entities)),
+        ]),
+    )
+}
+
+/// An entity's components with every entity number (a place in the file, from 1) rewritten to the
+/// id spawned for that place: a project component's entity fields by its schema, an engine
+/// component's by its JSON Schema (`values::entity_refs`, as `project.save` writes them). A name
+/// stays a name.
+fn renumbered(
+    world: &bevy_ecs::prelude::World,
+    components: &Map<String, Value>,
+    ids: &[EntityId],
+    path: &Pointer,
+) -> Result<Map<String, Value>, Problem> {
+    let mut out = components.clone();
+    let place = |v: &mut Value, at: &Pointer| -> Result<(), Problem> {
+        let Some(n) = v.as_u64() else { return Ok(()) };
+        let id = usize::try_from(n)
+            .ok()
+            .and_then(|n| n.checked_sub(1))
+            .and_then(|i| ids.get(i))
+            .ok_or_else(|| place_invalid(at, v, ids.len()))?;
+        *v = json!(id.get());
+        Ok(())
+    };
+    for (cname, value) in out.iter_mut() {
+        let at = path.key("components").key(cname);
+        if let Some((schema, _)) = project_component(world, cname) {
+            for f in schema
+                .fields
+                .iter()
+                .filter(|f| f.ty == amoris_sim::registry::FieldType::Entity)
+            {
+                if let Some(slot) = value.get_mut(&*f.name) {
+                    place(slot, &at.key(&f.name))?;
+                }
+            }
+        } else if let Some(entry) = world
+            .get_resource::<ComponentRegistry>()
+            .and_then(|r| r.get(cname))
+        {
+            for pointer in values::entity_refs(&entry.json_schema, value) {
+                let mut slot_at = at.clone();
+                for part in pointer.split('/').skip(1) {
+                    slot_at = slot_at.key(&part.replace("~1", "/").replace("~0", "~"));
+                }
+                if let Some(slot) = value.pointer_mut(&pointer) {
+                    place(slot, &slot_at)?;
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 impl Scene {
     /// A scene with no entities.
     pub fn empty() -> Scene {
@@ -303,14 +385,27 @@ impl Scene {
     /// against that world and inserted.
     pub fn spawn_into(&self, b: &mut Boundary<'_>) -> Result<Vec<EntityId>, Problem> {
         let mark = b.mark();
-        let r = self.spawn_marked(b);
+        let r = self.spawn_marked(b, false);
         if r.is_err() {
             b.rollback(mark);
         }
         r
     }
 
-    fn spawn_marked(&self, b: &mut Boundary<'_>) -> Result<Vec<EntityId>, Problem> {
+    /// [`Scene::spawn_into`] for a scene loaded into a world that may hold entities already
+    /// (`scene.load`, simulation.md 7.4): an entity number inside a component is the place of an
+    /// entity in the file, from 1, rewritten to the id that entity was spawned with; a number past
+    /// the file is refused with `scene.place_invalid`. In a new world the two agree.
+    pub fn spawn_placed(&self, b: &mut Boundary<'_>) -> Result<Vec<EntityId>, Problem> {
+        let mark = b.mark();
+        let r = self.spawn_marked(b, true);
+        if r.is_err() {
+            b.rollback(mark);
+        }
+        r
+    }
+
+    fn spawn_marked(&self, b: &mut Boundary<'_>, placed: bool) -> Result<Vec<EntityId>, Problem> {
         let mut ids = Vec::with_capacity(self.entities.len());
         for e in &self.entities {
             ids.push(match &e.name {
@@ -321,19 +416,26 @@ impl Scene {
         let mut prepared = Vec::with_capacity(self.entities.len());
         for (i, e) in self.entities.iter().enumerate() {
             let path = Pointer::root().key("entities").index(i);
+            let components = if placed {
+                std::borrow::Cow::Owned(renumbered(b.world(), &e.components, &ids, &path)?)
+            } else {
+                std::borrow::Cow::Borrowed(&e.components)
+            };
             prepared.push(prepare(
                 b.world(),
                 None,
                 e.prefab.as_ref(),
-                &e.components,
+                &components,
                 &path,
             )?);
         }
         for (p, id) in prepared.into_iter().zip(&ids) {
             p.insert(b, *id)?;
         }
-        // Checks across entities: a water region sits on its volume's grid (water.md 5).
+        // Checks across entities: a water region sits on its volume's grid (water.md 5), and
+        // every `Parent` names a live entity and closes no loop (simulation.md 7.4).
         amoris_physics::water::check_world(b.world())?;
+        crate::hierarchy::check_scene(b.world(), &ids)?;
         Ok(ids)
     }
 }

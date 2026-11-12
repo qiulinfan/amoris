@@ -9,11 +9,13 @@
 //! - **Systems** ([`plugin`]) take the rows of simulation.md 4.4: `physics.wind`,
 //!   `physics.buoyancy`, `physics.sail` and `physics.hull` gather each body's force from the state
 //!   at the tick's start; `physics.step` syncs the bodies in, applies the forces, steps once and
-//!   writes the components back; `physics.contacts` emits the step's contact events.
+//!   writes the components back; `physics.contacts` emits the step's contact events and the
+//!   sensors' entries and exits ([`sensors`]).
 //! - **Determinism**: every force is `+ - * /`, `sqrt` and `amoris_sim::math`; `f64` components
 //!   meet the `f32` solver only in `physics.step` ([`geom::f32_of`]); a dynamic hull, mesh or
 //!   compound states its mass properties instead of a density ([`body::validate`],
-//!   `sim.collider_density`); there are no joints and no continuous collision detection.
+//!   `sim.collider_density`); joints are Rapier's impulse joints ([`joints`]); there is no
+//!   continuous collision detection.
 //! - **Block volumes** ([`volumes`]): each chunk of a `Voxels` holding a solid cell is a fixed
 //!   collider of its solid cells, which bodies land on and queries meet (voxels.md 5.1).
 //! - **Queries** ([`query`]): ray casts, overlaps, the water and the wind at a point.
@@ -31,12 +33,14 @@ pub mod body;
 mod cache;
 mod forces;
 pub mod geom;
+pub mod joints;
 pub mod nav;
 pub mod probe;
 pub mod query;
 mod readings;
 pub mod sailing;
 pub mod sea;
+pub mod sensors;
 pub mod shallow;
 mod shapes;
 pub mod solver;
@@ -51,12 +55,14 @@ pub use avatar::{Avatar, CameraRig, Facing};
 pub use board::Board;
 pub use boat::{Boat, BuoyPoint, Floater, Hull, Sail, Trim, best_sheet};
 pub use body::{
-    BodyKind, Collider, ExternalForce, MassProps, Part, PartShape, RigidBody, Shape, Transform,
-    Velocity, validate,
+    BodyKind, Collider, CollisionFilter, ExternalForce, MassProps, Part, PartShape, RigidBody,
+    Shape, Transform, Velocity, validate,
 };
 pub use cache::{IDENTITY, PhysicsCache, declare};
 pub use forces::start_time;
+pub use joints::{Joint, JointKind};
 pub use sea::{GRAVITY, Rain, Sea, SeaLook, Water, Wave, WaveField, Wind};
+pub use sensors::SensorOverlaps;
 pub use solver::{BodyIndex, ContactLog, Physics, RebuiltSolver};
 pub use terrain::{Terrain, TerrainFeature, TerrainLayer, TerrainLook};
 pub use vessel::{Hole, Vessel};
@@ -92,6 +98,9 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     ComponentRegistry::register::<Velocity>(w, None)?;
     ComponentRegistry::register::<RigidBody>(w, None)?;
     ComponentRegistry::register::<Collider>(w, None)?;
+    ComponentRegistry::register::<CollisionFilter>(w, None)?;
+    ComponentRegistry::register::<SensorOverlaps>(w, None)?;
+    ComponentRegistry::register::<Joint>(w, None)?;
     ComponentRegistry::register::<ExternalForce>(w, None)?;
     ComponentRegistry::register::<Floater>(w, None)?;
     ComponentRegistry::register::<Vessel>(w, None)?;

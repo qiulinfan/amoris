@@ -1,10 +1,12 @@
 //! Reading the world as the editor and agents ask for it (docs/spec/host-protocol.md 4):
-//! `world.tree` (entities with their names and component names), `world.query` (rows of the
-//! entities that have every listed component, with chosen fields) and `world.schema` (the registry's
-//! component schemas). Reads only; entities in ascending id order (simulation.md 8).
+//! `world.tree` (entities with their names and component names, nested by `Parent`), `world.query`
+//! (rows of the entities that have every listed component, with chosen fields) and `world.schema`
+//! (the registry's component schemas). Reads only; entities in ascending id order (simulation.md
+//! 8), a tree's roots and each entity's children alike.
 
 use amoris_contract::{Pointer, Problem, detail};
-use amoris_sim::{ComponentRegistry, EntityId, Name};
+use amoris_sim::entity::hierarchy::{listing, nest};
+use amoris_sim::{ComponentRegistry, EntityId, Hierarchy, Name};
 use bevy_ecs::prelude::{Entity, World};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -18,19 +20,23 @@ use crate::values::{EntityRef, resolve};
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorldTreeParams {
-    /// Only this entity (the world has no parent relation yet, so `children` is always empty).
+    /// Only this entity and what is under it by `Parent` (default: every root, an entity
+    /// without a live parent).
     #[serde(default)]
     pub root: Option<EntityRef>,
-    /// Levels below the root to list; accepted for the hierarchy to come.
+    /// Levels below the roots to list: 0 lists the roots alone. Default and at most 48; an
+    /// entity whose children the depth left out says how many in `more`.
     #[serde(default)]
     pub depth: Option<u32>,
-    /// Only entities whose name contains this text (case-insensitive).
+    /// Only entities whose name contains this text (case-insensitive), each with the entities
+    /// it is under.
     #[serde(default)]
     pub filter: Option<String>,
-    /// Only entities that have every one of these components.
+    /// Only entities that have every one of these components, each with the entities it is
+    /// under.
     #[serde(default)]
     pub with: Vec<String>,
-    /// At most this many entities (default: all).
+    /// At most this many entities, counted parent first and children in id order (default: all).
     #[serde(default)]
     pub limit: Option<u32>,
 }
@@ -106,33 +112,43 @@ fn live(world: &World) -> Vec<(EntityId, Entity)> {
     world.resource::<amoris_sim::EntityIndex>().iter().collect()
 }
 
-/// `world.tree`.
+/// `world.tree`: the entities as a tree, `[{id, name, components, children, more?}]`. Children
+/// are the entities whose `Parent` names the entity; roots and children are in ascending id
+/// order. The rules (roots, `depth` and `more`, what `filter`, `with` and `limit` keep) are
+/// `amoris_sim::entity::hierarchy::listing`'s, which the host answering for a held game follows
+/// too (amoris-server `paused.rs`).
 pub fn tree(world: &World, p: &WorldTreeParams) -> Result<Value, Problem> {
     check_components(world, &p.with)?;
-    let entities = match &p.root {
+    let root = match &p.root {
         Some(r) => {
             let id = resolve(world, r, &Pointer::root().key("root"))?;
-            let e = amoris_sim::entity::require(world, id)?;
-            vec![(id, e)]
+            amoris_sim::entity::require(world, id)?;
+            Some(id)
         }
-        None => live(world),
+        None => None,
     };
-    let limit = p
-        .limit
-        .map_or(usize::MAX, |l| usize::try_from(l).unwrap_or(usize::MAX));
-    let out: Vec<Value> = entities
-        .into_iter()
-        .filter(|(_, e)| has_all(world, *e, &p.with))
-        .filter_map(|(id, e)| {
-            let name = name_of(world, e);
-            name_matches(name.as_deref(), p.filter.as_deref()).then(|| {
-                json!({"id": id.get(), "name": name, "components": component_names(world, e),
-                       "children": []})
-            })
-        })
-        .take(limit)
-        .collect();
-    Ok(Value::Array(out))
+    let index = world.resource::<amoris_sim::EntityIndex>();
+    let ids: Vec<EntityId> = index.ids().collect();
+    let keep = |id: EntityId| -> Result<bool, Problem> {
+        Ok(index.get(id).is_some_and(|e| {
+            has_all(world, e, &p.with)
+                && name_matches(name_of(world, e).as_deref(), p.filter.as_deref())
+        }))
+    };
+    let listed = listing(&ids, &Hierarchy::read(world), root, p.depth, p.limit, keep)?;
+    let nodes = nest(&listed, &mut |l, children: Vec<Value>| {
+        let (name, components) = match index.get(l.id) {
+            Some(e) => (name_of(world, e), component_names(world, e)),
+            None => (None, Vec::new()),
+        };
+        let mut node = json!({"id": l.id.get(), "name": name, "components": components,
+                              "children": children});
+        if l.more > 0 {
+            node["more"] = json!(l.more);
+        }
+        node
+    });
+    Ok(Value::Array(nodes))
 }
 
 /// A field inside a component's JSON: `speed`, `position.1`, `position.y` (`x`, `y`, `z`, `w` also

@@ -134,6 +134,158 @@ Writes apply when `run` returns (none if it throws); `get`/`has`/`exists` see th
 `ctx.tick`, `ctx.dt`, `ctx.time`; `Math.random()` is the system's stream. Events: declare
 `events: ["crate."]`, read `ctx.events`.
 
+## Hierarchy
+
+An entity is under another when it carries `Parent { parent }`; an entity without one is a root.
+Despawning an entity despawns everything under it.
+
+```ts
+const rig = ctx.world.spawn({ Transform: {} });
+const arm = ctx.world.spawn({ Parent: { parent: rig } });  // spawned under the rig
+ctx.world.insert(hand, "Parent", { parent: arm });         // an entity that had no parent
+ctx.world.set(hand, "Parent", { parent: rig });            // moved, with what is under it
+const over = ctx.world.get(hand, "Parent")?.parent ?? null; // its parent, or null for a root
+ctx.world.remove(hand, "Parent");                          // a root again
+// children of `rig`: the rows of a query with: ["Parent"] whose parent column holds its id
+for (let r = 0; r < kids.len; r++) if (kids.cols.Parent.parent[r] === rig) use(kids.id(r));
+ctx.world.despawn(rig);                                    // rig, arm and all under them
+```
+
+- A parent is a live entity, never the entity itself or one under it: `script.parent_cycle` at the
+  line that would close the loop. Before moving `a` under `b`, walk up from `b` with
+  `get(e, "Parent")?.parent` and stop if you meet `a`.
+- After `despawn(e)`, `exists` is false in the same call for every entity under `e`, and a write to
+  one throws `script.entity_missing`. Other references to a despawned entity (an entity field of
+  your own component) keep the id and read nothing.
+- Change a parent with `set`, `insert` and `remove`; the `parent` column is read only, and a write
+  to it fails the system (`script.write_not_held`).
+- `Transform` is in world space: a child does not move with its parent yet. Use `Attach` to hold a
+  thing at another entity's joint.
+- From outside: `amoris world tree` shows the hierarchy indented, `amoris world set <e> Parent
+  parent=<id>` moves an entity and `amoris world remove <e> Parent` makes it a root; in a scene,
+  `"Parent": {"parent": 3}` names the third entity of the file.
+
+## Rigid bodies
+
+An entity with a `Transform` and a `Collider` has a body in the solver: fixed without a `RigidBody`,
+moved by gravity, forces and contacts with `RigidBody: { kind: "Dynamic" }`. Give a moving body a
+`Velocity` (without one a rebuilt body restarts at rest) and an `ExternalForce` to push it. A body a
+script spawns is built and stepped in that same tick.
+
+```ts
+const ball = ctx.world.spawn({
+    Transform: { position: { y: 2 } }, Velocity: {}, ExternalForce: {},
+    RigidBody: { kind: "Dynamic" },
+    Collider: { kind: "Ball", radius: 0.2, density: 500 },
+});
+ctx.world.set(ball, "Collider", { friction: 0.9, restitution: 0.3 });
+ctx.world.set(ball, "ExternalForce", { force: { y: 40 } });  // newtons, over this tick's step
+// columns of a query with: ["RigidBody", "ExternalForce"]
+bodies.cols.RigidBody.gravity_scale[r] = 0;
+bodies.cols.ExternalForce.force.x[r] += 12;          // add: other rules push the body too
+bodies.cols.ExternalForce.force.x[r] += 6 / ctx.dt;  // an impulse of 6 N s
+```
+
+- Shapes: `kind: "Ball"` takes `radius`, `"Cuboid"` takes `half_extents`, `"Capsule"` (along +y)
+  takes `radius` and `half_height`. Hulls, meshes, compounds and heightfields are scene data: a
+  script reads their `kind` with sizes of 0 and changes their friction and restitution. The scene's
+  `"shape": {"Ball": {"radius": 0.2}}` is `kind` and `radius` here.
+- Mass comes from exactly one place: `density` on a ball, cuboid or capsule, or the `RigidBody`'s
+  `mass_kg` with `inertia` (and `center_of_mass`); each reads 0 when the other gives the mass. A
+  dynamic body with neither or both, or a size of 0, is not built: no throw and no halt, but
+  `physics.step` reports `sim.body_invalid`, `sim.collider_invalid` or `sim.collider_density` with
+  the entity every tick (`amoris step`, `amoris logs`) until a write mends it.
+- Pushing: `ExternalForce` is applied by this tick's step and is zero after it, so add to it in
+  every tick you push. `torque` is about the centre of mass; a fixed body drops both. For a known
+  change of speed write `Velocity`.
+- Tuning: a change to `RigidBody` or `Collider` rebuilds the body in that tick's step. Its pose and
+  `Velocity` are kept; its contacts end and begin again. Change them on events, not every tick.
+- Contacts arrive a tick later: declare `events: ["physics."]` and read `physics.contact_began` and
+  `physics.contact_ended` from `ctx.events`, `subject` the lower id, `data.other` the other.
+- Limits: no continuous collision detection, so a small fast body passes through a thin one (keep
+  `ctx.physics.sweep` for bullets); no kinematic bodies; a `Walker` stands on fixed colliders
+  only, and dynamic bodies neither block nor push it.
+
+### Joints
+
+A `Joint` on a body's entity ties it to another body (both have a `Transform` and a `Collider`):
+
+```ts
+const post = ctx.world.spawn({ Transform: { position: { y: 5 } }, Collider: { kind: "Ball", radius: 0.1 } });
+const bob = ctx.world.spawn({
+    Transform: { position: { x: 2, y: 5 } }, Velocity: {}, RigidBody: { kind: "Dynamic" },
+    Collider: { kind: "Ball", radius: 0.2, density: 500 },
+    Joint: { kind: "Spherical", with: post, anchor: { x: -2 } },  // a 2 m rope
+});
+// A door hinged at its edge about +y, opening at most a quarter turn either way:
+// Joint: { kind: "Revolute", with: frame, anchor: { x: -0.5 }, axis: { y: 1 },
+//          limited: true, min: -1.57, max: 1.57 }
+```
+
+- Kinds: `Fixed` welds, `Revolute` turns about `axis`, `Prismatic` slides along `axis`,
+  `Spherical` turns every way. `anchor` is in this body's frame, `other_anchor` in the other's;
+  `limited` with `min` and `max` bounds the turn (radians) or the slide (metres).
+- The two bodies stop colliding with each other unless `contacts: true`.
+- Rotations line up the bodies' own frames: a `Fixed` joint keeps the two turned alike, so place
+  them turned alike.
+- One joint per entity; a chain puts each link's joint on the link. A joint that cannot be built
+  (to itself, to an entity without a body, a zero axis) is reported by `physics.step` as
+  `sim.joint_invalid` every tick until mended. Remove the `Joint` to free the body.
+
+### Sensors and collision groups
+
+A `CollisionFilter` beside a `Collider` makes it a sensor (a trigger) or puts it in groups.
+
+```ts
+// A fixed trigger box: no RigidBody, so it is fixed.
+const gate = ctx.world.spawn({
+    Transform: { position: { z: -4, y: 1 } },
+    Collider: { kind: "Cuboid", half_extents: { x: 2, y: 1, z: 0.5 } },
+    CollisionFilter: { sensor: true },
+});
+for (const e of ctx.events) {
+    if (e.kind === "physics.sensor_entered" && e.subject === gate) open(e.data.other);
+}
+// Groups: bit i is group i. The level is in group 1 alone (in the scene: "CollisionFilter":
+// {"groups": 1}); ghosts (group 2) meet only ghosts, so they pass through the level.
+const GHOST = 1 << 1;
+ctx.world.insert(ball, "CollisionFilter", { groups: GHOST, mask: GHOST });
+```
+
+- A sensor pushes nothing: bodies fall through it and walkers walk through it. Declare
+  `events: ["physics."]`: `physics.sensor_entered` and `physics.sensor_left` arrive a tick later,
+  `subject` the sensor and `data.other` the body or `Walker` that entered or left.
+- Two colliders meet when each is in a group the other's `mask` holds: `a.groups & b.mask` and
+  `b.groups & a.mask` both non-zero. Without a filter a collider is in every group and meets
+  every group, so it meets a ghost too: put what ghosts pass through in a group of its own.
+  Masks are unsigned: write `(GHOST | 1) >>> 0`, and `0xffffffff` for all.
+- On a `Walker`, a `CollisionFilter` decides which sensors notice it, never what it stands on.
+- Ray casts, overlaps and sweeps (`ctx.physics`) pass through sensors.
+- Changing a filter takes effect at the next step without rebuilding the body.
+
+## Scenes
+
+A project starts with `scene.json` and may load other scene files (`scenes/level2.json`, the same
+format) while it runs:
+
+```ts
+// Declare events: ["scene.", "game.level_won"].
+for (const e of ctx.events) {
+    if (e.kind === "game.level_won") ctx.scene.load("scenes/level2.json");    // replace the world
+    if (e.kind === "scene.loaded") setUpLevel(e.data as { path: string });     // a tick after
+}
+ctx.scene.load("scenes/wave3.json", { mode: "add" });                        // spawn beside it
+```
+
+- The load happens at the boundary after this tick, not at the call; nothing happens if the
+  system throws. `replace` despawns every entity, the player's included: the next scene spawns
+  its own. The tick, the clock, the random streams and your scripts go on.
+- New entities take new ids (ids are never reused), so find them by name or by query, never by a
+  number. Inside a scene file an entity number is a place in that file, as in `scene.json`.
+- A file that is missing or does not load is a tick error (`amoris logs`) and the world stays.
+- From outside: `amoris call scene.load '{"path": "scenes/level2.json"}'` (MCP: `world` tool,
+  action `load`).
+
 ## Block volumes
 
 A `Voxels` entity holds a world of blocks in 16 x 16 x 16 chunks with a palette (index 0 is air);
@@ -232,6 +384,9 @@ done_event = "course.finished"   # emitting it ends the episode; its data are th
 | queries in a `const` | `Type 'string' is not assignable to type 'ComponentName'.` (add `as const`) |
 | `crew.take[r] = 5` | `Type '5' is not assignable to type '0 \| (number & ...)'` (an `Entity`) |
 | `tally.taken[r] = n / 2` | at run time: `script.write_not_integer` |
+| `Collider: { shape: "Ball" }`; `set(e, "Collider", { radius: 1 })` on a Cuboid | `'shape' does not exist in type 'Patch<...>'`; at run time: `script.write_not_held` |
+| `set(e, "Parent", { parent: null })`; `kids.cols.Parent.parent[r] = rig` | at run time: `script.write_not_held` (`remove` the component for a root; `set` it to move) |
+| `set(rig, "Parent", { parent: arm })` with `arm` under `rig` | at run time: `script.parent_cycle` |
 | a component not in `game({components})` | `'"Cargo"' is not assignable to parameter of type 'ComponentName'.` |
 
 Runtime errors name the TypeScript file and line (`amoris logs`).

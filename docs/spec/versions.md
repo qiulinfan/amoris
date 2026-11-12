@@ -273,7 +273,10 @@ pub fn write_save(world: &World, reg: &Registry, label: &str, meta: BTreeMap<Str
     -> Result<Vec<u8>, Problem>;
 ```
 
-Where saves are stored (a user data directory natively, browser storage on the web) is spec-arch's.
+Where saves are stored: since 2026-11-12 the host's `saves.write` writes them to the project's
+ignored `<project>/.amoris/saves/<name>.save` and `saves.load` reads them from there
+(server.md 3.3); a player's own folder (a user data directory natively, browser storage on the
+web) comes with an exported game's saves, which are not built.
 
 ### 6.2 Loading a save
 

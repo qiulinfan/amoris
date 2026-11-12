@@ -34,7 +34,9 @@ use crate::files::{self, ScriptReadParams, ScriptWriteParams};
 use crate::history::{Entry, History, HistoryUndoParams};
 use crate::inspect::{self, WorldQueryParams, WorldSchemaParams, WorldTreeParams};
 use crate::project::GameSetup;
+use crate::saves::{self, SavesLoadParams, SavesWriteParams};
 use crate::scene::Scene;
+use crate::scene_load::{self, SceneLoadParams, SceneLoadRecorded};
 use crate::scripts::{
     self, ScriptsApplyParams, ScriptsSwapParams, bundle_record, compiled_from_record,
 };
@@ -187,6 +189,9 @@ pub struct Game {
     player: Controller,
     /// The wall clock the players' session reads (the game thread's), if any.
     wall: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
+    /// A replay's stepper: the scene loads its scripts ask for are the recording's writes, so
+    /// a tick does not apply them again ([`Game::poll_step_with`]).
+    replay: bool,
 }
 
 /// A player's `wait` the game thread drives (`Game::begin_player_wait`).
@@ -306,6 +311,7 @@ impl Game {
             history: History::default(),
             diagnostics: Vec::new(),
             tainted: None,
+            replay: false,
         })
     }
 
@@ -732,6 +738,10 @@ impl Game {
                 decode::<NoParams>(p, name)?;
                 Ok(self.history.to_json())
             }
+            "saves.list" => {
+                decode::<NoParams>(p, name)?;
+                Ok(saves::list(self.root(name)?))
+            }
             "project.info" => {
                 decode::<NoParams>(p, name)?;
                 let rate = self.setup.rate.0;
@@ -941,6 +951,15 @@ impl Game {
             "history.redo" => {
                 decode::<NoParams>(&cmd.params, name).and_then(|_| self.undo_redo(false, None))
             }
+            "scene.load" | "scene_load" => {
+                self.scene_load(cmd, name, src)
+                    .map(|(result, canonical)| Written {
+                        result,
+                        canonical,
+                        recorded: "scene_load",
+                        history: None,
+                    })
+            }
             "scripts.swap" => self
                 .swap(&cmd.params, src)
                 .map(|(result, canonical)| Written {
@@ -1007,6 +1026,37 @@ impl Game {
         }
     }
 
+    /// `scene.load {path, mode}` read from the project, or its recorded form `scene_load {path,
+    /// mode, scene}` with the bytes from the recording's data (simulation.md 7.6): the scene
+    /// spawned at this boundary. The recorder gets the bytes before the write, and the history
+    /// is cleared: the edits it holds named a world the load may have replaced.
+    fn scene_load(
+        &mut self,
+        cmd: &Command,
+        name: &str,
+        src: &dyn ReplaySource,
+    ) -> Result<(Value, Value), Problem> {
+        let (scene, path, mode, hash) = if name == "scene_load" {
+            let p: SceneLoadRecorded = decode(&cmd.params, name)?;
+            let hash = ContentHash::from_hex(&p.scene).ok_or_else(|| bad_hash(&p.scene))?;
+            let bytes = src
+                .data(&hash)
+                .ok_or_else(|| amoris_persist::error::data_unavailable(&p.scene, &p.path))?;
+            (scene_load::from_bytes(&bytes)?, p.path, p.mode, hash)
+        } else {
+            let p: SceneLoadParams = decode(&cmd.params, name)?;
+            let (scene, bytes, hash) = scene_load::read(self.root(name)?, &p.path)?;
+            if let Some(r) = &mut self.recorder {
+                r.data(hash, &bytes);
+            }
+            (scene, p.path, p.mode, hash)
+        };
+        let result = scene_load::apply(&mut self.sim.boundary(), &scene, &path, mode)?;
+        self.history.clear();
+        let canonical = json!({"path": path, "mode": mode, "scene": hash.to_hex()});
+        Ok((result, canonical))
+    }
+
     /// `scripts.swap {bundle}` (hot-update.md 5): the prepared bundle, one this game has, or one a
     /// replay embeds, replaces the world's program; the recorder gets the bundle first.
     fn swap(&mut self, params: &Value, src: &dyn ReplaySource) -> Result<(Value, Value), Problem> {
@@ -1068,6 +1118,23 @@ impl Game {
             "project.save" => {
                 decode::<NoParams>(&cmd.params, name)?;
                 files::save(self.sim.world(), self.root(name)?)
+            }
+            "saves.write" => {
+                let p: SavesWriteParams = decode(&cmd.params, name)?;
+                let root = self.root(name)?.clone();
+                saves::path(&root, &p.name)?;
+                let tick = self.tick().0;
+                let hash = self.world_hash()?.to_string();
+                let bytes = amoris_persist::save::write_save(
+                    self.sim.world(),
+                    &self.reg,
+                    p.label.as_deref().unwrap_or(""),
+                    saves::meta(tick, &hash),
+                )?;
+                let path = saves::write(&root, &p.name, &bytes)?;
+                let rel = path.strip_prefix(&root).unwrap_or(&path);
+                Ok(json!({"name": p.name, "path": rel.display().to_string(),
+                          "bytes": bytes.len(), "tick": tick, "world_hash": hash}))
             }
             other => Err(catalog::unknown(other, &self.extras.commands)),
         }
@@ -1274,6 +1341,13 @@ impl Game {
                 r
             }
             "player.pacing" => self.set_player_pacing(cmd).map(|(_, v)| v),
+            "saves.load" => {
+                let p: SavesLoadParams = decode(&cmd.params, name)?;
+                let bytes = saves::read(self.root(name)?, &p.name)?;
+                let mut loaded = self.load_save(&bytes)?;
+                loaded["name"] = json!(p.name);
+                Ok(json!({ "loaded": loaded }))
+            }
             other => Err(catalog::thread_only(other)),
         }
     }
@@ -1391,12 +1465,15 @@ impl Game {
             }
         }
         match stepped {
-            Ok(std::task::Poll::Ready(r)) => {
+            Ok(std::task::Poll::Ready(mut r)) => {
                 self.writes = 0;
                 self.clear_boundary_log();
                 self.sync_context();
                 if let Some(rec) = &mut self.recorder {
                     rec.end_tick(self.sim.world())?;
+                }
+                if !self.replay {
+                    self.load_requested_scenes(&mut r);
                 }
                 Ok(std::task::Poll::Ready(r))
             }
@@ -1412,6 +1489,20 @@ impl Game {
                     rec.fault(poison.tick, &system, &p.code);
                 }
                 Err(p)
+            }
+        }
+    }
+
+    /// The scenes the tick's scripts asked for (`ctx.scene.load`, its `scene.load_requested`
+    /// events), each loaded at the boundary after the tick by a Host `scene.load` write, in the
+    /// order asked (simulation.md 7.6). A load refused (no such file, a bad scene) changes nothing
+    /// and joins the tick's report as an error.
+    fn load_requested_scenes(&mut self, report: &mut StepReport) {
+        for params in scene_load::requested(&report.events) {
+            let seq = self.next_host_seq();
+            let cmd = Command::new(Source::Host, seq, "scene.load", params);
+            if let Err(p) = self.apply(&cmd) {
+                report.errors.push(p);
             }
         }
     }
@@ -1529,6 +1620,48 @@ impl Game {
         r.map(|_| ())
     }
 
+    /// Loads a save (versions.md 6.2) and restores it as this world (server.md 3.3): the save is
+    /// read into the current versions with the engine's steps and no project steps (TypeScript
+    /// migrations are not built: an older project component is `migrate.missing_step`), restored
+    /// under the scripts this game runs, and a cache whose identity differed is rebuilt from the
+    /// components. A recording sees the restore's rebase, and a second one after a rebuild, so
+    /// its snapshots hold the world as it runs on. Nothing changes when the save does not read.
+    pub fn load_save(&mut self, bytes: &[u8]) -> Result<Value, Problem> {
+        let (snap, report) = amoris_persist::save::load_save(
+            bytes,
+            &self.reg,
+            &amoris_persist::migrate::Migrations::default(),
+            &mut amoris_persist::save::NoProjectMigrator,
+            self.sim.world(),
+        )?;
+        self.restore(&snap)?;
+        if !report.caches_rebuilt.is_empty() {
+            amoris_persist::save::rebuild_caches(
+                self.sim.world_mut(),
+                &self.reg,
+                &report.caches_rebuilt,
+            )?;
+            let rebuilt = self.snapshot()?;
+            self.restore(&rebuilt)?;
+        }
+        let keys = |v: &[amoris_persist::SectionKey]| -> Vec<String> {
+            v.iter().map(ToString::to_string).collect()
+        };
+        let migrated: Vec<Value> = report
+            .migrated
+            .iter()
+            .map(|(k, from, to)| json!({"section": k.to_string(), "from": from, "to": to}))
+            .collect();
+        Ok(json!({
+            "tick": self.tick().0,
+            "world_hash": self.world_hash()?.to_string(),
+            "migrated": migrated,
+            "renamed": report.renamed,
+            "dropped": keys(&report.dropped),
+            "caches_rebuilt": keys(&report.caches_rebuilt),
+        }))
+    }
+
     /// Starts recording into `sink` (replay.md 2.3): the start snapshot, its formats and the
     /// bundle, then every applied write and every tick's hash.
     pub fn record(
@@ -1599,7 +1732,9 @@ impl Game {
             player: None,
             animation,
         };
-        configure(GameBuilder::new(Arc::new(setup))).build_empty(&set)
+        let mut g = configure(GameBuilder::new(Arc::new(setup))).build_empty(&set)?;
+        g.replay = true;
+        Ok(g)
     }
 
     /// The bundle record of a bundle this game has.

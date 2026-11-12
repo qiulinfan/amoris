@@ -7,8 +7,8 @@
 //! (architecture.md 11, choice 7). The runtime, which links both physics and the script host,
 //! therefore rebuilds the world's component registry with schemas for `Transform`, `Velocity`,
 //! `Boat`, `Wind`, `Walker`, UI, the visual components a game animates (`Model`, `Light`,
-//! `Environment`) and water request components, and registers hand-written slot functions for
-//! them (architecture.md 11, Slice 1). The rebuilt registry must name exactly the components the old one did, so a component
+//! `Environment`), water request components and amoris-sim's `Parent`, and registers hand-written
+//! slot functions for them (architecture.md 11, Slice 1). The rebuilt registry must name exactly the components the old one did, so a component
 //! physics adds later fails the game's construction instead of vanishing from it.
 
 use amoris_assets::{
@@ -20,8 +20,9 @@ use amoris_physics::water::displacement::WaterDisplacement;
 use amoris_physics::water::feedback::WaterFeedback;
 use amoris_physics::water::resident::{WaterOutletStage, WaterProbe, WaterResident};
 use amoris_physics::{
-    Board, Boat, Collider, ExternalForce, Floater, Hull, Rain, RigidBody, Sail, Sea, Terrain,
-    Transform, Trim, Velocity, Vessel, Walker, WaterDrain, WaterRegion, WaterSource, Wind,
+    Board, Boat, Collider, CollisionFilter, ExternalForce, Floater, Hull, Rain, RigidBody, Sail,
+    Sea, SensorOverlaps, Terrain, Transform, Trim, Velocity, Vessel, Walker, WaterDrain,
+    WaterRegion, WaterSource, Wind,
 };
 use amoris_script::{EngineFns, register_engine};
 use amoris_sim::registry::{
@@ -92,7 +93,7 @@ where
 /// Every engine component a scene or `world_edit` can name (`Name` is the entity's own `name`);
 /// the first three are the player layer's (perception.md: who observes, what can be perceived,
 /// what blocks sight).
-pub fn engine_components() -> [EngineComponent; 48] {
+pub fn engine_components() -> [EngineComponent; 52] {
     [
         entry::<amoris_interface::perception::Observer>(),
         entry::<amoris_interface::perception::Perceivable>(),
@@ -113,6 +114,9 @@ pub fn engine_components() -> [EngineComponent; 48] {
         entry::<UiBar>(),
         entry::<UiText>(),
         entry::<Collider>(),
+        entry::<CollisionFilter>(),
+        entry::<SensorOverlaps>(),
+        entry::<amoris_physics::Joint>(),
         entry::<ExternalForce>(),
         entry::<Floater>(),
         entry::<Hull>(),
@@ -142,6 +146,7 @@ pub fn engine_components() -> [EngineComponent; 48] {
         displacement_entry(),
         flow_entry::<WaterSource>(),
         flow_entry::<WaterDrain>(),
+        entry::<amoris_sim::Parent>(),
     ]
 }
 
@@ -361,6 +366,9 @@ pub fn merge(target: &mut Value, patch: &Map<String, Value>) -> Result<(), Strin
     }
     Ok(())
 }
+
+mod bodies;
+mod hierarchy;
 
 // --- Script schemas and slot functions -----------------------------------------------------------
 
@@ -1891,6 +1899,7 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     let before = names(world);
     world.insert_resource(ComponentRegistry::default());
     ComponentRegistry::register::<Name>(world, None)?;
+    ComponentRegistry::register::<amoris_sim::Parent>(world, Some(hierarchy::parent_schema()?))?;
     ComponentRegistry::register::<Transform>(world, Some(transform_schema()?))?;
     ComponentRegistry::register::<Velocity>(world, Some(velocity_schema()?))?;
     ComponentRegistry::register::<Boat>(world, Some(boat_schema()?))?;
@@ -1987,9 +1996,15 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
             "A sink: water taken at a region's column each tick, never more than is there.",
         )?),
     )?;
-    ComponentRegistry::register::<RigidBody>(world, None)?;
-    ComponentRegistry::register::<Collider>(world, None)?;
-    ComponentRegistry::register::<ExternalForce>(world, None)?;
+    ComponentRegistry::register::<RigidBody>(world, Some(bodies::rigid_body_schema()?))?;
+    ComponentRegistry::register::<Collider>(world, Some(bodies::collider_schema()?))?;
+    ComponentRegistry::register::<CollisionFilter>(
+        world,
+        Some(bodies::collision_filter_schema()?),
+    )?;
+    ComponentRegistry::register::<SensorOverlaps>(world, None)?;
+    ComponentRegistry::register::<amoris_physics::Joint>(world, Some(bodies::joint_schema()?))?;
+    ComponentRegistry::register::<ExternalForce>(world, Some(bodies::external_force_schema()?))?;
     ComponentRegistry::register::<Floater>(world, None)?;
     ComponentRegistry::register::<Vessel>(world, None)?;
     ComponentRegistry::register::<Sail>(world, None)?;
@@ -2024,6 +2039,8 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     }
     register_engine::<Transform>(world, transform_fns())?;
     register_engine::<Velocity>(world, velocity_fns())?;
+    bodies::register(world)?;
+    hierarchy::register(world)?;
     register_engine::<Boat>(world, boat_fns())?;
     register_engine::<Board>(world, board_fns())?;
     register_engine::<Wind>(world, wind_fns())?;

@@ -45,7 +45,7 @@ it are charter 5.4.
   `river-falls`, `surf-beach`, `water-pool`, `water-storm`, `water-valley`).
   `tests/fixtures/`: projects only tests and checks read: the checks' negative controls, the SDK's
   type test, and `scenes/`, the scenes that tests, checks and measurement tools read (eight
-  `water-*` scenes, `gi-room`, `pt-lab`). xtask runs every `samples/*/check.toml` and `tests/fixtures/**/check.toml`.
+  `water-*` scenes, `gi-room`, `pt-lab`, `hierarchy`). xtask runs every `samples/*/check.toml` and `tests/fixtures/**/check.toml`.
 - `bench/`: benchmark workloads and comparison harnesses (`agent-dev/`, `physics/`, `rules/`,
   `web/threejs_cubes.html`).
 - `tools/`: Python, shell and Node scripts by purpose ([tools/README.md](tools/README.md)):

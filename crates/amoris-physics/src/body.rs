@@ -293,6 +293,52 @@ fn half() -> f64 {
     0.5
 }
 
+/// How the collider on its entity meets others (simulation.md 8.5): whether it is a sensor, and
+/// its collision groups. Without one a collider is solid and in every group, meeting every other.
+///
+/// - A sensor pushes nothing and is pushed by nothing: it reports what enters and leaves it
+///   (`physics.sensor_entered` and `physics.sensor_left`, subject the sensor), bodies and
+///   `Walker`s alike. Walkers, ray casts, overlaps and sweeps pass through it.
+/// - Two colliders meet, solid or sensor, when each is in a group the other's `mask` holds:
+///   `a.groups & b.mask` and `b.groups & a.mask` are both non-zero. The volumes' chunks and a
+///   `Walker` without a `CollisionFilter` are in every group with every group in their mask; a
+///   walker's filter decides only which sensors notice it, never what it stands on.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct CollisionFilter {
+    /// A sensor (a trigger): it detects, never collides.
+    pub sensor: bool,
+    /// The groups it is in, one bit each of 32 (default all).
+    pub groups: u32,
+    /// The groups it meets (default all).
+    pub mask: u32,
+}
+
+impl Default for CollisionFilter {
+    fn default() -> Self {
+        CollisionFilter {
+            sensor: false,
+            groups: u32::MAX,
+            mask: u32::MAX,
+        }
+    }
+}
+
+impl CollisionFilter {
+    /// A sensor in every group, meeting every group.
+    pub fn sensor() -> CollisionFilter {
+        CollisionFilter {
+            sensor: true,
+            ..CollisionFilter::default()
+        }
+    }
+
+    /// Whether colliders with these filters meet.
+    pub fn meets(&self, other: &CollisionFilter) -> bool {
+        self.groups & other.mask != 0 && other.groups & self.mask != 0
+    }
+}
+
 impl Collider {
     pub fn new(shape: Shape) -> Collider {
         Collider {

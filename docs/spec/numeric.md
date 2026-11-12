@@ -546,7 +546,11 @@ wrap (hashes, PCG32) says so with `wrapping_*`. In scripts, integers are doubles
     `MassProperties::new`, along the body's axes, with no eigen decomposition. One collider per
     body; a compound carries several shapes. `amoris_physics::validate` makes these refusals, for a
     boundary write to refuse a spawn at load; `physics.step` makes them again when it would build
-    the body, reporting `sim.system_failed` with the cause each tick and building nothing.
+    the body, reporting `sim.system_failed` with the cause each tick and building nothing. A
+    script's write is not refused for the mass rule at its call either (2026-11-12; script-host.md
+    7.2): the rule spans two components that one call, or two systems, may change one after the
+    other, and only the `f32` build knows a mass that rounds to 0. `physics.step`'s report, with the
+    entity and the reason, is what the script's author reads, as for a scene or `world.edit`.
 12. **Slice 1: non-finite solver state** (7). A body that Rapier quarantines, or whose pose or
     velocity comes back non-finite, is reported (`number.not_finite`, the cause of a
     `sim.system_failed` of `physics.step`), keeps its `Transform`, and gets zero velocity both in

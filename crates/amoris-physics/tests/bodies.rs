@@ -526,3 +526,54 @@ fn a_collider_needs_a_transform() {
     assert!(sim.world().get::<Velocity>(e).is_none());
     assert!(get::<Transform>(&sim, plain).position[1] < 5.0);
 }
+
+/// A force and a torque in `ExternalForce` at a boundary act in the next step and in none after
+/// it: a ball adrift gains F dt / m and, about its centre, tau dt / (2/5 m r^2).
+#[test]
+fn a_force_acts_for_one_step() {
+    let mut sim = world();
+    let radius = 0.5;
+    let b = sim
+        .boundary()
+        .spawn((
+            Transform::at([0.0, 5.0, 0.0]),
+            Velocity::default(),
+            RigidBody {
+                gravity_scale: 0.0,
+                ..RigidBody::dynamic()
+            },
+            Collider::new(Shape::Ball { radius }).with_density(1000.0),
+            ExternalForce::default(),
+        ))
+        .unwrap();
+    steps(&mut sim, 2);
+    assert_eq!(get::<Velocity>(&sim, b), Velocity::default());
+    let e = entity::require(sim.world(), b).unwrap();
+    let mass = {
+        let w = sim.world();
+        amoris_physics::body::body_mass(w.get::<RigidBody>(e), w.get::<Collider>(e)).unwrap()
+    };
+    let (force, torque) = ([900.0, 0.0, -300.0], [0.0, 40.0, 0.0]);
+    *sim.boundary()
+        .world_mut()
+        .get_mut::<ExternalForce>(e)
+        .unwrap() = ExternalForce { force, torque };
+    steps(&mut sim, 1);
+    let dt = 1.0 / 60.0;
+    let v = get::<Velocity>(&sim, b);
+    let inertia = 0.4 * mass * radius * radius;
+    for i in 0..3 {
+        let (lin, ang) = (force[i] * dt / mass, torque[i] * dt / inertia);
+        assert!((v.linear[i] - lin).abs() < 1e-6, "{:?} against {lin}", v);
+        assert!((v.angular[i] - ang).abs() < 1e-6, "{:?} against {ang}", v);
+    }
+    assert!(v.linear[0] > 0.02 && v.angular[1] > 0.01, "{v:?}");
+    // Applied once and zero at the boundary: the next step adds nothing.
+    assert_eq!(get::<ExternalForce>(&sim, b), ExternalForce::default());
+    steps(&mut sim, 1);
+    let after = get::<Velocity>(&sim, b);
+    for i in 0..3 {
+        assert!((after.linear[i] - v.linear[i]).abs() < 1e-6, "{after:?}");
+        assert!((after.angular[i] - v.angular[i]).abs() < 1e-6, "{after:?}");
+    }
+}

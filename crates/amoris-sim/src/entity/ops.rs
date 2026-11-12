@@ -1,6 +1,7 @@
 //! Spawn and despawn (docs/spec/simulation.md 7.3). Every spawn allocates its id from the world's
 //! allocator and records it in the index, so ids follow allocation order and the index stays
-//! sorted; nothing else may spawn or despawn simulation entities.
+//! sorted; nothing else may spawn or despawn simulation entities. A despawn takes the entity and
+//! every entity under it by `Parent` ([`Hierarchy`]), by every route.
 //!
 //! Two forms: functions over `&mut World` that apply at once (boundary writes, a script host
 //! applying an invocation's staged commands at commit, exclusive systems), and [`SimCommands`], a
@@ -13,7 +14,8 @@ use bevy_ecs::prelude::{Bundle, Commands, Entity, ResMut, Resource, World};
 use bevy_ecs::system::SystemParam;
 
 use super::{
-    EntityAllocator, EntityId, EntityIndex, entity_alive, entity_id_invalid, entity_not_found,
+    EntityAllocator, EntityId, EntityIndex, Hierarchy, entity_alive, entity_id_invalid,
+    entity_not_found,
 };
 
 fn parts(world: &mut World) -> (EntityAllocator, &mut EntityIndex) {
@@ -107,22 +109,55 @@ pub fn revive(world: &mut World, id: EntityId, bundle: impl Bundle) -> Result<En
     Ok(entity)
 }
 
-/// Despawns the entity holding `id` with all its components and returns `true`; for an id whose
-/// entity is already despawned, does nothing and returns `false` (two rules removing the same
-/// crate in one tick are not an error). An id never allocated is `sim.entity_id_invalid`.
-/// Despawning never despawns other entities.
+/// Despawns the entity holding `id` and every entity under it by `Parent`, each with all its
+/// components, and returns `true`; for an id whose entity is already despawned, does nothing and
+/// returns `false` (two rules removing the same crate in one tick are not an error). An id never
+/// allocated is `sim.entity_id_invalid`. An entity that only refers to a despawned one by another
+/// component stays, and keeps the id.
 pub fn despawn(world: &mut World, id: EntityId) -> Result<bool, Problem> {
+    despawn_tree(world, id).map(|gone| !gone.is_empty())
+}
+
+/// [`despawn`], answering the ids it despawned: `id` first, then the entities under it, a parent
+/// before its children and siblings ascending by id. Empty when `id`'s entity is already
+/// despawned.
+pub fn despawn_tree(world: &mut World, id: EntityId) -> Result<Vec<EntityId>, Problem> {
+    let known = *world.resource::<EntityAllocator>();
+    if !known.allocated(id) || world.resource::<EntityIndex>().get(id).is_none() {
+        // Nothing to take: refuse or answer without reading the rows.
+        return despawn_in(world, id, &Hierarchy::default());
+    }
+    let h = Hierarchy::read(world);
+    despawn_in(world, id, &h)
+}
+
+/// [`despawn_tree`] with the hierarchy given: `h` must be the world's as it is now. For a caller
+/// that despawns several entities and keeps one [`Hierarchy`] in step between them (a script
+/// call's commit), so the `Parent` rows are read once.
+pub fn despawn_in(
+    world: &mut World,
+    id: EntityId,
+    h: &Hierarchy,
+) -> Result<Vec<EntityId>, Problem> {
     let (alloc, index) = parts(world);
     if !alloc.allocated(id) {
         return Err(entity_id_invalid(&id.get().to_string(), alloc.next()));
     }
-    match index.remove(id) {
-        Some(entity) => {
-            world.despawn(entity);
-            Ok(true)
+    let Some(root) = index.remove(id) else {
+        return Ok(Vec::new());
+    };
+    let mut gone = vec![id];
+    let mut entities = vec![root];
+    for under in h.descendants(id) {
+        if let Some(entity) = index.remove(under) {
+            gone.push(under);
+            entities.push(entity);
         }
-        None => Ok(false),
     }
+    for entity in entities {
+        world.despawn(entity);
+    }
+    Ok(gone)
 }
 
 /// The live entity holding `id`.
@@ -162,7 +197,11 @@ impl<'w, 's> SimCommands<'w, 's> {
         Ok(id)
     }
 
-    /// Stages the despawn of the entity holding `id` (see [`despawn`]).
+    /// Stages the despawn of the entity holding `id` and of the entities under it (see
+    /// [`despawn`]). `id` leaves the index at the call; the entities under it are those the world
+    /// shows when the system returns, once the commands staged before this one have applied, and
+    /// they stay in the index until then. A child staged after this call is not taken: it comes
+    /// into a world whose parent is gone.
     pub fn despawn(&mut self, id: EntityId) -> Result<bool, Problem> {
         if !self.alloc.allocated(id) {
             return Err(entity_id_invalid(&id.get().to_string(), self.alloc.next()));
@@ -170,6 +209,15 @@ impl<'w, 's> SimCommands<'w, 's> {
         match self.index.remove(id) {
             Some(entity) => {
                 self.commands.entity(entity).despawn();
+                self.commands.queue(move |world: &mut World| {
+                    let h = Hierarchy::read(world);
+                    for under in h.descendants(id) {
+                        let entity = world.resource_mut::<EntityIndex>().remove(under);
+                        if let Some(entity) = entity {
+                            world.despawn(entity);
+                        }
+                    }
+                });
                 Ok(true)
             }
             None => Ok(false),

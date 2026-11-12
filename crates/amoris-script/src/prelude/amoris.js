@@ -90,6 +90,9 @@ const physics = Object.freeze({
 	sweep: (from, to, radius, options) => host.physicsSweep(from, to, radius, options),
 	sphere: (center, radius, options) => host.physicsSphere(center, radius, options)
 });
+const scene = Object.freeze({ load: (path, options) => {
+	host.sceneLoad(path, options?.mode ?? "replace");
+} });
 const nav = Object.freeze({
 	path: (grid, from, to) => host.navPath(grid, from, to),
 	nearest: (grid, at, radius) => host.navNearest(grid, at, radius)
@@ -169,7 +172,8 @@ export function __context(info) {
 		water,
 		physics,
 		anim,
-		nav
+		nav,
+		scene
 	});
 }
 /** @internal The host wraps a declared query's raw columns with this. */
@@ -242,4 +246,4 @@ export const field = Object.freeze({
 
 import { harden as __amoris_harden } from "amoris:host";
 import * as __amoris_self from "amoris";
-__amoris_harden("amoris", __amoris_self, { ["Query"]: Query, ["annotate"]: annotate, ["world"]: world, ["voxels"]: voxels, ["physics"]: physics, ["nav"]: nav, ["anim"]: anim, ["water"]: water, ["part"]: part, ["makeRng"]: makeRng, ["__context"]: __context, ["__query"]: __query, ["component"]: component, ["system"]: system, ["executor"]: executor, ["game"]: game, ["freeze"]: freeze, ["fieldOf"]: fieldOf, ["field"]: field }, { ["Query"]: 293, ["annotate"]: 534, ["world"]: 543, ["voxels"]: 554, ["physics"]: 572, ["nav"]: 581, ["anim"]: 586, ["water"]: 607, ["part"]: 620, ["makeRng"]: 625, ["__context"]: 647, ["__query"]: 674, ["component"]: 805, ["system"]: 818, ["executor"]: 825, ["game"]: 830, ["freeze"]: 835, ["fieldOf"]: 877, ["field"]: 881 });
+__amoris_harden("amoris", __amoris_self, { ["Query"]: Query, ["annotate"]: annotate, ["world"]: world, ["voxels"]: voxels, ["physics"]: physics, ["scene"]: scene, ["nav"]: nav, ["anim"]: anim, ["water"]: water, ["part"]: part, ["makeRng"]: makeRng, ["__context"]: __context, ["__query"]: __query, ["component"]: component, ["system"]: system, ["executor"]: executor, ["game"]: game, ["freeze"]: freeze, ["fieldOf"]: fieldOf, ["field"]: field }, { ["Query"]: 294, ["annotate"]: 549, ["world"]: 558, ["voxels"]: 569, ["physics"]: 587, ["scene"]: 596, ["nav"]: 602, ["anim"]: 607, ["water"]: 628, ["part"]: 641, ["makeRng"]: 646, ["__context"]: 668, ["__query"]: 696, ["component"]: 827, ["system"]: 840, ["executor"]: 847, ["game"]: 852, ["freeze"]: 857, ["fieldOf"]: 899, ["field"]: 903 });

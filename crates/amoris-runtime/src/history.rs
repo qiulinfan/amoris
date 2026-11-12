@@ -86,9 +86,10 @@ fn restores(e: &Edit) -> Option<(u64, &str)> {
 /// components the earlier inverse restores anyway (it writes them whole, or removes them, after),
 /// then the earlier inverse. A drag's later inverses all drop out, so the entry keeps the value
 /// from before the drag. `None` when the later edit spawned, destroyed or revived an entity (its
-/// inverse would destroy or revive one, and an edit cannot name an entity an earlier edit of the
-/// same call revives) or when the result would pass the 64 edits of one `world_edit`: the edit
-/// then starts an entry of its own.
+/// inverse would destroy or revive one, an inverse's revive comes before its restores and its
+/// destroys after them, and an edit cannot be applied to an entity an earlier edit of the same
+/// call revives) or when the result would pass the 64 edits of one `world_edit`: the edit then
+/// starts an entry of its own.
 pub fn merged(earlier: &[Edit], later: Vec<Edit>) -> Option<Vec<Edit>> {
     let covered: BTreeSet<(u64, &str)> = earlier.iter().filter_map(restores).collect();
     let mut out = Vec::new();

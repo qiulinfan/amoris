@@ -63,6 +63,7 @@ const HISTORY: &[&str] = &[
     "history.undo",
     "history.redo",
     "snapshots.restore",
+    "saves.load",
     "play.start",
     "play.stop",
 ];

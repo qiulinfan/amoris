@@ -143,6 +143,7 @@ tests/fixtures/       projects only tests and checks read: controls/ (the checks
                       measurement tools read, with their generators beside them
   scenes/             water-dam/  water-feedback/  water-floaters/  water-probes/
                       water-resident/  water-river/  water-shore/  water-slope/  gi-room/  pt-lab/
+                      hierarchy/
 bench/                workloads and comparison harnesses: agent-dev/ (the Courier benchmark),
                       physics/ (Rapier, Jolt, PhysX through Unity), rules/ (the rule workload,
                       budgets.md 4), web/ (three.js many_cubes, threejs_cubes.html)
@@ -980,7 +981,9 @@ step can confirm it or change the layout.
    scripts. The `ScriptComponent` derive (script-host.md 7.2) replaces the hand-written functions
    when it lands in a crate physics may depend on. The same module holds the JSON forms of every
    engine component for scenes and `world_edit`, through `bevy_ecs`'s typed access, hence `bevy_ecs`
-   in the runtime (6).
+   in the runtime (6). The runtime also gives `RigidBody`, `Collider` and `ExternalForce` schemas
+   (2026-11-12; `crates/amoris-runtime/src/engine/bodies.rs`), the first whose Rust forms are not
+   flat (script-host.md 7.2), and `CollisionFilter` and `Joint` ones (simulation.md 8.5).
 10. **Slice 1: what `amoris-app` links.** `amoris-app` links `amoris-runtime` (features `thread` and
     `transpile`), `amoris-check` (feature `native`, which turns on the runtime's `transpile` to read
     projects from disk), `amoris-link`, `amoris-sim` and `amoris-contract`; it does not link
@@ -1002,6 +1005,9 @@ step can confirm it or change the layout.
     `spawn` may name an engine prefab (`{"kind": "sloop", ...}`, whose components its `components`
     override field by field), and `parent`, `children`, `world` and `cause` are not taken yet. Every
     entity reference in a recorded edit, entity-typed fields included, is its id (threads.md 5.3).
+    Since 2026-11-12 a spawn places its entity under another by naming `Parent {parent}` among its
+    components, and `Destroy` takes the entity's descendants as the contract says (server.md 3.1);
+    the contract's `parent` and nested `children` of `Spawn` are still not taken.
 12. **Slice 1: scenes spawn names first (slice 1 review).** `Scene::spawn_into` spawns every entity
     with its name in file order, so the ids follow the file, and only then checks each entity's
     components against that world and inserts them, all inside one boundary mark rolled back on any

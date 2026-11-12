@@ -36,11 +36,29 @@ pub trait ComponentAccess: Send + Sync + 'static {
 pub struct EngineFns<C> {
     /// The values of a component, in slot and string order.
     pub read: fn(&C) -> ProjectValues,
-    /// Writes values back into a component.
+    /// Writes values back into a component; what the slots do not hold stays.
     pub write: fn(&mut C, &ProjectValues),
     /// A component from values.
     pub make: fn(&ProjectValues) -> C,
 }
+
+/// Why a slot rule refused a write: the field whose value the component cannot hold, and one plain
+/// sentence saying why.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SlotRefusal {
+    pub field: &'static str,
+    pub message: String,
+}
+
+/// The slot rule of an engine component whose Rust form its flat slots cannot fully say
+/// (script-host.md 7.2). `before` is what the entity holds before the write (the call's overlay
+/// for a `set`, the world for a row's cells), `None` for an insert or a spawn; `after` is what
+/// the write would leave. The rule refuses what the component cannot hold
+/// (`script.write_not_held`) and settles `after` to what the component will read back once
+/// written. It accepts `after == before`, and judges no range: a value the component can hold but
+/// the engine cannot use is for the system that uses it.
+pub type SlotRule =
+    fn(before: Option<&ProjectValues>, after: &mut ProjectValues) -> Result<(), SlotRefusal>;
 
 struct EngineAccess<C> {
     fns: EngineFns<C>,
@@ -107,13 +125,15 @@ impl ComponentAccess for ProjectAccess {
     }
 }
 
-/// The accessors of every component scripts can name, by world component id, and the current
-/// schema of each project component a swap kept (its docs and defaults may be newer than the
-/// registry's entry, which cannot be replaced; hot-update.md 15, choice 6).
+/// The accessors of every component scripts can name, by world component id, the current schema
+/// of each project component a swap kept (its docs and defaults may be newer than the registry's
+/// entry, which cannot be replaced; hot-update.md 15, choice 6), and the slot rules of the engine
+/// components that have one.
 #[derive(Resource, Default, Clone)]
 pub struct ScriptAccess {
     by_id: BTreeMap<ComponentId, Arc<dyn ComponentAccess>>,
     schemas: BTreeMap<ComponentId, Arc<ComponentSchema>>,
+    rules: BTreeMap<ComponentId, SlotRule>,
 }
 
 impl ScriptAccess {
@@ -125,6 +145,11 @@ impl ScriptAccess {
     /// registry's then holds).
     pub fn schema(&self, id: ComponentId) -> Option<&Arc<ComponentSchema>> {
         self.schemas.get(&id)
+    }
+
+    /// The component's slot rule, when it registered one.
+    pub fn rule(&self, id: ComponentId) -> Option<SlotRule> {
+        self.rules.get(&id).copied()
     }
 }
 
@@ -157,6 +182,32 @@ pub fn register_engine<C: Component<Mutability = Mutable>>(
     access_mut(world)
         .by_id
         .insert(id, Arc::new(EngineAccess { fns }));
+    Ok(())
+}
+
+/// Gives the engine component `C` a slot rule: every script write to it (`set`, `insert`, `spawn`,
+/// a column write-back) is then judged by `rule` before it is staged. `C` must have its slot
+/// functions already (`register_engine`).
+pub fn register_engine_rule<C: Component>(
+    world: &mut World,
+    rule: SlotRule,
+) -> Result<(), Problem> {
+    let has_fns = |id: &ComponentId| {
+        let access = world.get_resource::<ScriptAccess>();
+        access.is_some_and(|a| a.get(*id).is_some())
+    };
+    let Some(id) = world.component_id::<C>().filter(has_fns) else {
+        return Err(Problem::new(
+            "script.component_unregistered",
+            format!(
+                "{} has no slot functions yet; register them with register_engine before its slot \
+                 rule.",
+                std::any::type_name::<C>()
+            ),
+            detail([("type", json!(std::any::type_name::<C>()))]),
+        ));
+    };
+    access_mut(world).rules.insert(id, rule);
     Ok(())
 }
 

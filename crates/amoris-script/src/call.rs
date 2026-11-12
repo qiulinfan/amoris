@@ -1,6 +1,13 @@
 //! One script call as a transaction (docs/spec/script-host.md 5.4): what it has staged (column
 //! write-backs, commands, events), the overlay its own commands make of the world, and the commit
 //! that applies them all or the rollback that applies none.
+//!
+//! A despawn takes the entities under the despawned one by `Parent`, at the call (the overlay
+//! shows them gone at once) and at the commit (`entity::despawn_in`). Both read the hierarchy as
+//! the call's commands before the despawn leave it: the call keeps a [`Hierarchy`] in step with
+//! each command that changes it, and the commit reads the world its earlier commands made. A
+//! column cannot write `Parent.parent` (`natives/query.rs`), since columns are written back
+//! before every command and would change the hierarchy behind the call's back.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -9,13 +16,13 @@ use amoris_sim::entity;
 use amoris_sim::event::{self, NewEvent};
 use amoris_sim::registry::{ComponentSchema, ProjectValues};
 use amoris_sim::rng::StreamKey;
-use amoris_sim::{ComponentRegistry, EntityId, Tick};
+use amoris_sim::{ComponentRegistry, EntityId, Hierarchy, Tick};
 use bevy_ecs::component::ComponentId;
 use bevy_ecs::prelude::World;
 use rquickjs::{Object, Persistent};
 use serde_json::json;
 
-use crate::access::{ComponentAccess, ScriptAccess};
+use crate::access::{ComponentAccess, ScriptAccess, SlotRefusal, SlotRule};
 use crate::error::{ErrorPhase, ScriptError};
 
 /// A component a call names, resolved in its world.
@@ -24,6 +31,25 @@ pub(crate) struct Comp {
     pub id: ComponentId,
     pub schema: Arc<ComponentSchema>,
     pub access: Arc<dyn ComponentAccess>,
+    /// Its slot rule, which judges every write to it (script-host.md 7.2); most have none.
+    pub rule: Option<SlotRule>,
+}
+
+/// `script.write_not_held`: the component's slot rule refused a value its flat form cannot hold.
+pub(crate) fn not_held(comp: &Comp, refusal: SlotRefusal, phase: ErrorPhase) -> ScriptError {
+    ScriptError::new("script.write_not_held", refusal.message, phase)
+        .component(&comp.schema.name)
+        .field(refusal.field)
+}
+
+/// The slot of `Parent.parent`, when `comp` is the engine's `Parent`: the component that makes
+/// the hierarchy, whose writes the call follows.
+pub(crate) fn parent_slot(world: &World, comp: &Comp) -> Option<usize> {
+    if world.component_id::<amoris_sim::Parent>() != Some(comp.id) {
+        return None;
+    }
+    let field = comp.schema.fields.iter().find(|f| &*f.name == "parent")?;
+    Some(usize::from(field.first_slot))
 }
 
 /// `script.unknown_component`, with the nearest names.
@@ -57,6 +83,7 @@ pub(crate) fn resolve_comp(world: &World, name: &str) -> Result<Comp, ScriptErro
             id: e.id,
             schema,
             access,
+            rule: accessors.rule(e.id),
         })
     });
     found.ok_or_else(|| unknown_component(world, name))
@@ -222,6 +249,9 @@ pub(crate) struct CallState {
     pub counts: CallCounts,
     /// Each staged volume's command, by its index in `commands`.
     pub voxels: BTreeMap<EntityId, usize>,
+    /// The hierarchy as the call's commands so far leave it, once a command needed it (see
+    /// [`CallState::hierarchy`]).
+    hierarchy: Option<Hierarchy>,
 }
 
 impl CallState {
@@ -238,7 +268,16 @@ impl CallState {
             queries: Vec::new(),
             counts: CallCounts::default(),
             voxels: BTreeMap::new(),
+            hierarchy: None,
         }
+    }
+
+    /// The hierarchy as the call's commands so far leave it. It is read from the world by the
+    /// first command that bears on it (a despawn; a `set`, `insert` or `remove` of `Parent`; a
+    /// spawn with one), before that command takes effect: no earlier command of the call changed
+    /// it, so the world's rows are it. Every such command then keeps it in step.
+    pub fn hierarchy(&mut self, world: &World) -> &mut Hierarchy {
+        self.hierarchy.get_or_insert_with(|| Hierarchy::read(world))
     }
 }
 
@@ -271,7 +310,22 @@ pub(crate) fn apply(
         v.nums[usize::from(c.slot)] = c.value;
         c.comp.access.write(&mut em, &v);
     }
+    // The world's hierarchy, read for a despawn and kept while only despawns follow; a command
+    // that may change a `Parent` drops it, and the next despawn reads the world again.
+    let mut hierarchy: Option<Hierarchy> = None;
     for cmd in commands {
+        let reparents = match &cmd {
+            Command::Set { comp, .. }
+            | Command::Insert { comp, .. }
+            | Command::Remove { comp, .. } => parent_slot(world, comp).is_some(),
+            Command::Spawn { comps, .. } => {
+                comps.iter().any(|(c, _)| parent_slot(world, c).is_some())
+            }
+            _ => false,
+        };
+        if reparents {
+            hierarchy = None;
+        }
         match cmd {
             Command::Set {
                 id,
@@ -301,7 +355,11 @@ pub(crate) fn apply(
                 }
             }
             Command::Despawn { id } => {
-                entity::despawn(world, id).map_err(|p| internal(&p.message))?;
+                let h = hierarchy.get_or_insert_with(|| Hierarchy::read(world));
+                let gone = entity::despawn_in(world, id, h).map_err(|p| internal(&p.message))?;
+                for id in gone {
+                    h.clear(id);
+                }
             }
             Command::Spawn { id, comps } => {
                 let e = entity::spawn_allocated(world, id, ()).map_err(|p| internal(&p.message))?;

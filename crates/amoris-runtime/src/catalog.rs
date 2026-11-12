@@ -25,6 +25,8 @@ use crate::edit::{WorldEditOps, WorldEditParams, WorldGetParams};
 use crate::files::{ScriptReadParams, ScriptWriteParams};
 use crate::history::HistoryUndoParams;
 use crate::inspect::{WorldQueryParams, WorldSchemaParams, WorldTreeParams};
+use crate::saves::{SavesLoadParams, SavesWriteParams};
+use crate::scene_load::{SceneLoadParams, SceneLoadRecorded};
 use crate::scripts::{ScriptsApplyParams, ScriptsSwapParams};
 use crate::types::ScriptsTypesParams;
 
@@ -103,13 +105,16 @@ pub const CATALOG: &[CommandDef] = &[
     (def(
         "project.save",
         Kind::Request,
-        "Writes the edit world to the project's scene.json (Play's world is never saved).",
+        "Writes the edit world to the project's scene.json, entity ids as places in the file \
+         (Play's world is never saved).",
         schema::<NoParams>,
     )),
     def(
         "world.tree",
         Kind::Read,
-        "Entities with their names and component names; filter by name or components.",
+        "Entities with their names and component names, nested by Parent (children in id order); \
+         one subtree by root, levels by depth (a cut entity says how many children it has more), \
+         filter by name or components (a match comes with the entities it is under).",
         schema::<WorldTreeParams>,
     ),
     aka(
@@ -137,15 +142,35 @@ pub const CATALOG: &[CommandDef] = &[
         "world.edit",
         Kind::Write,
         "Spawn, set (fields merge), remove and destroy, all or nothing at one boundary; undoable \
-         (edits of one `group` in a row are one undo entry).",
+         (edits of one `group` in a row are one undo entry). Set or remove Parent to place an \
+         entity under another; destroy takes everything under the entity.",
         schema::<WorldEditOps>,
     ),
     def(
         "world_edit",
         Kind::Write,
-        "world.edit's canonical recorded form (edits tagged by op; revive restores a destroyed id).",
+        "world.edit's canonical recorded form (edits tagged by op; revive restores a destroyed id, \
+         and with `others` the entities destroyed under it).",
         schema::<WorldEditParams>,
     ),
+    def(
+        "scene.load",
+        Kind::Write,
+        "Loads another scene file of the project at a boundary: replace (the default) despawns \
+         every entity and spawns the scene's; add spawns them beside the world's. Entity numbers \
+         in the file are its places; appends scene.loaded. Not undoable: clears the history.",
+        schema::<SceneLoadParams>,
+    ),
+    CommandDef {
+        host_only: true,
+        ..def(
+            "scene_load",
+            Kind::Write,
+            "scene.load's recorded form: the scene by the content hash of its bytes, which the \
+             recording keeps.",
+            schema::<SceneLoadRecorded>,
+        )
+    },
     def(
         "history.list",
         Kind::Read,
@@ -208,6 +233,26 @@ pub const CATALOG: &[CommandDef] = &[
         "Restores the kept snapshot at or before a tick; clears the history.",
         schema::<SnapshotsRestoreParams>,
     )),
+    def(
+        "saves.list",
+        Kind::Read,
+        "The project's saves (.amoris/saves): name, size, label, tick and world hash.",
+        schema::<NoParams>,
+    ),
+    def(
+        "saves.write",
+        Kind::Request,
+        "Writes the world shown (Play's while playing) as a save of this name; a save of the \
+         name is replaced.",
+        schema::<SavesWriteParams>,
+    ),
+    def(
+        "saves.load",
+        Kind::Control,
+        "Loads a save into the current versions and restores it as the world shown, under the \
+         scripts applied now; clears the history.",
+        schema::<SavesLoadParams>,
+    ),
     def(
         "snapshot",
         Kind::Read,

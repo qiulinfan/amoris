@@ -387,7 +387,9 @@ fn sweep_fixed(physics: Option<&Physics>, lo: [f64; 3], hi: [f64; 3], axis: usiz
         geom::vec_in(direction),
         &shape,
         options,
-        rapier3d::prelude::QueryFilter::only_fixed().predicate(&with_body),
+        rapier3d::prelude::QueryFilter::only_fixed()
+            .exclude_sensors()
+            .predicate(&with_body),
     ) {
         Some((_, hit)) => {
             let free = math::max(f64::from(hit.time_of_impact) - COLLIDER_GAP_M, 0.0);
@@ -723,7 +725,9 @@ fn overlaps_fixed(physics: &Physics, lo: [f64; 3], hi: [f64; 3]) -> bool {
         .intersect_shape(
             pose,
             &shape,
-            rapier3d::prelude::QueryFilter::only_fixed().predicate(&with_body),
+            rapier3d::prelude::QueryFilter::only_fixed()
+                .exclude_sensors()
+                .predicate(&with_body),
         )
         .next()
         .is_some()
