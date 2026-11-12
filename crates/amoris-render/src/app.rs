@@ -31,6 +31,8 @@ pub trait Host {
     fn status(&self) -> Option<&str> {
         None
     }
+    /// The pointer pressed a game UI button (docs/spec/ui.md 6): the host sends `ui.press`.
+    fn ui_press(&mut self, _entity: u64) {}
     /// After each frame, with its stats.
     fn after_frame(&mut self, _stats: &FrameStats) {}
     /// Whether to read the next frame back (a screenshot); `captured` receives it.
@@ -285,6 +287,27 @@ struct State {
     prepass_frames: u32,
     frames: u32,
     title_at: f64,
+    /// The game UI's pointer (docs/spec/ui.md 6): where the cursor is in physical pixels, whether
+    /// the left button is down, and the button it went down on.
+    cursor: Option<[f32; 2]>,
+    ui_down: bool,
+    ui_target: Option<u64>,
+}
+
+impl State {
+    /// Whether the mouse is captured for first-person play (then it never touches the UI).
+    fn captured(&self) -> bool {
+        self.walk.as_ref().is_some_and(|w| w.captured)
+    }
+
+    /// The UI button under the cursor while the mouse is free.
+    fn ui_under_cursor(&self) -> Option<u64> {
+        let [x, y] = self.cursor?;
+        if self.captured() {
+            return None;
+        }
+        self.renderer.ui_hit(x, y)
+    }
 }
 
 struct App<H: Host> {
@@ -356,6 +379,9 @@ impl<H: Host> App<H> {
             prepass_frames: 0,
             frames: 0,
             title_at: 0.0,
+            cursor: None,
+            ui_down: false,
+            ui_target: None,
         });
         Ok(())
     }
@@ -378,6 +404,8 @@ impl<H: Host> App<H> {
             self.host.walk_input(walk.input(dt));
         }
         self.host.update(&mut st.renderer, now);
+        let pointer = if st.captured() { None } else { st.cursor };
+        st.renderer.set_ui_pointer(pointer, st.ui_down);
         st.renderer.trace_span("update", ts);
         let ts = st.renderer.trace_mark();
         let tex = match st.surface.get_current_texture() {
@@ -562,6 +590,27 @@ impl<H: Host> ApplicationHandler for App<H> {
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
+                // The game UI takes a left press on one of its buttons while the mouse is free:
+                // it does not capture, and a release over the same button presses it.
+                if button == MouseButton::Left
+                    && let Some(st) = self.state.as_mut()
+                {
+                    if state == ElementState::Pressed {
+                        st.ui_target = st.ui_under_cursor();
+                        st.ui_down = st.ui_target.is_some();
+                    } else {
+                        st.ui_down = false;
+                        if let Some(id) = st.ui_target.take() {
+                            if st.ui_under_cursor() == Some(id) {
+                                self.host.ui_press(id);
+                            }
+                            return;
+                        }
+                    }
+                    if st.ui_target.is_some() {
+                        return;
+                    }
+                }
                 if state == ElementState::Pressed
                     && let Some(st) = self.state.as_mut()
                     && let Some(walk) = st.walk.as_mut()
@@ -604,7 +653,15 @@ impl<H: Host> ApplicationHandler for App<H> {
                     }
                 }
             }
+            WindowEvent::CursorLeft { .. } => {
+                if let Some(st) = self.state.as_mut() {
+                    st.cursor = None;
+                }
+            }
             WindowEvent::CursorMoved { position, .. } => {
+                if let Some(st) = self.state.as_mut() {
+                    st.cursor = Some([position.x as f32, position.y as f32]);
+                }
                 if let Some(fly) = self.state.as_mut().and_then(|s| s.fly.as_mut())
                     && fly.looking
                 {

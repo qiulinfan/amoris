@@ -9,6 +9,7 @@
 //                                                         //  local_shadows, local_shadows_dropped},
 //                                                         //  per frame drawn
 //   vp.pushFrame(bytes);                                  // a render-feed frame from elsewhere (a game worker)
+//   vp.uiHit(clientX, clientY); vp.uiPointer(x, y, over, down); // the game UI's buttons (ui.md 6)
 //   vp.dispose();
 //
 // The page owns the WebSocket of the host's render feed, the asset fetches and the frame loop.
@@ -99,8 +100,20 @@ export async function createViewport(canvas, options = {}) {
     requestAnimationFrame(tick);
   });
 
+  // A client point (CSS pixels) as a canvas pixel, where the renderer lays the game UI out.
+  const canvasPixel = (clientX, clientY) => {
+    const r = canvas.getBoundingClientRect();
+    return [(clientX - r.left) * canvas.width / Math.max(1, r.width),
+      (clientY - r.top) * canvas.height / Math.max(1, r.height)];
+  };
+
   const api = {
     raw: vp,
+    canvasPixel,
+    // The game UI (docs/spec/ui.md 6): the enabled button under a client point in the last frame
+    // (its entity id, 0 for none), and the pointer the next frames draw hovered or held.
+    uiHit(clientX, clientY) { return vp.ui_hit(...canvasPixel(clientX, clientY)); },
+    uiPointer(clientX, clientY, over, down) { vp.ui_pointer(...canvasPixel(clientX, clientY), over, down); },
     setCamera(pos, rot, fovDeg = 60) {
       vp.set_camera(pos[0], pos[1], pos[2], rot[0], rot[1], rot[2], rot[3], fovDeg);
     },

@@ -1,0 +1,3 @@
+{"tick": 10, "source": {"player": 0}, "name": "ui.press", "params": {"entity": "Sound"}}
+{"tick": 40, "source": {"player": 0}, "name": "ui.press", "params": {"entity": "Start"}}
+{"tick": 60, "source": {"player": 0}, "name": "ui.press", "params": {"entity": "Sound"}}

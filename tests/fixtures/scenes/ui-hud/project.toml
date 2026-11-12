@@ -1,0 +1,6 @@
+# The game UI end to end (docs/spec/ui.md): an image, a column of buttons in a stack with a toggle
+# and a disabled one, a row with a bar, Chinese, Japanese and Korean in a project font, and a rule
+# that answers presses. Tests, the checks and the UI captures read it.
+name = "ui-hud"
+rate = 60
+seed = 1

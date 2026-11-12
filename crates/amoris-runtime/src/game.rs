@@ -728,6 +728,7 @@ impl Game {
                 let p: WorldGetParams = decode(p, name)?;
                 edit::world_get(self.sim.world(), &p)
             }
+            "ui.list" => crate::ui::list(self.sim.world(), p),
             "world.tree" => inspect::tree(self.sim.world(), &decode::<WorldTreeParams>(p, name)?),
             "world.query" => {
                 inspect::query(self.sim.world(), &decode::<WorldQueryParams>(p, name)?)
@@ -962,6 +963,14 @@ impl Game {
                         history: None,
                     })
             }
+            "ui.press" => crate::ui::press(&mut self.sim.boundary(), &cmd.params).map(
+                |(result, canonical)| Written {
+                    result,
+                    canonical,
+                    recorded: "ui.press",
+                    history: None,
+                },
+            ),
             "scripts.swap" => self
                 .swap(&cmd.params, src)
                 .map(|(result, canonical)| Written {

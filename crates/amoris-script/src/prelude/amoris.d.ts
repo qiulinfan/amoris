@@ -148,7 +148,7 @@ export interface GameEvent {
 	readonly data: Data;
 }
 /** Event kind prefixes the engine reserves. */
-export type ReservedEventPrefix = "entity" | "component" | "script" | "scripts" | "sim" | "intent" | "contact" | "physics" | "interface" | "time" | "decision" | "perception" | "scene";
+export type ReservedEventPrefix = "entity" | "component" | "script" | "scripts" | "sim" | "intent" | "contact" | "physics" | "interface" | "time" | "decision" | "perception" | "scene" | "ui";
 type LowerLetter = "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j" | "k" | "l" | "m" | "n" | "o" | "p" | "q" | "r" | "s" | "t" | "u" | "v" | "w" | "x" | "y" | "z";
 type WordChar = LowerLetter | "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "_";
 type WordTail<S extends string> = S extends `${infer C}${infer R}` ? C extends WordChar ? WordTail<R> : false : true;

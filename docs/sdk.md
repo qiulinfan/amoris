@@ -82,11 +82,11 @@ export default game({ components: [Crew, Tally, Log, Cargo], systems: [muster, l
 | `str` | `string` | none |
 
 `components.d.ts` lists the engine components scripts can use (`Transform`, `Boat`, `Walker`,
-`UiText`'s text, size, colour, offset and visibility, ...). A game may also animate a look through
-`Model` (scale, colour, emission, visibility), a `Light` (kind, colour, intensity, cone), a
-`ParticleEmitter` (rate, bursts, whether it emits, lifetime, speed, spread, acceleration, size,
-colours) and the `Environment` (sky colour, ambient, fog, exposure, bloom); the mesh and material
-paths a `Model` was built with are part of those fields too.
+`UiText`'s text, size, colour, offset, visibility and font, `UiImage`, `UiButton`, `UiStack`, ...).
+A game may also animate a look through `Model` (scale, colour, emission, visibility), a `Light`
+(kind, colour, intensity, cone), a `ParticleEmitter` (rate, bursts, whether it emits, lifetime,
+speed, spread, acceleration, size, colours) and the `Environment` (sky colour, ambient, fog,
+exposure, bloom); the mesh and material paths a `Model` was built with are part of those fields too.
 
 Characters (docs/spec/animation.md): a body's `AnimGraph` names its graph and is driven through
 `ctx.anim` (parameters, montages and their sections, its notifies' events, socket poses); an
@@ -333,6 +333,42 @@ A first-person game declares `actions = "first_person"` under `[player]`: its se
 the `Walker` (`forward`, `strafe`, `yaw`, `pitch`, `run`, `slot`, and the one-tick pulses `jump`,
 `primary`, `secondary`), which rules read like any component; `amoris play <project> --walk` plays
 it from the keyboard and mouse. Example: `samples/blockcraft`.
+
+## The game UI
+
+What the screen shows is world state, drawn by the renderer ([spec/ui.md](spec/ui.md)): `UiText`
+(a line; `font` names a project TrueType or OpenType file, empty for the engine's), `UiBar`,
+`UiImage` (a project PNG or JPEG with a `tint`), `UiButton` and `UiStack`. Each has an `anchor`
+(`top_left` ... `bottom_right`, `entity`), an `offset` in logical pixels and `visible`. A stack lays
+out the entities under it (`Parent`), in id order, as a `column` or a `row` with `spacing`,
+`padding` and `align`; a button's `UiText` is its label and its `UiImage` its icon. A root stack
+with `reference_height: 720` scales with the window's height.
+
+```json
+{"name": "Menu", "components": {"UiStack": {"anchor": "left", "offset": [48, 0],
+  "reference_height": 720, "color": [0.04, 0.06, 0.1, 0.72]}}},
+{"name": "Sound", "components": {"Parent": {"parent": 9},
+  "UiButton": {"size": [220, 44], "toggle": true},
+  "UiText": {"text": "音效 Sound", "font": "fonts/DroidSansFallback.ttf"}}}
+```
+
+A click on a button, an agent's `amoris player press Sound` and `amoris call ui.press` are the same
+recorded write: it counts `UiButton.presses`, flips a toggle's `on`, and the rule sees `ui.pressed`
+in the next tick (declare `events: ["ui."]`; `ui.` is the engine's, so scripts emit no `ui.*`):
+
+```ts
+for (const e of ctx.events) {
+    if (e.kind !== "ui.pressed" || e.subject === null) continue;
+    const { on } = e.data as { on: boolean; presses: number };
+    if (e.subject === ctx.single("SoundButton"))
+        ctx.world.set(e.subject, "UiText", { text: on ? "Sound: on" : "Sound: off" });
+}
+```
+
+Hovering and holding are drawn by the presenter and never reach the world. A disabled button
+(`enabled: false`) or one under an invisible stack refuses presses. Chinese, Japanese and Korean
+need a font that has them: copy `tests/fixtures/scenes/ui-hud/fonts/` (Droid Sans Fallback, Apache
+2.0, with its licence and source) into the game. Example: `tests/fixtures/scenes/ui-hud`.
 
 ## Players, intents and executors
 

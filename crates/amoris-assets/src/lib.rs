@@ -31,7 +31,7 @@ pub use frame::{Feed, Mailbox, RenderFrame};
 pub use mesh::{MeshData, ModelAsset, Vertex};
 pub use visual::{
     Animator, AudioSource, Camera, Environment, Light, LightKind, Model, ParticleEmitter, SkyKind,
-    Splat, UiAnchor, UiBar, UiText,
+    Splat, UiAlign, UiAnchor, UiBar, UiButton, UiDirection, UiImage, UiStack, UiText,
 };
 
 impl Persisted for anim::AnimGraph {
@@ -95,7 +95,8 @@ impl Persisted for Splat {
 
 impl Persisted for UiText {
     const NAME: &'static str = "UiText";
-    const VERSION: u32 = 1;
+    /// 2: `font` (docs/spec/ui.md 2).
+    const VERSION: u32 = 2;
 
     fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
         t.trace_type::<UiAnchor>(s)?;
@@ -109,6 +110,38 @@ impl Persisted for UiBar {
 
     fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
         t.trace_type::<UiAnchor>(s)?;
+        t.trace_type::<Self>(s).map(|_| ())
+    }
+}
+
+impl Persisted for UiImage {
+    const NAME: &'static str = "UiImage";
+    const VERSION: u32 = 1;
+
+    fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
+        t.trace_type::<UiAnchor>(s)?;
+        t.trace_type::<Self>(s).map(|_| ())
+    }
+}
+
+impl Persisted for UiButton {
+    const NAME: &'static str = "UiButton";
+    const VERSION: u32 = 1;
+
+    fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
+        t.trace_type::<UiAnchor>(s)?;
+        t.trace_type::<Self>(s).map(|_| ())
+    }
+}
+
+impl Persisted for UiStack {
+    const NAME: &'static str = "UiStack";
+    const VERSION: u32 = 1;
+
+    fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
+        t.trace_type::<UiAnchor>(s)?;
+        t.trace_type::<UiDirection>(s)?;
+        t.trace_type::<UiAlign>(s)?;
         t.trace_type::<Self>(s).map(|_| ())
     }
 }
@@ -154,6 +187,9 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     ComponentRegistry::register::<anim::Attach>(w, None)?;
     ComponentRegistry::register::<UiText>(w, None)?;
     ComponentRegistry::register::<UiBar>(w, None)?;
+    ComponentRegistry::register::<UiImage>(w, None)?;
+    ComponentRegistry::register::<UiButton>(w, None)?;
+    ComponentRegistry::register::<UiStack>(w, None)?;
     ComponentRegistry::register::<AudioSource>(w, None)?;
     ComponentRegistry::register::<ParticleEmitter>(w, None)?;
     sim.add_system(
@@ -184,6 +220,9 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
         )
         .component::<UiText>()
         .component::<UiBar>()
+        .component::<UiImage>()
+        .component::<UiButton>()
+        .component::<UiStack>()
         .component::<AudioSource>()
         .component::<ParticleEmitter>();
 }

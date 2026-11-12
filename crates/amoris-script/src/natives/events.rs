@@ -28,6 +28,7 @@ pub const RESERVED: &[&str] = &[
     "decision.",
     "perception.",
     "scene.",
+    "ui.",
 ];
 
 pub fn emit<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {

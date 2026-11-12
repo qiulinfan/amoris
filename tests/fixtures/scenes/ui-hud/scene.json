@@ -1,0 +1,25 @@
+{
+  "format": "amoris-scene",
+  "version": 1,
+  "entities": [
+    {"name": "Ground", "components": {"Transform": {"position": [0, 0, 0]}, "Model": {"mesh": "plane", "scale": [30, 1, 30], "color": [0.42, 0.5, 0.36, 1], "roughness": 0.9}}},
+    {"name": "Sun", "components": {"Transform": {"position": [0, 20, 0], "rotation": [-0.3535534, 0.3535534, 0.1464466, 0.8535534]}, "Light": {"kind": "directional", "intensity": 6.0, "shadows": true}}},
+    {"name": "Sky", "components": {"Environment": {"bloom": 0.05}}},
+    {"name": "Camera", "components": {"Transform": {"position": [0, 2.2, 7], "rotation": [-0.0871557, 0, 0, 0.9961947]}, "Camera": {"fov_deg": 50}}},
+    {"name": "Crate", "components": {"Transform": {"position": [1.8, 0.6, 0]}, "Model": {"mesh": "cube", "scale": [1.2, 1.2, 1.2], "color": [0.72, 0.52, 0.3, 1], "roughness": 0.8},
+      "UiImage": {"image": "images/emblem.png", "size": [40, 40], "anchor": "entity", "world_offset": [0, 0.9, 0]}}},
+    {"name": "Pillar", "components": {"Transform": {"position": [3.6, 1.5, -2]}, "Model": {"mesh": "cube", "scale": [0.8, 3, 0.8], "color": [0.6, 0.62, 0.66, 1], "roughness": 0.7}}},
+    {"name": "Emblem", "components": {"UiImage": {"image": "images/emblem.png", "size": [96, 96], "anchor": "top_left", "offset": [24, 24]}}},
+    {"name": "Title", "components": {"UiText": {"text": "按钮、图片与中文 · こんにちは · 안녕하세요", "size": 30, "anchor": "top", "offset": [0, 28], "font": "fonts/DroidSansFallback.ttf"}}},
+    {"name": "Menu", "components": {"UiStack": {"direction": "column", "spacing": 10, "padding": 16, "align": "center", "color": [0.04, 0.06, 0.1, 0.72], "reference_height": 720, "anchor": "left", "offset": [48, 0]}}},
+    {"name": "Heading", "components": {"Parent": {"parent": 9}, "UiText": {"text": "菜单 Menu", "size": 24, "font": "fonts/DroidSansFallback.ttf"}}},
+    {"name": "Start", "components": {"Parent": {"parent": 9}, "MenuButton": {"action": "start"}, "UiButton": {"size": [220, 44]}, "UiText": {"text": "Start · 开始", "size": 20, "font": "fonts/DroidSansFallback.ttf"}}},
+    {"name": "Sound", "components": {"Parent": {"parent": 9}, "MenuButton": {"action": "sound"}, "UiButton": {"size": [220, 44], "toggle": true}, "UiText": {"text": "Sound: off", "size": 20}}},
+    {"name": "Settings", "components": {"Parent": {"parent": 9}, "MenuButton": {"action": "settings"}, "UiButton": {"size": [220, 44]}, "UiText": {"text": "Settings · 设置", "size": 20, "font": "fonts/DroidSansFallback.ttf"}}},
+    {"name": "Quit", "components": {"Parent": {"parent": 9}, "MenuButton": {"action": "quit"}, "UiButton": {"size": [220, 44], "enabled": false}, "UiText": {"text": "Quit · 退出", "size": 20, "font": "fonts/DroidSansFallback.ttf"}}},
+    {"name": "Vitals", "components": {"UiStack": {"direction": "row", "spacing": 12, "padding": 10, "color": [0, 0, 0, 0.55], "anchor": "bottom", "offset": [0, 28]}}},
+    {"name": "HpLabel", "components": {"Parent": {"parent": 15}, "UiText": {"text": "生命 HP", "size": 20, "font": "fonts/DroidSansFallback.ttf"}}},
+    {"name": "Hp", "components": {"Parent": {"parent": 15}, "UiBar": {"value": 72, "max": 100, "size": [220, 14], "anchor": "top_left"}}},
+    {"name": "Status", "components": {"Status": {}, "UiText": {"text": "按下一个按钮 · Press a button", "size": 20, "anchor": "bottom_left", "offset": [24, 24], "font": "fonts/DroidSansFallback.ttf"}}}
+  ]
+}

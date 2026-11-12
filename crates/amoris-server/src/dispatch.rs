@@ -46,13 +46,14 @@ pub enum Via {
     Checker(Arc<Mutex<GameClient>>, String),
 }
 
-/// Whether a call made as `seat`'s player may name `method`: the player tools alone. Every other
-/// method is a developer's, whether the game answers it (and refuses it too, amoris-runtime's
+/// Whether a call made as `seat`'s player may name `method`: the player tools and the game UI's
+/// `ui.list` and `ui.press` (docs/spec/ui.md 6, Agents) alone. Every other method is a
+/// developer's, whether the game answers it (and refuses it too, amoris-runtime's
 /// `player::permitted`) or the server does (`events.since` lists every world event, a read
 /// while the debugger holds the game answers from the last publication): refused with
 /// `permission.denied` before anything runs.
 pub fn seat_permits(method: &str) -> Result<(), Problem> {
-    if method.starts_with("player.") {
+    if method.starts_with("player.") || matches!(method, "ui.list" | "ui.press") {
         Ok(())
     } else {
         Err(amoris_contract::codes::permission_denied(

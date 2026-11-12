@@ -388,14 +388,10 @@ impl Viewport {
         r.scene.ui.push(amoris_assets::frame::UiView {
             id: CROSSHAIR_ID,
             text: "+".into(),
-            fill: 0.0,
-            bar: false,
             size: [24.0, 24.0],
             color: [1.0, 1.0, 1.0, 1.0],
-            back: [0.0; 4],
             anchor: 4,
-            offset: [0.0, 0.0],
-            world: [0.0; 3],
+            ..Default::default()
         });
         vec![yaw, pitch]
     }
@@ -412,6 +408,18 @@ impl Viewport {
             Some((p, e)) => vec![p[0], p[1], p[2], e],
             None => Vec::new(),
         }
+    }
+
+    /// The game UI's enabled button drawn topmost at a canvas pixel in the last frame, by entity
+    /// id; 0 for none (docs/spec/ui.md 6: the page sends `ui.press` for it).
+    pub fn ui_hit(&self, x: f32, y: f32) -> f64 {
+        self.renderer.ui_hit(x, y).map_or(0.0, |id| id as f64)
+    }
+
+    /// The page's pointer for the game UI, in canvas pixels: `over` false when it is away from the
+    /// canvas or locked; `down` while its primary button is held (a button under it draws held).
+    pub fn ui_pointer(&mut self, x: f32, y: f32, over: bool, down: bool) {
+        self.renderer.set_ui_pointer(over.then_some([x, y]), down);
     }
 
     pub fn use_scene_camera(&mut self) {

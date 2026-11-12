@@ -11,7 +11,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Instant;
 
 use amoris_assets::collision::{RawCollisionMesh, collision_primitive, load_collision_gltf};
-use amoris_assets::frame::UiView;
+use amoris_assets::frame::{UiKind, UiView};
 use amoris_assets::{Feed, Mailbox};
 use amoris_contract::{Problem, detail};
 use amoris_render::app::{Host, RunOptions, WalkInput, run};
@@ -55,6 +55,8 @@ struct Play {
     walk: Option<WalkSession>,
     /// `--walk` on a game whose catalog is `first_person`: the window is seat `player`.
     seat: Option<SeatWalk>,
+    /// The game UI's presses (docs/spec/ui.md 6), sent as the local player.
+    ui: amoris_link::GameClient,
 }
 
 impl Host for Play {
@@ -111,6 +113,19 @@ impl Host for Play {
         // Capture warmup starts when the town and its collision geometry are both ready.
         if self.walk.as_ref().is_none_or(|w| w.ready) {
             self.frames += 1;
+        }
+    }
+
+    fn ui_press(&mut self, entity: u64) {
+        let sent = self
+            .ui
+            .send("ui.press", json!({ "entity": entity }), None, |reply| {
+                if let Err(p) = reply {
+                    eprintln!("ui.press refused: {}", p.message);
+                }
+            });
+        if let Err(p) = sent {
+            eprintln!("ui.press not sent: {}", p.message);
         }
     }
 
@@ -240,6 +255,7 @@ fn play_inner(raw: &[String]) -> Result<Outcome, Problem> {
     } else {
         None
     };
+    let ui = game.client(amoris_link::Source::Player(0))?;
     let fly = args
         .has("fly")
         .then(|| CameraState::look_at(Vec3::new(-14.0, 7.0, 16.0), Vec3::new(8.0, 0.0, 0.0)));
@@ -267,6 +283,7 @@ fn play_inner(raw: &[String]) -> Result<Outcome, Problem> {
             frames: 0,
             walk,
             seat,
+            ui,
         },
         RunOptions {
             title: format!("Amoris — {}", project.manifest.name),
@@ -714,15 +731,12 @@ impl WalkSession {
         let gi_status = walk_gi_status(self.gi_enabled, configured, r.gi_loaded(), r.gi_error());
         r.scene.ui.push(UiView {
             id: GI_BACK_ID,
-            text: String::new(),
-            fill: 0.0,
-            bar: true,
+            kind: UiKind::Bar,
             size: [300.0, 32.0],
-            color: [0.0; 4],
             back: [0.0, 0.0, 0.0, 0.65],
             anchor: 0,
             offset: [16.0, 52.0],
-            world: [0.0; 3],
+            ..UiView::default()
         });
         r.scene
             .ui
@@ -752,14 +766,11 @@ fn walk_text(id: u64, text: String, size: f32, anchor: u32, offset: [f32; 2]) ->
     UiView {
         id,
         text,
-        fill: 0.0,
-        bar: false,
         size: [size, size],
         color: [1.0, 1.0, 1.0, 1.0],
-        back: [0.0; 4],
         anchor,
         offset,
-        world: [0.0; 3],
+        ..UiView::default()
     }
 }
 

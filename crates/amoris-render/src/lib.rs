@@ -55,7 +55,7 @@ pub mod taa;
 pub mod terrain;
 pub mod trace;
 mod transparent;
-mod ui;
+pub mod ui;
 mod upload;
 pub mod voxels;
 pub mod water;

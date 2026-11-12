@@ -28,6 +28,8 @@ pub struct PageAssets {
     neural_done: Loads<NeuralGi>,
     texture_requests: Rc<RefCell<std::collections::HashSet<String>>>,
     textures_done: Loads<NeuralTexture>,
+    ui_requests: Rc<RefCell<std::collections::HashSet<String>>>,
+    ui_done: Loads<amoris_render::ui::UiAsset>,
 }
 
 impl AssetSource for PageAssets {
@@ -59,11 +61,25 @@ impl AssetSource for PageAssets {
     fn poll_neural_textures(&mut self) -> Vec<(String, Result<NeuralTexture, String>)> {
         std::mem::take(&mut *self.textures_done.borrow_mut())
     }
+    fn request_ui(&mut self, path: &str) {
+        self.ui_requests.borrow_mut().insert(path.to_owned());
+        self.requests.borrow_mut().push(path.to_owned());
+    }
+    fn poll_ui(&mut self) -> Vec<(String, Result<amoris_render::ui::UiAsset, String>)> {
+        std::mem::take(&mut *self.ui_done.borrow_mut())
+    }
 }
 
 impl PageAssets {
-    /// Imports a fetched `.glb` (or reports the fetch's failure).
+    /// Imports a fetched `.glb`, or decodes a UI font or image, or reports the fetch's failure.
     pub fn deliver(&self, path: &str, bytes: Result<&[u8], String>) {
+        if self.ui_requests.borrow_mut().remove(path) {
+            self.ui_done.borrow_mut().push((
+                path.to_owned(),
+                bytes.and_then(|b| amoris_render::ui::decode_asset(path, b)),
+            ));
+            return;
+        }
         if self.texture_requests.borrow_mut().remove(path) {
             self.textures_done
                 .borrow_mut()

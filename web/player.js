@@ -3,7 +3,8 @@
 // runs in a module Web Worker (amoris.js, game.js) at real time; the engine's renderer
 // (viewport/viewport.js) draws its render feed with WebGPU; the keys, the mouse and the wheel become
 // `player.act` controls and pulses of the seat, sent as the local human player. The camera is the
-// walker's, turned at once by the page's own look (the viewport's `first_person`).
+// walker's, turned at once by the page's own look (the viewport's `first_person`). While the
+// pointer is not locked it is the game UI's: a click on a button sends `ui.press` (ui.md 6).
 //
 // The page plays the game's sound with WebAudio as the native window plays it with amoris-audio:
 // the world's sound sources, the sound events (`sound`, or those the project's `[sounds]` names)
@@ -248,6 +249,59 @@ class Seat {
   }
 }
 
+/** The game UI's pointer (docs/spec/ui.md 6): while the pointer is not locked, the viewport draws
+ *  the button under it hovered or held, and a left release over the button the press went down on
+ *  sends `ui.press` as the local player; such a press never asks for the lock. */
+class UiPointer {
+  constructor(amoris, canvas) {
+    this.amoris = amoris;
+    this.canvas = canvas;
+    this.vp = null;
+    this.at = null;
+    this.target = 0;
+    this.consumed = false;
+    this.presses = 0;
+    this.refused = 0;
+    const locked = () => document.pointerLockElement === canvas;
+    const hit = (e) => (this.vp ? this.vp.uiHit(e.clientX, e.clientY) : 0);
+    // Capture phase, before the page's own handlers: a press on a button is the UI's alone.
+    addEventListener("mousemove", (e) => { this.at = [e.clientX, e.clientY]; }, true);
+    addEventListener("mousedown", (e) => {
+      if (e.button !== 0 || locked()) return;
+      this.target = hit(e);
+      if (!this.target) return;
+      this.consumed = true;
+      e.stopPropagation();
+      e.preventDefault();
+    }, true);
+    addEventListener("mouseup", (e) => {
+      if (e.button !== 0 || !this.target) return;
+      const target = this.target;
+      this.target = 0;
+      e.stopPropagation();
+      if (hit(e) !== target) return;
+      this.presses++;
+      this.amoris.command("ui.press", { entity: target }, PLAYER).catch((err) => {
+        this.refused++;
+        console.warn("ui.press refused:", err && err.message);
+      });
+    }, true);
+    addEventListener("click", (e) => {
+      if (!this.consumed) return;
+      this.consumed = false;
+      e.stopPropagation();
+    }, true);
+  }
+
+  /** Each frame: the pointer the viewport draws the UI with. */
+  frame() {
+    if (!this.vp) return;
+    const over = this.at !== null && document.pointerLockElement !== this.canvas;
+    const [x, y] = this.at || [0, 0];
+    this.vp.uiPointer(x, y, over, over && this.target !== 0);
+  }
+}
+
 /** An event's data as plain JSON: the worker streams amoris-sim's `PlainData` in its serde form
  *  (`"Null"`, `{"Number": 1}`, `{"Object": [[key, value], ...]}`). */
 function plain(d) {
@@ -438,11 +492,12 @@ export async function main() {
   const canvas = $("view");
   const input = new Input(canvas);
   const seat = new Seat(amoris, buttons || []);
+  const ui = new UiPointer(amoris, canvas);
   const sound = new Sound(new URL(".", packageUrl), sounds);
   amoris.onEvents((records) => sound.events(records));
   const state = (window.amorisPlayer = {
     loaded_ms: 0, ready_ms: 0, frames: 0, look: null, stats: null, samples: [],
-    amoris, input, seat, gameCamera, sound,
+    amoris, input, seat, ui, gameCamera, sound,
     /** Captures without pointer lock (the check page, where headless Chrome has no lock). */
     forceCapture(on = true) {
       input.forced = on;
@@ -521,11 +576,13 @@ export async function main() {
       const look = api.raw.first_person(frame.dx, frame.dy, frame.captured, gameCamera);
       state.look = look.length ? Array.from(look) : null;
       sound.frame(api.raw);
+      ui.frame();
       if (!state.look) return;
       seat.frame(frame, state.look);
     },
   });
   state.viewport = vp;
+  ui.vp = vp;
   amoris.onRender((bytes) => vp.pushFrame(bytes));
   vp.onStats((s) => {
     state.frames++;

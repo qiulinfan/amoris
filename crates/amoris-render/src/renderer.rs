@@ -2157,6 +2157,35 @@ impl Renderer {
         self.ui.scale = scale.max(0.5);
     }
 
+    /// The presenter's pointer over the view in device pixels (`None`: away or captured) and
+    /// whether its primary button is down: the game UI's button under it draws hovered or held
+    /// (docs/spec/ui.md 6).
+    pub fn set_ui_pointer(&mut self, at: Option<[f32; 2]>, down: bool) {
+        self.ui.set_pointer(at, down);
+    }
+
+    /// The enabled game UI button drawn topmost at a device pixel in the last frame, by entity id.
+    pub fn ui_hit(&self, x: f32, y: f32) -> Option<u64> {
+        self.ui.hit(x, y)
+    }
+
+    /// The last frame's game UI buttons: entity, rectangle in device pixels (x0, y0, x1, y1),
+    /// enabled.
+    pub fn ui_buttons(&self) -> &[(u64, [f32; 4], bool)] {
+        self.ui.buttons()
+    }
+
+    /// A game UI font under its project path, from the file's bytes (a host or test that holds
+    /// it; others arrive through the asset source).
+    pub fn add_ui_font(&mut self, path: &str, bytes: &[u8]) -> Result<(), String> {
+        self.ui.add_font(path, bytes)
+    }
+
+    /// A game UI image under its project path, RGBA8 sRGB.
+    pub fn add_ui_image(&mut self, path: &str, width: u32, height: u32, rgba: Vec<u8>) {
+        self.ui.add_image(path, width, height, rgba);
+    }
+
     /// Draws from this camera instead of the scene's active one (`None`: the scene's).
     pub fn set_camera_override(&mut self, camera: Option<CameraState>) {
         self.camera_override = camera;
@@ -2387,6 +2416,13 @@ impl Renderer {
     }
 
     fn poll_assets(&mut self) {
+        self.ui.want(&self.scene.ui);
+        for path in self.ui.take_requests() {
+            self.loader.request_ui(&path);
+        }
+        for (path, r) in self.loader.poll_ui() {
+            self.ui.deliver(&path, r);
+        }
         for (path, r) in self.loader.poll() {
             match r {
                 Ok(asset) => self.add_model(&path, &asset),
@@ -3877,10 +3913,8 @@ impl Renderer {
                 &selected,
             );
         }
-        if !self.scene.ui.is_empty() {
-            self.ui.items = self.scene.ui.clone();
-            self.ui.draw(&device, &queue, &mut enc, output, (w, h), vp);
-        }
+        self.ui.items.clone_from(&self.scene.ui);
+        self.ui.draw(&device, &queue, &mut enc, output, (w, h), vp);
         trace::span(&mut self.trace, "encode overlays, ui", ts);
         let ts = trace::mark(&self.trace);
         self.profiler.resolve(&mut enc);
@@ -3903,7 +3937,7 @@ impl Renderer {
             meshes: self.meshes.len(),
             materials: self.materials.len(),
             lights: self.light_count as usize,
-            pending_assets: self.scene.pending() + usize::from(self.gi.loading),
+            pending_assets: self.scene.pending() + usize::from(self.gi.loading) + self.ui.pending(),
             tick: self.scene.tick,
             backend: self.gpu.backend_name(),
             draw_path: self.batches.path.name(),

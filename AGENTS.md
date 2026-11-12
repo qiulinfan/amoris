@@ -45,7 +45,7 @@ it are charter 5.4.
   `river-falls`, `surf-beach`, `water-pool`, `water-storm`, `water-valley`).
   `tests/fixtures/`: projects only tests and checks read: the checks' negative controls, the SDK's
   type test, `intents/errand` (a TypeScript intent and executor under the four checks), and `scenes/`, the scenes that tests, checks and measurement tools read (eight
-  `water-*` scenes, `gi-room`, `pt-lab`, `hierarchy`). xtask runs every `samples/*/check.toml` and `tests/fixtures/**/check.toml`.
+  `water-*` scenes, `gi-room`, `pt-lab`, `hierarchy`, `ui-hud`). xtask runs every `samples/*/check.toml` and `tests/fixtures/**/check.toml`.
 - `bench/`: benchmark workloads and comparison harnesses (`agent-dev/`, `physics/`, `rules/`,
   `web/threejs_cubes.html`).
 - `tools/`: Python, shell and Node scripts by purpose ([tools/README.md](tools/README.md)):
@@ -328,6 +328,11 @@ credential cleanup. File-verification records remain local, including in that ar
   the library's `materials::`, `scene::` and `transparent::` tests;
   `python tools/render/transparency_pt.py` compares pt-lab with the path tracer by region and
   `python tools/render/transparency_bench.py` times the stage (docs/bench/transparency.md).
+- The game UI ([docs/spec/ui.md](docs/spec/ui.md)): a change to `amoris-render/src/ui.rs` or
+  `ui.wgsl` runs `cargo test -p amoris-render --test ui`; a change to its text or bar path also
+  runs the `ui_frames` example in a build without it, and their PNGs must not change. A change to
+  the UI's components, extraction or `ui.press` runs `cargo test -p amoris-runtime --features
+  transpile --test ui` and `amoris check tests/fixtures/scenes/ui-hud`.
 - The browser: `tools/build_viewport.sh` builds the WebGPU viewport into `web/viewport/pkg`
   (committed; the editor's `/wasm/` serves it), `tools/build_web.sh` also builds the game module
   into `web/pkg` and packs samples into `web/projects/` (both ignored). Serve `web/`

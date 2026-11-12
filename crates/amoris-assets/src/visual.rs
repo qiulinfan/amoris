@@ -286,6 +286,9 @@ pub struct UiText {
     /// `anchor: entity`: metres from the entity's origin.
     pub world_offset: [f64; 3],
     pub visible: bool,
+    /// A TrueType or OpenType file of the project (`fonts/DroidSansFallback.ttf`); empty is the
+    /// engine's DejaVu Sans Bold (docs/spec/ui.md 5).
+    pub font: String,
 }
 
 impl Default for UiText {
@@ -298,6 +301,7 @@ impl Default for UiText {
             offset: [16.0, 16.0],
             world_offset: [0.0, 2.0, 0.0],
             visible: true,
+            font: String::new(),
         }
     }
 }
@@ -330,6 +334,140 @@ impl Default for UiBar {
             anchor: UiAnchor::Entity,
             offset: [0.0, 0.0],
             world_offset: [0.0, 2.2, 0.0],
+            visible: true,
+        }
+    }
+}
+
+/// An image of the project (PNG or JPEG) on the screen or over the entity (docs/spec/ui.md 2).
+#[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct UiImage {
+    /// The file, relative to the project.
+    pub image: String,
+    /// sRGB with alpha, multiplied into the image.
+    pub tint: [f64; 4],
+    /// Logical pixels; a side of 0 takes the image's own (keeping its aspect when the other is set).
+    pub size: [f64; 2],
+    pub anchor: UiAnchor,
+    pub offset: [f64; 2],
+    pub world_offset: [f64; 3],
+    pub visible: bool,
+}
+
+impl Default for UiImage {
+    fn default() -> Self {
+        UiImage {
+            image: String::new(),
+            tint: [1.0; 4],
+            size: [0.0, 0.0],
+            anchor: UiAnchor::TopLeft,
+            offset: [16.0, 16.0],
+            world_offset: [0.0, 2.0, 0.0],
+            visible: true,
+        }
+    }
+}
+
+/// A button: a box the pointer and `ui.press` press (docs/spec/ui.md 2, 6). The entity's `UiText`
+/// is its label and its `UiImage` its icon, centred on it. A press is a write the world records;
+/// hovering and holding are presentation.
+#[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct UiButton {
+    /// Logical pixels.
+    pub size: [f64; 2],
+    /// sRGB with alpha: the face, under the pointer, and held or on.
+    pub color: [f64; 4],
+    pub hover_color: [f64; 4],
+    pub press_color: [f64; 4],
+    /// A disabled button is drawn faded and refuses presses.
+    pub enabled: bool,
+    /// A press flips `on`.
+    pub toggle: bool,
+    pub on: bool,
+    /// Presses so far (`ui.press` counts them).
+    pub presses: u32,
+    pub anchor: UiAnchor,
+    pub offset: [f64; 2],
+    pub world_offset: [f64; 3],
+    pub visible: bool,
+}
+
+impl Default for UiButton {
+    fn default() -> Self {
+        UiButton {
+            size: [160.0, 40.0],
+            color: [0.16, 0.18, 0.22, 0.9],
+            hover_color: [0.26, 0.30, 0.38, 0.95],
+            press_color: [0.36, 0.52, 0.86, 1.0],
+            enabled: true,
+            toggle: false,
+            on: false,
+            presses: 0,
+            anchor: UiAnchor::Center,
+            offset: [0.0, 0.0],
+            world_offset: [0.0, 2.0, 0.0],
+            visible: true,
+        }
+    }
+}
+
+/// Which way a stack lays out its children.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UiDirection {
+    #[default]
+    Column,
+    Row,
+}
+
+/// Where a stack places its children across its direction.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UiAlign {
+    Start,
+    #[default]
+    Center,
+    End,
+}
+
+/// A box that lays out its children (the entities whose `Parent` it is) in a row or a column
+/// (docs/spec/ui.md 3).
+#[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct UiStack {
+    pub direction: UiDirection,
+    /// Logical pixels between children, and around them inside the box.
+    pub spacing: f64,
+    pub padding: f64,
+    pub align: UiAlign,
+    /// sRGB with alpha: the background.
+    pub color: [f64; 4],
+    /// Logical pixels: the least size of the box.
+    pub min_size: [f64; 2],
+    /// Above 0 on a root stack: it and everything in it scale by the window's height in device
+    /// pixels over this.
+    pub reference_height: f64,
+    pub anchor: UiAnchor,
+    pub offset: [f64; 2],
+    pub world_offset: [f64; 3],
+    pub visible: bool,
+}
+
+impl Default for UiStack {
+    fn default() -> Self {
+        UiStack {
+            direction: UiDirection::Column,
+            spacing: 8.0,
+            padding: 8.0,
+            align: UiAlign::Center,
+            color: [0.0; 4],
+            min_size: [0.0, 0.0],
+            reference_height: 0.0,
+            anchor: UiAnchor::Center,
+            offset: [0.0, 0.0],
+            world_offset: [0.0, 2.0, 0.0],
             visible: true,
         }
     }

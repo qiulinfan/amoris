@@ -40,6 +40,13 @@ pub trait AssetSource {
     fn poll_neural_textures(&mut self) -> Vec<(String, Result<NeuralTexture, String>)> {
         Vec::new()
     }
+    /// Starts loading a game UI font or image (docs/spec/ui.md 5).
+    fn request_ui(&mut self, path: &str) {
+        log::warn!("this asset source cannot load UI fonts and images: {path}");
+    }
+    fn poll_ui(&mut self) -> Vec<(String, Result<crate::ui::UiAsset, String>)> {
+        Vec::new()
+    }
 }
 
 /// No assets: only primitives draw.
@@ -64,6 +71,7 @@ pub struct FileAssets {
     gi_done: Vec<(String, Result<BakedGi, String>)>,
     neural_done: Vec<(String, Result<NeuralGi, String>)>,
     textures_done: Vec<(String, Result<NeuralTexture, String>)>,
+    ui_done: Vec<(String, Result<crate::ui::UiAsset, String>)>,
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
@@ -72,6 +80,7 @@ enum Job {
     Gi(String),
     Neural(String),
     Texture(String),
+    Ui(String),
 }
 #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
 enum Loaded {
@@ -79,6 +88,7 @@ enum Loaded {
     Gi(String, Result<BakedGi, String>),
     Neural(String, Result<NeuralGi, String>),
     Texture(String, Result<NeuralTexture, String>),
+    Ui(String, Result<crate::ui::UiAsset, String>),
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
@@ -91,6 +101,16 @@ impl FileAssets {
             .spawn(move || {
                 for job in jobs {
                     let path = match job {
+                        Job::Ui(path) => {
+                            // Read and decoded here: a CJK font parses in tens of milliseconds.
+                            let result = std::fs::read(root.join(&path))
+                                .map_err(|e| e.to_string())
+                                .and_then(|b| crate::ui::decode_asset(&path, &b));
+                            if done.send(Loaded::Ui(path, result)).is_err() {
+                                break;
+                            }
+                            continue;
+                        }
                         Job::Texture(path) => {
                             let result = NeuralTexture::load(&root.join(&path));
                             if done.send(Loaded::Texture(path, result)).is_err() {
@@ -139,6 +159,7 @@ impl FileAssets {
             gi_done: Vec::new(),
             neural_done: Vec::new(),
             textures_done: Vec::new(),
+            ui_done: Vec::new(),
         }
     }
 
@@ -149,6 +170,7 @@ impl FileAssets {
                 Loaded::Gi(path, result) => self.gi_done.push((path, result)),
                 Loaded::Neural(path, result) => self.neural_done.push((path, result)),
                 Loaded::Texture(path, result) => self.textures_done.push((path, result)),
+                Loaded::Ui(path, result) => self.ui_done.push((path, result)),
             }
         }
     }
@@ -183,6 +205,13 @@ impl AssetSource for FileAssets {
     fn poll_neural_textures(&mut self) -> Vec<(String, Result<NeuralTexture, String>)> {
         self.collect();
         std::mem::take(&mut self.textures_done)
+    }
+    fn request_ui(&mut self, path: &str) {
+        let _ = self.tx.send(Job::Ui(path.to_owned()));
+    }
+    fn poll_ui(&mut self) -> Vec<(String, Result<crate::ui::UiAsset, String>)> {
+        self.collect();
+        std::mem::take(&mut self.ui_done)
     }
 }
 

@@ -1,0 +1,13 @@
+# The UI's presses through determinism, a fork, a replay and a reload (docs/spec/ui.md 7): the
+# inputs press the toggle twice and Start once as the local player; the rule relabels and reports.
+[run]
+ticks = 120
+seeds = [1]
+inputs = "checks/inputs.jsonl"
+
+[fork]
+at = [30, 70]
+ticks = 20
+
+[reload]
+at = [30, 70]
