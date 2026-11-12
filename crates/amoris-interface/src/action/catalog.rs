@@ -75,6 +75,9 @@ pub struct ActionCatalog {
     pub affordances: BTreeMap<String, Vec<AffordanceDef>>,
     pub codes: Vec<CodeDef>,
     pub view: ViewFactory,
+    /// The codes the script host declared with the program's intents, which its next program's
+    /// declarations replace ([`ActionCatalog::declare_script_parts`]).
+    pub script_codes: Vec<String>,
 }
 
 /// The contract's own failure templates (errors.md), for failures kept in the world.
@@ -110,6 +113,7 @@ impl ActionCatalog {
             affordances: BTreeMap::new(),
             codes: Vec::new(),
             view,
+            script_codes: Vec::new(),
         }
     }
 
@@ -148,14 +152,39 @@ impl ActionCatalog {
         )
     }
 
-    /// Declares an intent a script executor carries out (script-host.md 5.5); a later declaration
-    /// of the same name replaces it (a hot update).
-    pub fn declare_script_intent(&mut self, def: IntentDef) {
-        self.intents.retain(|i| i.def.name != def.name);
-        self.intents.push(IntentEntry {
-            def,
-            executor: None,
-        });
+    /// Declares the intents a program's script executors carry out and the codes they declare
+    /// (script-host.md 5.5), replacing those of the program before (a hot update): the catalog's
+    /// script intents are those without a Rust executor, after the engine's in declared order.
+    pub fn declare_script_parts(&mut self, intents: Vec<IntentDef>, codes: Vec<CodeDef>) {
+        self.intents.retain(|i| i.executor.is_some());
+        let old = std::mem::take(&mut self.script_codes);
+        self.codes.retain(|c| !old.contains(&c.code));
+        self.script_codes = codes.iter().map(|c| c.code.clone()).collect();
+        self.codes.extend(codes);
+        self.intents
+            .extend(intents.into_iter().map(|def| IntentEntry {
+                def,
+                executor: None,
+            }));
+    }
+
+    /// The intents the catalog's script executors carry out.
+    pub fn script_intents(&self) -> impl Iterator<Item = &IntentDef> {
+        self.intents
+            .iter()
+            .filter(|i| i.executor.is_none())
+            .map(|i| &i.def)
+    }
+
+    /// Every channel a declared control drives, in declared order, each once.
+    pub fn channels(&self) -> Vec<&str> {
+        let mut out: Vec<&str> = Vec::new();
+        for c in &self.controls {
+            if !out.contains(&c.channel.as_str()) {
+                out.push(&c.channel);
+            }
+        }
+        out
     }
 
     /// The control names a seat may set, for suggestions.
@@ -423,6 +452,25 @@ impl ActionCatalog {
         &self,
         defs: Option<&crate::perception::PerceptionDefs>,
     ) -> Result<(), Problem> {
+        self.check(defs, false)
+    }
+
+    /// [`ActionCatalog::validate`] for an engine catalog before the scripts are installed: an
+    /// affordance may name an intent no engine executor carries out, which the game's scripts
+    /// declare; the script host checks the catalog whole when it installs them (script-host.md
+    /// 5.5).
+    pub fn validate_engine(
+        &self,
+        defs: Option<&crate::perception::PerceptionDefs>,
+    ) -> Result<(), Problem> {
+        self.check(defs, true)
+    }
+
+    fn check(
+        &self,
+        defs: Option<&crate::perception::PerceptionDefs>,
+        scripts_pending: bool,
+    ) -> Result<(), Problem> {
         use crate::perception::Exposure;
         use amoris_contract::Pointer;
         use amoris_contract::codes::definition_invalid;
@@ -458,6 +506,7 @@ impl ActionCatalog {
                         Some(_) => {
                             return bad(at, format!("{intent} does not take a {kind} as target"));
                         }
+                        None if scripts_pending => {}
                         None => return bad(at, format!("no intent {intent} is declared")),
                     },
                     super::defs::Effect::Pulse { control } => match self.control(control) {

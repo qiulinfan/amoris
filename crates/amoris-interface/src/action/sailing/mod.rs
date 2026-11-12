@@ -516,7 +516,7 @@ pub fn game_catalog(defs: &crate::perception::PerceptionDefs) -> Result<ActionCa
         ("Crew", "take"),
     );
     c.affordances = super::catalog::affordances_from(defs)?;
-    c.validate(Some(defs))?;
+    c.validate_engine(Some(defs))?;
     Ok(c)
 }
 
