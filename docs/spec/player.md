@@ -133,6 +133,12 @@ channels' controls (actions.md, Executors, rules 1 and 2), so an intent is a con
 could have done with controls (`contract.intents.transparency`, the interface's tests). Script
 executors are not built here (section 10).
 
+A person reaches the same controls through devices: the native window and the browser player
+gather the keyboard, the mouse, gamepads and touch, map them through the project's input map and
+send `player.act` as the local human player (input.md). Agents are unaffected: they act through
+this layer, never see devices or bindings, and a recording names only the acts, whichever device
+made them.
+
 ## 6. Time
 
 The players' session is amoris-interface's `Controller`, kept by `Game` beside the world (session

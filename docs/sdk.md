@@ -332,7 +332,21 @@ rules read `Board.standing`, `speed` and `wipeouts`. Examples: `samples/pool-par
 A first-person game declares `actions = "first_person"` under `[player]`: its seat `player` drives
 the `Walker` (`forward`, `strafe`, `yaw`, `pitch`, `run`, `slot`, and the one-tick pulses `jump`,
 `primary`, `secondary`), which rules read like any component; `amoris play <project> --walk` plays
-it from the keyboard and mouse. Example: `samples/blockcraft`.
+it from the keyboard, the mouse and a gamepad, and the exported web page also from touch controls.
+Scripts never read devices: a project maps devices to these controls and to its own `[player]
+buttons` (the walker's `Buttons`) in `project.toml` ([spec/input.md](spec/input.md)):
+
+```toml
+[player]
+actions = "first_person"
+buttons = [{ name = "dodge", keys = ["Space", "PadEast"] }]
+[player.bindings]                 # replaces a logical input's default keys, buttons and sticks
+primary = ["MouseLeft", "PadR2", "PadWest"]
+[player.touch]                    # the browser's on-screen controls
+buttons = [{ label = "Roll", input = "dodge" }, { label = "Swing", input = "primary" }]
+```
+
+Example: `samples/blockcraft`.
 
 ## Players, intents and executors
 
