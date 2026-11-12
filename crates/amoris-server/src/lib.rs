@@ -13,6 +13,7 @@ mod dispatch;
 mod grants;
 pub mod hostfile;
 mod http;
+mod launch;
 mod local;
 mod mcp;
 mod paused;
@@ -33,6 +34,7 @@ use tokio::sync::broadcast;
 pub use dispatch::{Via, seat_permits};
 pub use grants::Grants;
 pub use http::{find_editor_dist, router};
+pub use launch::Launchers;
 pub use local::{RewindParams, WritesParams, debug_catalog, server_catalog};
 pub use mcp::McpBackend;
 pub use paused::PAUSED_READS;
@@ -118,6 +120,11 @@ struct Inner {
     /// The lock of a host started with grants (`grants.rs`), settled once: by [`Host::lock`], or
     /// as none when the host first serves without one. Host state, never the world's.
     grants: OnceLock<Option<grants::Lock>>,
+    /// The agent programs `agent.session.start` may run (`launch.rs`), and those running.
+    launchers: RwLock<launch::Launchers>,
+    running: launch::Running,
+    /// Where the host serves HTTP, once it does: what a started program calls back on.
+    url: OnceLock<String>,
 }
 
 /// Opens the client of a player's source: the seat's index in the game's declared seats.
@@ -155,6 +162,9 @@ impl Host {
             players: RwLock::new(None),
             seats: Mutex::new(std::collections::BTreeMap::new()),
             grants: OnceLock::new(),
+            launchers: RwLock::new(launch::Launchers::default()),
+            running: launch::Running::default(),
+            url: OnceLock::new(),
         }))
     }
 
@@ -293,6 +303,7 @@ impl Host {
         let addr = listener
             .local_addr()
             .map_err(|e| Problem::new("host.bind_failed", e.to_string(), detail([])))?;
+        let _ = self.0.url.set(format!("http://{addr}"));
         // The runtime's catalog, fetched while the game answers: a host held at a breakpoint
         // still lists its commands.
         let _ = self.catalog().await;

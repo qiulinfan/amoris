@@ -137,6 +137,9 @@ files).
 | `agent.session.events` | read (server) | `{since?, limit? = 100, session?}` (`limit` at most 2,000) | `{events: [event], last, missed}`: with `since` the first `limit` after it, without it the newest; `last` is the cursor the answer reaches (3.5) |
 | `agent.session.open` | control (server) | `{label?, seat?}` | the session's row and `handle`: a bridge session, a developer's or with `seat` that seat's player (3.5) |
 | `agent.session.close` | control (server) | `{handle}` or `{session}` | the row, no longer live (3.5) |
+| `agent.session.agents` | read (server) | `{}` | `{agents: [{name, label}], running, limit}`: the agent programs the host may start (3.7) |
+| `agent.session.start` | control (server) | `{agent, goal, seat?}` | the new session's row (transport `launch`), its `agent` and `pid`: the program runs as that session (3.7) |
+| `agent.session.stop` | control (server) | `{session}` | the started session's row once its program ended (3.7) |
 
 Names follow `noun.verb`; the slice 1 names stay as aliases (`world_get`, `step`, `time_control`).
 `thread: true` marks commands that need the game thread: a `Game` driven directly (checks, replays)
@@ -535,6 +538,65 @@ Not built: mcp.md 3.1's `profile`, `decision`, `clock`, `max_wall_ms` and of `po
 at run time; a tool list of the checker's own (it lists the developer's eleven tools, so mcp.md
 3.3's "a tool the session may not call is not listed" holds for players only); the browser editor
 on a locked host (a page load and a WebSocket set no `Authorization`); a push stream for checkers.
+
+### 3.7 Agent programs the host starts
+
+2026-11-12. Until then the editor's New session form was a preview: the host listed the sessions
+agents opened themselves and started none, because which program the editor may launch, and with
+whose credentials, was not decided. It is decided this way: **the process owner registers the
+programs, the editor picks one by name.**
+
+`amoris serve <project> --agents <file>` reads the agents file before the game starts, like a grants
+file and for the same reason outside the project (whose files the host serves and agents write: an
+agent must never choose what the host runs):
+
+```json
+{"agents": [
+  {"name": "claude", "label": "Claude Code",
+   "command": ["claude", "-p", "--mcp-config", "/Users/me/amoris-agents/mcp.json"]},
+  {"name": "scripted", "command": ["/bin/sh", "/Users/me/amoris-agents/scripted.sh"]}
+]}
+```
+
+`name` is `^[a-z0-9][a-z0-9_.-]*$`, unique; `command` is the program and its arguments, run without
+a shell; `label` names the sessions (default: the name); `env` adds variables. The file is strict,
+and a refused file ends `amoris serve` with exit 1 and
+`host.agents_invalid {file, reason, problem?}`. The engine holds no model, key or credential: the
+program inherits the environment `amoris serve` was started with, and what model it runs and with
+whose key is the program's and its owner's.
+
+- `agent.session.agents {}` lists the programs by `name` and `label` (never their commands), with
+  how many run and the limit (4).
+- `agent.session.start {agent, goal, seat?}` opens a session of transport `launch` (live, labelled
+  with the program's label; with `seat`, that seat's player, the seat looked up first) and then
+  starts the program in the project's directory, stdin closed, with `AMORIS_HOST` (the host's URL),
+  `AMORIS_PROJECT`, `AMORIS_AGENT` (its name), `AMORIS_AGENT_SESSION` and `AMORIS_AGENT_HANDLE`
+  (the session's id and handle), `AMORIS_AGENT_GOAL` and, with a seat, `AMORIS_AGENT_SEAT`. The
+  answer is the row with the program's `agent` and `pid`, never the handle. Each line the program
+  writes (stdout, stderr; cut to 1,000 bytes) is a `message` event of the session with its
+  `stream`, beside the host's own words on it (`stream: "host"`: started, stopping, the exit
+  status). The session closes when the program exits.
+- The program reaches the host as that session: `POST /api/call {handle}` with the handle, or
+  `amoris mcp --attach "$AMORIS_HOST"` (1), which, given `AMORIS_AGENT_SESSION` and
+  `AMORIS_AGENT_HANDLE` and no `--seat`, calls as that session (with `AMORIS_AGENT_SEAT`'s player
+  tool alone for a seat) and neither registers nor closes one. So an MCP client such as Claude
+  Code, started with an MCP configuration that runs `amoris mcp --attach "$AMORIS_HOST"`, is a
+  session the editor started, and its calls and edits are that session's.
+- `agent.session.stop {session}` kills the program (SIGKILL) and answers the row once the session
+  is closed (at most 5 s). `agent.session.close {session}` does not take a `launch` row: only a
+  stop or the program's exit ends it.
+- Refusals: `host.no_agents` (the host has no agents file), `request.invalid_value` for a name the
+  file does not register (with suggestions), `request.out_of_range` for a goal that is empty or
+  longer than 4,000 characters, `session.limit_reached` past 4 programs, the game's `seat.unknown`,
+  `host.agent_failed` for a program that did not start (its session opened and closed, saying
+  why) or did not end, `host.session_unknown` to stop what does not run, and `host.not_supported`
+  on a locked host (3.6), where a started program would need a grant of its own.
+- Programs, like sessions, are host state: nothing of them reaches the world. A program still
+  running when the host stops is killed with it.
+
+Not built: a grant for a started program on a locked host; a program's restart; input to a running
+program (its goal is all it is told); limits on its CPU, memory or time beyond Stop; the charter's
+real LLM run through it (charter 2, 6), which needs the owner's go-ahead and a model key.
 
 ## 4. Pushes on `/ws`
 

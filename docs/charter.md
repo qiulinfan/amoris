@@ -1355,6 +1355,14 @@ ns，WebAssembly 23 到 30 ns，比 M5 慢 1.3 到 1.9 倍；blockcraft 的 256�
   runtime 固定（每个 source 4 个、全部 16 个分支，主世界停在同一 tick 时每个 source 至多 600 个分支
   tick，超出则事先拒绝），主世界实时运行时分支不步进。锁定宿主上 player grant 只有写了
   `"policy": {"fork": true}` 才能分叉，默认不能（mcp.md 3.1 的默认值）。
+- 同日，编辑器的 Agent 面板可以启动 agent 会话（规格见 [server.md](spec/server.md) 3.7）。此前“编辑
+  器可以启动哪个 agent 程序、用谁的凭据”未定，表单只是预览。现定为：进程所有者在项目之外的文件里登记
+  程序（`amoris serve --agents <file>`，名字加命令行，不经 shell），编辑器只按名字挑
+  选，`agent.session.start {agent, goal, seat?}` 先开一个 `launch` 会话再在项目目录里启动程序，把宿
+  主地址、会话的 id 与 handle、目标经环境变量交给它；程序的每行输出是该会话的 `message` 事件，程序退
+  出则会话关闭， `agent.session.stop` 结束它。引擎不持有模型、密钥或凭据：程序继承 `amoris serve` 启
+  动时的环境。原因： agent 能写项目文件，若由项目或请求决定运行什么，agent 就能让宿主执行任意命令。
+  锁定的宿主不启动程序（启动的程序需要自己的 grant，未做）；同时最多 4 个。
 
 2026-10-30（所有者决定："如果引擎没有足够的骨骼动画支持能力, 那正好补上. 参考ue和godot"，为第三人称
 战斗游戏 Thornkeep）：角色动画进入模拟。之前模拟只推进 `Animator` 的时间、从不加载片段，姿态只在渲染

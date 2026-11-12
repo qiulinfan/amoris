@@ -89,7 +89,7 @@ nothing. A socket more than 1,024 pushes behind gets `{"event": "lagged", "data"
 | `history` | `{undo: [label], redo: [label], entries: {undo: [entry], redo: [entry]}}` (as `history.list`) | after any edit, undo, redo, restore, Play or Stop that changed it |
 | `debug` | `{state: "paused"|"running", reason?, location?: {file, line, column}, frames?}` | debugger state changes |
 | `profile` | `{tick, epoch, ticks, held, missed, tick_ms, tick_max_ms, busy_ms, systems: [{name, ms, max_ms}], phases: [{name, ms, max_ms}]}`: the ticks since the last push, ms per tick (below) | 4 Hz while subscribed, also when no tick ran (`ticks: 0`) |
-| `agent` | `{seq, ts, session, kind: "opened"|"call"|"result"|"closed", method?, ok?, summary?, row?}`: `seq` the stream number, `row` the session as `agent.session.list` lists it (on `opened` and `closed`) | each agent session's opening, each of its calls and its result, its closing; the host records them whether or not a socket listens (`agent.session.events` reads them back, server.md 3.5) |
+| `agent` | `{seq, ts, session, kind: "opened"|"call"|"result"|"closed"|"message", method?, ok?, summary?, stream?, row?}`: `seq` the stream number, `row` the session as `agent.session.list` lists it (on `opened` and `closed`) | each agent session's opening, each of its calls and its result, its closing; the host records them whether or not a socket listens (`agent.session.events` reads them back, server.md 3.5) |
 
 `profile` (2026-10-14) is what the ticks cost the host's game thread, timed on the loop's clock by
 the step hooks of every tick while the host serves the stream (server.md 4): `ms` is the average per
@@ -146,10 +146,13 @@ Each method is a command of the catalog (`GET /api/catalog` is authoritative). K
 | `subscribe` / `unsubscribe` | `{topics: [topic]}` | `{topics}` (`/ws` only, section 3) |
 | `player.*` | per seat ([player.md](player.md)) | session, describe, observe, nearby, events, affordances, intents, act, wait, continue, pacing |
 | `debug.*` | section 6 | `debug.not_available` until amoris-debug's hub is installed; one catalog entry per method |
-| `agent.session.list` | `{}` | `{sessions: [{id, transport: "http"\|"stdio"\|"bridge"\|"api", role: "developer"\|"player", seat, label, calls, failed_calls, last_method, live, opened_ts, last_ts}], last}`: the host's agent sessions in opening order (server.md 3.5) |
+| `agent.session.list` | `{}` | `{sessions: [{id, transport: "http"\|"stdio"\|"bridge"\|"api"\|"grant"\|"launch", role: "developer"\|"player"\|"checker", seat, label, calls, failed_calls, last_method, live, opened_ts, last_ts}], last}`: the host's agent sessions in opening order (server.md 3.5) |
 | `agent.session.events` | `{since?, limit?, session?}` | `{events, last, missed}`: the `agent` events the host kept (the newest 2,000), the newest or with `since` the first `limit` after it; `last` is the cursor to ask again with |
 | `agent.session.open` | `{label?, seat?}` | the session's row and `handle`: the caller is registered as a session of its own, whose calls are `POST /api/call {handle}` (section 2) |
 | `agent.session.close` | `{handle}` or `{session}` | the row, no longer live |
+| `agent.session.agents` | `{}` | `{agents: [{name, label}], running, limit}`: the agent programs the host may start (server.md 3.7) |
+| `agent.session.start` | `{agent, goal, seat?}` | the row of a new `launch` session, with `agent` and `pid`: a registered program started as that session |
+| `agent.session.stop` | `{session}` | the started session's row once its program ended |
 
 server.md 3 is the complete table, with each method's kind and result.
 

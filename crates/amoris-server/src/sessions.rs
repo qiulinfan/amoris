@@ -50,6 +50,9 @@ pub(crate) enum Transport {
     /// A grant of a locked host (`amoris serve --grants`, `grants.rs`): every client that
     /// presents the grant's token, over `/api/call` or MCP.
     Grant,
+    /// An agent program the host started (`agent.session.start`, `launch.rs`): it calls
+    /// `/api/call {handle}` with the handle the host gave it, and closes when it exits.
+    Launch,
 }
 
 /// What a session may call: everything, or its seat's player tools alone; a checker, which only
@@ -127,6 +130,11 @@ pub(crate) enum Step<'a> {
         method: &'a str,
         ok: bool,
         summary: String,
+    },
+    /// A line a started program wrote (`stdout`, `stderr`), or the host's word on it (`host`).
+    Message {
+        text: &'a str,
+        stream: &'a str,
     },
 }
 
@@ -219,7 +227,7 @@ impl Registry {
                 format!("mcp-{}", self.numbered)
             }
         };
-        let handle = (spec.transport == Transport::Bridge)
+        let handle = matches!(spec.transport, Transport::Bridge | Transport::Launch)
             .then(|| format!("{}-{}", self.run, self.numbered));
         let row = Row {
             id: id.clone(),
@@ -300,6 +308,12 @@ impl Registry {
                     ts,
                 )
             }
+            Step::Message { text, stream } => self.record(
+                session,
+                "message",
+                json!({"summary": text, "stream": stream}),
+                ts,
+            ),
         }
     }
 

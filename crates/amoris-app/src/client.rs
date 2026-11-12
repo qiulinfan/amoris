@@ -2237,7 +2237,7 @@ fn help(args: &Args) -> String {
         for (_, _, u) in COMMANDS {
             let _ = writeln!(out, "  {u}");
         }
-        out.push_str("\nHost commands: amoris serve <project> [--port 7878] [--grants <file>], \
+        out.push_str("\nHost commands: amoris serve <project> [--port 7878] [--grants <file>] [--agents <file>], \
                       amoris mcp <project> | --attach <url|port> [--grant-token <token>]; \
                       also amoris run|check|replay|hashes|version.\nMethods (amoris call <method> '<json>'; \
                       amoris help <method>):\n");

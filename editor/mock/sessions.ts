@@ -2,7 +2,8 @@
 // sessions.rs): the rows of `agent.session.list`, the ring of the newest 2,000 events behind
 // `agent.session.events`, `agent.session.open` and `close` with their handles and refusals, and
 // every event broadcast on the `agent` topic. A row nothing holds stays listed while the ring
-// holds one of its events. `message` events (an agent's own words) are the mock's only.
+// holds one of its events. `message` events are a started program's lines (`stream` stdout,
+// stderr, or the host's own word, `host`; launch.rs), and the simulated agent's words.
 
 import { MockError } from "./util";
 
@@ -11,7 +12,7 @@ const LABEL_MAX = 80;
 
 export interface AgentRow {
   id: string;
-  transport: "http" | "stdio" | "bridge" | "api";
+  transport: "http" | "stdio" | "bridge" | "api" | "grant" | "launch";
   role: "developer" | "player";
   seat: string | null;
   label: string;
@@ -31,6 +32,7 @@ export interface AgentStreamEvent {
   method?: string;
   summary?: string;
   ok?: boolean;
+  stream?: "stdout" | "stderr" | "host";
   row?: AgentRow;
 }
 
@@ -84,7 +86,7 @@ export class AgentSessions {
       opened_ts: ts,
       last_ts: ts,
     };
-    const handle = spec.transport === "bridge" ? `${this.run}-${this.numbered}` : null;
+    const handle = spec.transport === "bridge" || spec.transport === "launch" ? `${this.run}-${this.numbered}` : null;
     this.entries.push({ row, handle, inRing: 0, closed: false });
     this.record(id, { kind: "opened" });
     return { row: { ...row }, handle };
@@ -107,12 +109,18 @@ export class AgentSessions {
     this.record(session, { kind: "result", method, ok, summary });
   }
 
-  /** An agent's own words (the simulated agent's; the real host has none). */
-  message(session: string, summary: string) {
-    this.record(session, { kind: "message", summary });
+  /** An agent's own words: a started program's line, with its stream, or the simulated agent's. */
+  message(session: string, summary: string, stream?: AgentStreamEvent["stream"]) {
+    this.record(session, stream ? { kind: "message", summary, stream } : { kind: "message", summary });
   }
 
-  private record(session: string, fields: Pick<AgentStreamEvent, "kind" | "method" | "summary" | "ok">) {
+  /** A row by its id. */
+  row(id: string): AgentRow | undefined {
+    const e = this.entry(id);
+    return e && { ...e.row };
+  }
+
+  private record(session: string, fields: Pick<AgentStreamEvent, "kind" | "method" | "summary" | "ok" | "stream">) {
     const ts = this.now();
     const event: AgentStreamEvent = { seq: ++this.seq, ts, session, ...fields };
     const e = this.entry(session);

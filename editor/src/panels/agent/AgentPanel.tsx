@@ -1,10 +1,13 @@
 // What agents do on this host: its agent sessions (`agent.session.list`) and the stream of what
 // they called (`agent.session.events`, then `agent` pushes), read from the host on connect, so an
-// editor that opens later shows what happened before it came (server.md 3.5). The host lists the
-// sessions agents open themselves and starts none: the New session form is a preview.
+// editor that opens later shows what happened before it came (server.md 3.5). The New session form
+// starts one of the agent programs the process owner registered (`amoris serve --agents`,
+// `agent.session.start`, server.md 3.7): the editor picks a program by name, never a command or a
+// credential.
 
 import { ArrowRight, Bot, Check, ChevronRight, ClipboardCopy, MessageSquare, Play, Plug, Square, Unplug, X } from "lucide-react";
 import { useMemo, useState } from "react";
+import { startAgent, stopAgent } from "../../actions/agent";
 import { host } from "../../host/api";
 import type { AgentSession } from "../../host/protocol";
 import { useAgent, type AgentLine } from "../../state/agent";
@@ -23,9 +26,9 @@ function mcpUrl(): string {
   return `${base}/mcp`;
 }
 
-/** Why the form starts nothing, for its tooltips and its toast. */
-const PREVIEW =
-  "A preview: the host lists the sessions agents open themselves and starts none, because which agent program the editor may launch, and with whose credentials, is not decided. Connect one with `amoris mcp <project>` or the MCP endpoint and it appears in the list.";
+/** Why the form has nothing to start. */
+const NO_PROGRAMS =
+  "This host has no agent programs. The process owner registers them in a file outside the project: amoris serve <project> --agents <file>. An agent connected with amoris mcp or the MCP endpoint appears in the list all the same.";
 
 /** How a session reached the host, and whose calls it makes. */
 function describe(row: AgentSession): string {
@@ -44,7 +47,7 @@ function Line({ l }: { l: AgentLine }) {
         ? `closed after ${l.row?.calls ?? 0} ${l.row?.calls === 1 ? "call" : "calls"}${l.row?.failed_calls ? `, ${l.row.failed_calls} failed` : ""}`
         : l.summary;
   return (
-    <div className={cx("ag-line", `ag-${l.kind}`, l.ok === false && "is-failed")}>
+    <div className={cx("ag-line", `ag-${l.kind}`, l.ok === false && "is-failed", l.stream && `is-${l.stream}`)}>
       <span className="ag-time mono">{timeOfDay(l.ts)}</span>
       <span className="ag-icon">
         <Icon size={12} />
@@ -55,23 +58,51 @@ function Line({ l }: { l: AgentLine }) {
   );
 }
 
-function NewSession() {
+function message(e: unknown): string {
+  return e instanceof Error ? e.message : typeof e === "object" && e && "message" in e ? String((e as { message: unknown }).message) : String(e);
+}
+
+/** Starts a registered agent program with a goal, and stops the selected one. */
+function NewSession({ selected }: { selected: AgentSession | undefined }) {
   const catalog = useConnection((s) => s.catalog);
-  const supported = catalog.some((c) => c.name === "agent.session.start");
-  const [model, setModel] = useState("claude-opus-5.5");
+  const programs = useAgent((s) => s.programs);
+  const supported = catalog.some((c) => c.name === "agent.session.start") && programs.length > 0;
+  const [picked, setPicked] = useState("");
   const [goal, setGoal] = useState("Make every crate reachable on the sloop's course, then sail the course and report the tally.");
-  const [edit, setEdit] = useState(true);
+  const [seat, setSeat] = useState("");
+  const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(() => localStorage.getItem("amoris.editor.agent.new") === "1");
+  const agent = programs.some((p) => p.name === picked) ? picked : (programs[0]?.name ?? "");
+  const stoppable = selected && selected.transport === "launch" && selected.live ? selected : undefined;
   const toggle = () => {
     localStorage.setItem("amoris.editor.agent.new", open ? "0" : "1");
     setOpen(!open);
+  };
+  const start = async () => {
+    setBusy(true);
+    try {
+      const row = await startAgent({ agent, goal, seat: seat.trim() || undefined });
+      useUi.getState().toast({ kind: "success", title: "Agent started", body: `${row.label} as ${row.id}` });
+    } catch (e) {
+      useUi.getState().toast({ kind: "error", title: "The agent did not start", body: message(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const stop = async () => {
+    if (!stoppable) return;
+    try {
+      await stopAgent(stoppable.id);
+    } catch (e) {
+      useUi.getState().toast({ kind: "error", title: "Stop", body: message(e) });
+    }
   };
   if (!open) {
     return (
       <button type="button" className="ag-new ag-new-collapsed" onClick={toggle}>
         <Bot size={15} />
         <span>New agent session…</span>
-        {!supported && <span className="ag-soon">preview</span>}
+        {!supported && <span className="ag-soon">none registered</span>}
         <ChevronRight size={14} className="ag-chev" />
       </button>
     );
@@ -81,45 +112,44 @@ function NewSession() {
       <div className="ag-new-head" onClick={toggle}>
         <Bot size={15} />
         <span>New agent session</span>
-        {!supported && <span className="ag-soon" data-tip={PREVIEW}>preview</span>}
+        {!supported && (
+          <span className="ag-soon" data-tip={NO_PROGRAMS}>
+            none registered
+          </span>
+        )}
         <ChevronRight size={14} className="ag-chev is-open" />
       </div>
       <div className="ag-form">
-        <label>Model</label>
-        <SelectField
-          value={model}
-          onChange={setModel}
-          options={[
-            { value: "claude-opus-5.5", label: "Claude Opus 5.5" },
-            { value: "claude-sonnet-5", label: "Claude Sonnet 5" },
-            { value: "glm-5.3-flash", label: "GLM 5.3 Flash (opencode)" },
-          ]}
-        />
+        <label>Agent</label>
+        {supported ? (
+          <SelectField value={agent} onChange={setPicked} options={programs.map((p) => ({ value: p.name, label: p.label }))} />
+        ) : (
+          <span className="ag-none">{NO_PROGRAMS}</span>
+        )}
         <label>Goal</label>
         <textarea className="ag-goal" value={goal} onChange={(e) => setGoal(e.target.value)} rows={3} />
-        <label>Tools</label>
-        <div className="ag-tools">
-          <span className="ag-tool is-on">world (read)</span>
-          <span className={cx("ag-tool", edit && "is-on")} onClick={() => setEdit(!edit)}>
-            world.edit
-          </span>
-          <span className="ag-tool is-on">events</span>
-          <span className="ag-tool is-on">debug</span>
-          <span className="ag-tool">player seat</span>
-        </div>
+        <label>Seat</label>
+        <input className="ag-seat-input" value={seat} placeholder="none: a developer" onChange={(e) => setSeat(e.target.value)} />
       </div>
       <div className="ag-actions">
         <Button
           variant="primary"
           size="sm"
           icon={Play}
-          disabled={!supported}
-          data-tip={supported ? "Start" : PREVIEW}
-          onClick={() => useUi.getState().toast({ kind: "info", title: "Agent sessions", body: PREVIEW })}
+          disabled={!supported || busy || goal.trim() === ""}
+          data-tip={supported ? "Start the program as an agent session of this host" : NO_PROGRAMS}
+          onClick={() => void start()}
         >
           Start session
         </Button>
-        <Button size="sm" variant="ghost" icon={Square} disabled>
+        <Button
+          size="sm"
+          variant="ghost"
+          icon={Square}
+          disabled={!stoppable}
+          data-tip={stoppable ? `Stop ${stoppable.id}` : "Select a running started session to stop it"}
+          onClick={() => void stop()}
+        >
           Stop
         </Button>
         <Spacer />
@@ -177,7 +207,7 @@ export function AgentPanel() {
 
   return (
     <PanelShell toolbar={toolbar} className="agent-panel">
-      <NewSession />
+      <NewSession selected={sessions.find((s) => s.id === session)} />
       {sessions.length > 0 && (
         <div className="ag-sessions">
           {sessions.map((s) => (

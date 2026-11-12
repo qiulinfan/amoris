@@ -18,6 +18,12 @@ export function loadAgent(): Promise<void> {
 }
 
 async function load() {
+  // The programs the host may start: a host that has no such method starts none.
+  try {
+    useAgent.getState().setPrograms((await api.agent.programs()).agents);
+  } catch {
+    useAgent.getState().setPrograms([]);
+  }
   for (let attempt = 0; attempt < 3; attempt++) {
     // Subscribed before reading, so nothing falls between the backlog and the first push; the
     // list first, so the backlog reaches back to it.
@@ -27,4 +33,14 @@ async function load() {
     if (useAgent.getState().load(list, backlog)) return;
   }
   throw new Error("the agent stream moved faster than it could be read");
+}
+
+/** Starts a registered agent program (server.md 3.7); its session arrives with the stream. */
+export function startAgent(p: { agent: string; goal: string; seat?: string }) {
+  return api.agent.start(p);
+}
+
+/** Ends a started agent program. */
+export function stopAgent(session: string) {
+  return api.agent.stop(session);
 }

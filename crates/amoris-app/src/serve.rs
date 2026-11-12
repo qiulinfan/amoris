@@ -26,6 +26,7 @@ const SERVE_FLAGS: &[Flag] = &[
     ("editor", true),
     ("seed", true),
     ("grants", true),
+    ("agents", true),
 ];
 const MCP_FLAGS: &[Flag] = &[
     ("seed", true),
@@ -225,6 +226,11 @@ fn serving(args: &Args) -> Result<(), Problem> {
         None => None,
     };
     let locked = grants.as_ref().map(Grants::counts);
+    // The agent programs the host may start (server.md 3.7), read before the game starts too.
+    let launchers = match args.value("agents") {
+        Some(file) => Some(amoris_server::Launchers::load(Path::new(file), &root)?),
+        None => None,
+    };
     let served = start_with(
         &root,
         args.number::<u64>("seed")?,
@@ -232,6 +238,10 @@ fn serving(args: &Args) -> Result<(), Problem> {
         locked.is_none(),
     )?;
     let host = served.host.clone();
+    let agents = launchers.as_ref().map_or(0, amoris_server::Launchers::len);
+    if let Some(l) = launchers {
+        host.set_launchers(l);
+    }
     let rt = runtime()?;
     let r = rt.block_on(async {
         if let Some(grants) = grants {
@@ -259,6 +269,9 @@ fn serving(args: &Args) -> Result<(), Problem> {
             },
             file.url
         );
+        if agents > 0 {
+            eprintln!("amoris: {agents} agent programs may be started (agent.session.start)");
+        }
         if let Some((players, checkers, developers)) = locked {
             eprintln!(
                 "amoris: locked: grants for {players} player, {checkers} checker and \
@@ -295,6 +308,8 @@ struct Bridge {
     /// The session's id and handle on the host, once registered. Held while registering, so
     /// calls that find it missing or stale together open one session.
     registered: tokio::sync::Mutex<Option<(String, String)>>,
+    /// The host opened the session for the program that runs this bridge ([`Bridge::given`]).
+    given: bool,
 }
 
 /// Runs a blocking HTTP call off the runtime's workers.
@@ -313,7 +328,24 @@ impl Bridge {
             seat,
             label: std::sync::Mutex::new(String::new()),
             registered: tokio::sync::Mutex::new(None),
+            given: false,
         }
+    }
+
+    /// The bridge of a program the host started (`agent.session.start`, server.md 3.7): the
+    /// session the host opened for it, from `AMORIS_AGENT_SESSION` and `AMORIS_AGENT_HANDLE`,
+    /// with its seat from `AMORIS_AGENT_SEAT`. It registers nothing and closes nothing: the host
+    /// closes the session when the program exits.
+    fn given(url: String) -> Option<Bridge> {
+        let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+        let (session, handle) = (var("AMORIS_AGENT_SESSION")?, var("AMORIS_AGENT_HANDLE")?);
+        Some(Bridge {
+            url,
+            seat: var("AMORIS_AGENT_SEAT"),
+            label: std::sync::Mutex::new(String::new()),
+            registered: tokio::sync::Mutex::new(Some((session, handle))),
+            given: true,
+        })
     }
 
     /// Asks the host for a session: its id and its handle.
@@ -385,7 +417,8 @@ impl Bridge {
             .post(handle.clone(), method.clone(), params.clone())
             .await
         {
-            Err(p) if p.code == "host.session_unknown" => {
+            // A given session is the host's: when it is gone, so is the program's place.
+            Err(p) if p.code == "host.session_unknown" && !self.given => {
                 let handle = self.renewed(&handle).await?;
                 self.post(handle, method, params).await
             }
@@ -395,6 +428,9 @@ impl Bridge {
 
     /// Closes the session on the host, if it has one: best effort, the bridge is leaving.
     async fn close(&self) {
+        if self.given {
+            return;
+        }
         let Some((_, handle)) = self.registered.lock().await.take() else {
             return;
         };
@@ -632,7 +668,13 @@ fn mcp_session(args: &Args, plan: McpPlan) -> Result<(), Problem> {
     let seat = plan.seat;
     if let Some(url) = running {
         eprintln!("amoris mcp: using the host at {url}");
-        let bridge = Arc::new(Bridge::new(url, seat));
+        // A program the host started calls as the session the host opened for it.
+        let bridge = match (&seat, plan.attach.is_some()) {
+            (None, true) => Bridge::given(url.clone()),
+            _ => None,
+        }
+        .unwrap_or_else(|| Bridge::new(url, seat));
+        let bridge = Arc::new(bridge);
         let backend: Arc<dyn Backend> = Arc::new(Remote(bridge.clone()));
         // Until the client closes stdin, or the bridge is asked to stop; either way its session
         // on the host is closed before it leaves.

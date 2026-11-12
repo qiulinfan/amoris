@@ -4,6 +4,7 @@
 // reading again. The store is driven by the mock's own registry through `Session.call`, the path
 // the WebSocket takes.
 import { beforeEach, expect, test } from "bun:test";
+import { MockPrograms } from "../mock/programs";
 import { Session } from "../mock/session";
 import { RING } from "../mock/sessions";
 import { MockError } from "../mock/util";
@@ -87,7 +88,7 @@ test("the mock lists and records sessions in the host's shapes", () => {
   const unlisted = refusal(() => events({ session: "nope" }));
   expect(unlisted).toMatchObject({ code: "request.invalid_value", detail: { path: "/session", allowed: ["mcp-1", "mcp-2", "mcp-3"] } });
   expect(refusal(() => events({ sinse: 3 })).code).toBe("request.unknown_field");
-  expect(refusal(() => session.call("agent.session.start", {})).code).toBe("request.unknown_method");
+  expect(refusal(() => session.call("agent.session.start", {})).code).toBe("request.missing_field");
 });
 
 test("the mock's stream is bounded and read with since, limit and session as the host's", () => {
@@ -268,4 +269,48 @@ test("clear hides what was shown, and a host that started again shows its stream
   expect(store().load(again.list(), again.events({ limit: FEED_MAX }))).toBe(true);
   expect(store().hidden).toBe(0);
   expect(store().feed.map((l) => l.seq)).toEqual([1]);
+});
+
+test("the mock starts a registered agent program as a launch session, as the host does", async () => {
+  const { session, events } = mock();
+  session.programs = new MockPrograms(session, 2);
+  const listed = session.call("agent.session.agents", {}) as { agents: { name: string; label: string }[]; running: number; limit: number };
+  expect(listed).toEqual({ agents: [{ name: "scripted", label: "Scripted agent (mock)" }], running: 0, limit: 4 });
+  const row = session.call("agent.session.start", { agent: "scripted", goal: "List the scene." }) as AgentSession & { agent: string; pid: number };
+  expect(row).toMatchObject({ id: "mcp-1", transport: "launch", role: "developer", live: true, agent: "scripted" });
+  expect("handle" in row).toBe(false);
+  await Bun.sleep(40);
+  const told = events({ session: row.id }).events;
+  expect(told.map((e) => (e.kind === "message" ? `${e.stream}: ${e.summary}` : e.method ? `${e.kind} ${e.method}` : e.kind))).toEqual([
+    "opened",
+    "host: started scripted (pid 4001): List the scene.",
+    "stdout: goal: List the scene.",
+    "call world.tree",
+    "result world.tree",
+    "stdout: Listed the scene; nothing else to do.",
+    "host: exit status: 0",
+    "closed",
+  ]);
+  // Stop ends one that runs; refusals as the host's.
+  const slow = new MockPrograms(session, 1000);
+  session.programs = slow;
+  const running = session.call("agent.session.start", { agent: "scripted", goal: "Wait.", seat: "skipper" }) as AgentSession;
+  expect(running).toMatchObject({ role: "player", seat: "skipper" });
+  expect(session.call("agent.session.stop", { session: running.id })).toMatchObject({ id: running.id, live: false });
+  expect(events({ session: running.id }).events.at(-2)).toMatchObject({ kind: "message", stream: "host", summary: "signal: 9 (SIGKILL)" });
+  expect(refusal(() => session.call("agent.session.start", { agent: "scriptd", goal: "x" }))).toMatchObject({
+    code: "request.invalid_value",
+    detail: { path: "/agent" },
+  });
+  expect(refusal(() => session.call("agent.session.start", { agent: "scripted", goal: " " })).code).toBe("request.out_of_range");
+  expect(refusal(() => session.call("agent.session.stop", { session: "mcp-9" })).code).toBe("host.session_unknown");
+  // The store takes the launch rows and the messages' streams as any other.
+  const state = useAgent.getState();
+  state.reset();
+  expect(state.load(session.call("agent.session.list", {}) as List, events({ limit: 2000 }))).toBe(true);
+  expect(useAgent.getState().sessions.map((s) => [s.transport, s.live])).toEqual([
+    ["launch", false],
+    ["launch", false],
+  ]);
+  expect(useAgent.getState().feed.filter((e) => e.stream === "stdout").length).toBe(2);
 });

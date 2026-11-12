@@ -434,11 +434,13 @@ fn the_host_lists_its_sessions_and_keeps_their_calls_for_a_late_editor() {
             .unwrap_or_else(|| panic!("no catalog entry {name}"));
         assert_eq!(entry["server"], json!(true), "{entry:#}");
     }
+    // A host whose owner registered no agent program starts none.
     let e = error(
         &url,
-        &json!({"id": 1, "method": "agent.session.start", "params": {}}),
+        &json!({"id": 1, "method": "agent.session.start",
+                "params": {"agent": "claude", "goal": "Sail."}}),
     );
-    assert_eq!(e["code"], json!("request.unknown_method"), "{e:#}");
+    assert_eq!(e["code"], json!("host.no_agents"), "{e:#}");
 
     // Its edit is its own in the history.
     assert_eq!(history_sessions(&url), [json!("mcp-1")]);
@@ -1038,4 +1040,213 @@ fn amoris_mcp_attached_to_a_host_is_a_session_of_its_own() {
 
     drop(_served);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The events of one session, in order: `kind method` or `kind` (a message with its stream).
+fn session_told(url: &str, session: &str) -> Vec<Value> {
+    events(url, json!({"session": session, "limit": 2000}))["events"]
+        .as_array()
+        .unwrap()
+        .clone()
+}
+
+/// Waits until the session's row is no longer live; its events then.
+fn ended(url: &str, session: &str) -> Vec<Value> {
+    let t0 = Instant::now();
+    while t0.elapsed() < Duration::from_secs(30) {
+        let live = sessions(url)
+            .iter()
+            .any(|r| r["id"] == json!(session) && r["live"] == json!(true));
+        if !live {
+            return session_told(url, session);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("{session} did not end: {:#?}", session_told(url, session));
+}
+
+/// The process owner registers agent programs (`amoris serve --agents`, server.md 3.7) and the
+/// editor starts one by name with a goal: a session of transport `launch`, opened before the
+/// program runs, whose environment names the host, the session's handle and the goal; its
+/// output lines are the session's `message` events, its calls through the handle are the
+/// session's, and the session closes when it exits or is stopped. `amoris mcp --attach` run by
+/// such a program calls as the session the host gave it.
+#[test]
+fn the_host_starts_a_registered_agent_program_as_a_session() {
+    let (handle, host) = start();
+    let bin = env!("CARGO_BIN_EXE_amoris");
+    let script = r#"echo "goal: $AMORIS_AGENT_GOAL"
+curl -s -X POST "$AMORIS_HOST/api/call" -H 'Content-Type: application/json' \
+  -d "{\"id\":1,\"method\":\"status\",\"params\":{},\"handle\":\"$AMORIS_AGENT_HANDLE\"}" >/dev/null
+echo "seat: ${AMORIS_AGENT_SEAT:-none}"
+echo "to stderr" >&2"#;
+    let mcp = format!(
+        r#"(printf '%s\n' \
+  '{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2025-06-18","capabilities":{{}},"clientInfo":{{"name":"fake","version":"1"}}}}}}' \
+  '{{"jsonrpc":"2.0","method":"notifications/initialized"}}' \
+  '{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"player","arguments":{{"action":"session"}}}}}}'; sleep 3) \
+  | "{bin}" mcp --attach "$AMORIS_HOST" >/dev/null"#
+    );
+    let file = json!({"agents": [
+        {"name": "scripted", "label": "a scripted agent", "command": ["/bin/sh", "-c", script]},
+        {"name": "mcp", "command": ["/bin/sh", "-c", mcp]},
+        {"name": "sleeper", "command": ["/bin/sleep", "30"]},
+        {"name": "missing", "command": ["/no/such/program"]},
+    ]});
+    host.set_launchers(amoris_server::Launchers::parse(&file.to_string(), "test").unwrap());
+    let rt = runtime();
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let (addr, task) = rt
+        .block_on(host.serve(&ServeOptions { port: 0 }, async {
+            let _ = stopped.await;
+        }))
+        .unwrap();
+    let url = format!("http://{addr}");
+    let before = result(&url, "status", json!({}))["world_hash"].clone();
+
+    let listed = result(&url, "agent.session.agents", json!({}));
+    assert_eq!(
+        listed["agents"][0],
+        json!({"name": "scripted", "label": "a scripted agent"}),
+        "{listed:#}"
+    );
+    assert!(
+        listed["agents"][0].get("command").is_none(),
+        "commands are not told"
+    );
+
+    // A program the file names, with a goal.
+    let row = result(
+        &url,
+        "agent.session.start",
+        json!({"agent": "scripted", "goal": "Report the tick."}),
+    );
+    assert_eq!(row["transport"], json!("launch"), "{row:#}");
+    assert_eq!(row["label"], json!("a scripted agent"), "{row:#}");
+    assert_eq!(row["live"], json!(true), "{row:#}");
+    assert!(
+        row.get("handle").is_none(),
+        "the handle is the program's alone: {row:#}"
+    );
+    let id = row["id"].as_str().unwrap().to_owned();
+    let told = ended(&url, &id);
+    let words: Vec<String> = told
+        .iter()
+        .map(
+            |e| match (e["kind"].as_str().unwrap(), e["stream"].as_str()) {
+                ("message", Some(s)) => format!("{s}: {}", e["summary"].as_str().unwrap()),
+                (k, _) => format!("{k} {}", e["method"].as_str().unwrap_or(""))
+                    .trim()
+                    .to_owned(),
+            },
+        )
+        .collect();
+    assert_eq!(words[0], "opened", "{words:#?}");
+    assert!(
+        words[1].starts_with("host: started scripted (pid "),
+        "{words:#?}"
+    );
+    for want in [
+        "stdout: goal: Report the tick.",
+        "call status",
+        "result status",
+        "stdout: seat: none",
+        "stderr: to stderr",
+        "host: exit status: 0",
+        "closed",
+    ] {
+        assert!(words.iter().any(|w| w == want), "{want}: {words:#?}");
+    }
+    assert_eq!(words.last().unwrap(), "closed", "{words:#?}");
+
+    // `amoris mcp --attach` run by the program is the session the host opened, as its seat.
+    let row = result(
+        &url,
+        "agent.session.start",
+        json!({"agent": "mcp", "goal": "Say your seat.", "seat": "skipper"}),
+    );
+    assert_eq!(
+        (row["role"].clone(), row["seat"].clone()),
+        (json!("player"), json!("skipper"))
+    );
+    let id = row["id"].as_str().unwrap().to_owned();
+    let told = ended(&url, &id);
+    assert!(
+        told.iter()
+            .any(|e| e["kind"] == json!("call") && e["method"] == json!("player.session")),
+        "{told:#?}"
+    );
+    assert!(
+        told.iter().any(|e| e["kind"] == json!("result")
+            && e["ok"] == json!(true)
+            && e["summary"]
+                .as_str()
+                .unwrap()
+                .contains("\"seat\":\"skipper\"")),
+        "the seat's own session: {told:#?}"
+    );
+    let rows = sessions(&url);
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r["transport"] == json!("bridge"))
+            .count(),
+        0,
+        "it registered no session of its own: {rows:#?}"
+    );
+
+    // Stop ends a program that would run on.
+    let row = result(
+        &url,
+        "agent.session.start",
+        json!({"agent": "sleeper", "goal": "Wait."}),
+    );
+    let id = row["id"].as_str().unwrap().to_owned();
+    let stopped_row = result(&url, "agent.session.stop", json!({"session": id}));
+    assert_eq!(stopped_row["live"], json!(false), "{stopped_row:#}");
+    let told = session_told(&url, &id);
+    assert!(
+        told.iter().any(|e| e["summary"] == json!("stopping")),
+        "{told:#?}"
+    );
+
+    // What the host refuses: an unregistered name, an empty goal, a seat the game lacks, a program
+    // that does not start (its session opened and closed, saying why).
+    let e = error(
+        &url,
+        &json!({"id": 1, "method": "agent.session.start",
+                               "params": {"agent": "scriptd", "goal": "x"}}),
+    );
+    assert_eq!(e["code"], json!("request.invalid_value"), "{e:#}");
+    assert_eq!(e["detail"]["suggestions"][0], json!("scripted"), "{e:#}");
+    let e = error(
+        &url,
+        &json!({"id": 1, "method": "agent.session.start",
+                               "params": {"agent": "scripted", "goal": "  "}}),
+    );
+    assert_eq!(e["code"], json!("request.out_of_range"), "{e:#}");
+    let e = error(
+        &url,
+        &json!({"id": 1, "method": "agent.session.start",
+                               "params": {"agent": "scripted", "goal": "x", "seat": "nobody"}}),
+    );
+    assert_eq!(e["code"], json!("seat.unknown"), "{e:#}");
+    let e = error(
+        &url,
+        &json!({"id": 1, "method": "agent.session.start",
+                               "params": {"agent": "missing", "goal": "x"}}),
+    );
+    assert_eq!(e["code"], json!("host.agent_failed"), "{e:#}");
+    let e = error(
+        &url,
+        &json!({"id": 1, "method": "agent.session.stop",
+                               "params": {"session": "mcp-99"}}),
+    );
+    assert_eq!(e["code"], json!("host.session_unknown"), "{e:#}");
+
+    // Host state: the world is as it was.
+    assert_eq!(result(&url, "status", json!({}))["world_hash"], before);
+    let _ = stop.send(());
+    let _ = rt.block_on(task);
+    drop(host);
+    handle.shutdown(5000).unwrap();
 }

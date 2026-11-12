@@ -964,6 +964,13 @@ fn a_player_forks_when_its_grant_allows_and_main_stays() {
     assert!(!failed, "{text}");
     let (failed, text) = mcp.tool("player", json!({"action": "wait", "world": "b1"}));
     assert!(failed && text.contains("session.unknown_world"), "{text}");
+    // A locked host starts no agent program (server.md 3.7), not even for a developer.
+    let e = error(
+        &url,
+        DEVELOPER,
+        &request("agent.session.start", json!({"agent": "a", "goal": "g"})),
+    );
+    assert_eq!(e["code"], json!("host.not_supported"), "{e:#}");
     assert_eq!(served.world(), before);
 }
 
@@ -1126,7 +1133,7 @@ fn a_checker_token_reads_and_changes_nothing() {
         ("world.gett", Some("world.get")),
         ("scripts.swap", None),
         ("world.edi", None),
-        ("agent.session.start", None),
+        ("agent.session.begin", None),
         ("", None),
     ] {
         let e = error(&url, CHECKER, &request(method, json!({})));

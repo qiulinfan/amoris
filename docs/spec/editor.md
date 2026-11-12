@@ -63,9 +63,10 @@ returned frame only when the write was the call's last, `debug.exceptions`), pro
 host's shape, assets with thumbnails, and a simulated MCP agent whose edits land in the same undo
 history. It lists and records agent sessions in the host's shapes (`agent.session.list`, `.events`,
 `.open`, `.close` and the `agent` events, `mock/sessions.ts`; server.md 3.5): each round of the
-simulated agent opens a session, calls as it and closes it, and its own words are `message` events,
-which the real host has none of. It binds 127.0.0.1 and refuses non-loopback `Origin`/`Host`, as
-the host does.
+simulated agent opens a session, calls as it and closes it, and its own words are `message` events.
+It starts its one scripted agent program as the host starts registered ones (`agent.session.agents`,
+`.start`, `.stop`, `mock/programs.ts`; server.md 3.7). It binds 127.0.0.1 and refuses non-loopback
+`Origin`/`Host`, as the host does.
 
 ## 2. Layout
 
@@ -96,7 +97,7 @@ right.
 | Timeline | Kept snapshots and event lanes (the most frequent kinds, and the selection's) on a tick ruler with the playhead; drag to scrub and release to rewind there; click a snapshot to restore it; back to the previous snapshot, pause, step | `snapshots.list/restore`, `debug.rewind`, `time.*` |
 | Profiler | Per sample (4 a second), the host's CPU time per tick stacked by system and the viewport's frame time against the 60 Hz budget (hover for one sample), then over the last 3 s: the game thread's systems (each system's own time, `tick.other`, `loop.present`, `loop.publish`, `loop.after`) and the tick's phases with their largest tick, and the viewport's GPU passes; the tick and game-thread time, the frame interval, fps and GPU time; held ticks left out; freeze and clear | `profile` events, the viewport's `stats()` |
 | Assets | Grid or list with thumbnails or kind icons, kind filters with counts, search; drag into the viewport or the hierarchy (or double-click) to place a model; import by path; context menu (place, copy path, reimport) | `assets.list/import`, `world.edit` spawn with `Model.mesh` |
-| Agent | The host's agent sessions and the stream of what they called, read from the host on connect, so calls made before the editor opened are shown (server.md 3.5): each session with its id, label, transport, seat, call and failed-call counts and whether it is live; the feed grouped by session (opened, call, result with success, closed; the mock's messages); a filter by session; Clear hides what is shown. A New session form (model, goal, tools) that is a preview: the host starts no agent (section 11); copies the MCP endpoint command | `agent.session.list`, `agent.session.events`, `agent` events |
+| Agent | The host's agent sessions and the stream of what they called, read from the host on connect, so calls made before the editor opened are shown (server.md 3.5): each session with its id, label, transport, seat, call and failed-call counts and whether it is live; the feed grouped by session (opened, call, result with success, closed; the mock's messages); a filter by session; Clear hides what is shown. A New session form: an agent program the host's owner registered (`agent.session.agents`), a goal and an optional seat; Start runs it as a `launch` session of the host whose output lines join the feed, Stop ends the selected one (server.md 3.7); a host without programs says how they are registered; copies the MCP endpoint command | `agent.session.list`, `agent.session.events`, `agent.session.agents`, `.start`, `.stop`, `agent` events |
 | History | The undo history as a timeline from "Opened scene", each edit another client made marked with its session (`mcp-1`, `api`); click an entry to undo or redo up to it; undo and redo buttons | `history` events, `history.undo/redo/list` |
 
 ## 4. Shortcuts
@@ -368,7 +369,8 @@ adopt them or the editor should change:
    stream (`agent.session.list`, `agent.session.events`). The editor reads both on each connection
    (subscribed to `agent` first, the list before the backlog), applies pushes in the order of
    their numbers and reads again when a number is skipped, instead of guessing sessions from the
-   events it happened to receive. `message` events are the mock's only.
+   events it happened to receive. `message` events carry a started program's lines with their
+   `stream` (server.md 3.7; before that day they were the mock's only).
 7. `scripts.read` answers the text (a string) or `{text}`; diagnostics are `{file?, line, column,
    end_line?, end_column?, severity: "error" | "warning" | "info" | "hint", message, code?}`.
 8. `snapshots.list` answers `[{tick, t_s?, hash?}]`; `events.why` answers the chain oldest first,
@@ -528,11 +530,9 @@ completes the Boat's fields.
   refused too: Pause, then Continue, or remove the breakpoint first.
 - `debug.set` sets the first variable of that name a function declares: two block scopes declaring
   one name (`for (let r ...)` twice) cannot be told apart at run time.
-- Agent sessions cannot be started from the editor: the host lists the sessions agents open
-  themselves (server.md 3.5) and starts none, so there is no `agent.session.start`, because which
-  agent program the editor may launch, and with whose credentials, is not decided. The form is a
-  preview and says so; an agent connected with `amoris mcp <project>` or the MCP endpoint appears
-  in the list. A stale bridge row (its process killed) has no Close button: `amoris call
+- The editor starts only the agent programs the process owner registered (`amoris serve --agents
+  <file>`, server.md 3.7), by name: it never names a command, a model or a key, and a locked host
+  starts none. A stale bridge row (its process killed) has no Close button: `amoris call
   agent.session.close '{"session": "mcp-3"}'` closes it.
 - Import takes a path the host can read; there is no upload.
 - The worker's declarations are fetched on connect and after the editor's own apply: a component

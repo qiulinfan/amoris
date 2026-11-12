@@ -167,4 +167,22 @@ export const CATALOG: CatalogCommand[] = [
     doc: "Closes a registered session: by the handle its opener holds, or a bridge session by its id (session) when its process is gone.",
     params: obj({ handle: str("The handle agent.session.open answered."), session: str("A bridge session's id (mcp-3).") }),
   },
+  {
+    name: "agent.session.agents",
+    kind: "read",
+    doc: "The agent programs this host may start, {agents: [{name, label}], running, limit}: registered by the process owner with amoris serve --agents <file>.",
+    params: obj(),
+  },
+  {
+    name: "agent.session.start",
+    kind: "control",
+    doc: "Starts a registered agent program as an agent session of this host (transport launch) with a goal, and with seat as that seat's player; its output lines are the session's message events and the session closes when it exits.",
+    params: obj({ agent: str("A program the host registered."), goal: str("What the agent is asked to do."), seat: str("The seat it plays; without it a developer.") }, ["agent", "goal"]),
+  },
+  {
+    name: "agent.session.stop",
+    kind: "control",
+    doc: "Ends a started agent program; answers its session's row once closed.",
+    params: obj({ session: str("The started session's id (mcp-3).") }, ["session"]),
+  },
 ];

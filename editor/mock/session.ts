@@ -10,6 +10,7 @@ import { Scripts, diagnose } from "./scripts";
 import { MockError, isObject, rng, suggest, unknownField } from "./util";
 import { EDITOR, emptyChanges, merge, unknownComponent, type Caller, type Changes, type World } from "./world";
 import { ASSETS } from "./assets";
+import { MockPrograms } from "./programs";
 import { AgentSessions } from "./sessions";
 
 export type Broadcast = (topic: string, data: unknown) => void;
@@ -52,6 +53,8 @@ export class Session {
   debugger: Debugger;
   /** The agent sessions and their stream, as the host keeps them (server.md 3.5). */
   agents: AgentSessions;
+  /** The agent programs it may start (server.md 3.7). */
+  programs: MockPrograms;
   private inTick = false;
   private sysIndex = 0;
   private fps = 60;
@@ -68,6 +71,7 @@ export class Session {
     );
     this.bundle = this.scripts.bundleHash();
     this.agents = new AgentSessions(broadcast);
+    this.programs = new MockPrograms(this);
   }
 
   get world(): World {
@@ -603,6 +607,9 @@ export class Session {
     "agent.session.events": (p) => this.agents.events(p as { since?: number; limit?: number; session?: string }),
     "agent.session.open": (p) => this.agents.register(p as { label?: string; seat?: string }),
     "agent.session.close": (p) => this.agents.unregister(p as { handle?: string; session?: string }),
+    "agent.session.agents": () => this.programs.agents(),
+    "agent.session.start": (p) => this.programs.start(p as { agent?: unknown; goal?: unknown; seat?: unknown }),
+    "agent.session.stop": (p) => this.programs.stop(p as { session?: unknown }),
   };
 
 }

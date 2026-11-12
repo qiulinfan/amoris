@@ -5,7 +5,7 @@
 // the numbers means reading again.
 
 import { create } from "zustand";
-import type { AgentEvent, AgentSession } from "../host/protocol";
+import type { AgentEvent, AgentProgram, AgentSession } from "../host/protocol";
 
 export type AgentLine = AgentEvent;
 
@@ -67,6 +67,9 @@ interface AgentState extends AgentView {
   loaded: boolean;
   /** Pushes that came before they were, or after a gap. */
   pending: AgentEvent[];
+  /** The agent programs the host may start (`agent.session.agents`); none on a host without. */
+  programs: AgentProgram[];
+  setPrograms(programs: AgentProgram[]): void;
   /** A new connection: nothing of the last one is kept. */
   reset(): void;
   /** Takes the host's list and backlog; false when they do not join (read them again). */
@@ -83,7 +86,9 @@ export const useAgent = create<AgentState>((set, get) => ({
   hidden: 0,
   loaded: false,
   pending: [],
-  reset: () => set({ sessions: [], feed: [], last: 0, loaded: false, pending: [] }),
+  programs: [],
+  setPrograms: (programs) => set({ programs }),
+  reset: () => set({ sessions: [], feed: [], last: 0, loaded: false, pending: [], programs: [] }),
   load: (list, backlog) => {
     // The list was read at `list.last` and the backlog after it: the rows take the events between.
     let sessions = list.sessions;
