@@ -1027,9 +1027,9 @@ locked and an unlocked host hash the same world after the same edit and 60 ticks
 5. Saves (3.3) are the host's: scripts neither write nor load one, the browser has no store for
    them (its worker answers `project.no_root`), and a save holding an older version of a project
    component waits for the TypeScript migration steps (versions.md 8.3).
-6. Agent sessions (3.5): the host lists the sessions agents open themselves and starts none.
-   `agent.session.start` (the editor launching an agent program) waits for the owner's decision on
-   which program, with whose credentials. A dead bridge's row has no expiry (a lease belongs with
+6. Agent sessions (3.5): the host lists the sessions agents open themselves, and starts only the
+   programs its owner registered with `--agents` (3.7), which take the host's environment for their
+   credentials. A dead bridge's row has no expiry (a lease belongs with
    the tokens and grants of shared/contract/mcp.md, which are not built: a handle admits nobody).
    An agent driven through the `amoris` CLI still calls as the shared `api` client and is no
    session; the stream is not kept across host restarts. 2026-11-12: tokens now admit (3.6), on a
