@@ -4,6 +4,8 @@
 //! [`Host::call`] like any other, recorded and pushed to editors as `agent` events, and the
 //! session closes when rmcp drops its handler. A session bound to a seat (`amoris mcp --seat`,
 //! docs/spec/player.md) calls as that seat's player instead, and lists the player tool alone.
+//! On a locked host (server.md 3.6) every MCP client of a grant calls as the grant's one session,
+//! which the lock opened and nothing here closes.
 
 use std::sync::Arc;
 
@@ -19,11 +21,17 @@ use crate::sessions::{Spec, Transport};
 pub struct McpBackend {
     host: Host,
     seat: Option<String>,
+    /// The session of a grant of a locked host: every caller's calls are this session's.
+    session: Option<String>,
 }
 
 impl McpBackend {
     pub fn new(host: Host) -> McpBackend {
-        McpBackend { host, seat: None }
+        McpBackend {
+            host,
+            seat: None,
+            session: None,
+        }
     }
 
     /// Sessions that play `seat`: their calls are the seat's player's.
@@ -31,6 +39,18 @@ impl McpBackend {
         McpBackend {
             host,
             seat: Some(seat.to_owned()),
+            session: None,
+        }
+    }
+
+    /// The MCP clients of one grant of a locked host (`grants.rs`): each calls as `session`,
+    /// the grant's row, whatever it says of itself; a hello opens nothing and a handler's end
+    /// closes nothing. With `seat` (a player grant) they list the `player` tool alone.
+    pub(crate) fn granted(host: Host, session: &str, seat: Option<&str>) -> McpBackend {
+        McpBackend {
+            host,
+            seat: seat.map(str::to_owned),
+            session: Some(session.to_owned()),
         }
     }
 }
@@ -133,11 +153,19 @@ impl Caller for Session {
 
 impl Backend for McpBackend {
     fn open(&self) -> Arc<dyn Caller> {
+        let opened = match &self.session {
+            // A grant's session is open already, and is nobody's to close.
+            Some(id) => OnceCell::new_with(Some(Opened {
+                id: id.clone(),
+                owned: false,
+            })),
+            None => OnceCell::new(),
+        };
         Arc::new(Session {
             inner: Arc::new(Inner {
                 host: self.host.clone(),
                 seat: self.seat.clone(),
-                opened: OnceCell::new(),
+                opened,
             }),
         })
     }

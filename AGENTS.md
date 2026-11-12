@@ -359,8 +359,11 @@ credential cleanup. File-verification records remain local, including in that ar
 ## Adopted CPU/runtime slice
 
 - Native player commands, seat-bound CLI/MCP/HTTP, PlayerSpec persistence and session limits are
-  specified in [docs/spec/player.md](docs/spec/player.md). HTTP seat selection is a role projection,
-  not remote identity authentication; token grants remain pending.
+  specified in [docs/spec/player.md](docs/spec/player.md). A host started with `amoris serve
+  --grants <file>` is locked: each token binds its client to one role, a seat's player, a checker
+  (the catalog's reads) or a developer, on every route ([docs/spec/server.md](docs/spec/server.md)
+  3.6). Without grants, HTTP seat selection stays a role projection among trusted local clients.
+  Neither is remote identity authentication, which is not built.
 - P11 records each paused statement's lexical scope for debugger evaluations. Paused reads
   describe the last published boundary; Stop and script-preserving restores follow
   [docs/spec/server.md](docs/spec/server.md).

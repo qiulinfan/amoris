@@ -259,14 +259,21 @@ The commands are projected like every catalog command:
   looked up, a refusal recorded as a call that failed; the seat's client is found by the session's
   first permitted call and kept. Calls made as a seat with no session (`/api/call {seat}`) are the
   row `player:<seat>`.
+- **A locked host** (2026-11-12; server.md 3.6): on a host started with `--grants` the seat is
+  the token's, not the request's. A player grant's token makes every call its seat's player's, over
+  `/api/call`, over `/mcp` and `/mcp/<token>`, and through `amoris mcp --attach <url>
+  --grant-token <token>`; another seat in the body is `seat.not_yours`, a session `handle` is
+  `permission.denied`, and the catalog, the project's files, `/ws` and `/render` answer 403. The
+  three places of the engine's own enforcement above stand unchanged beneath it.
 - **CLI**: `amoris player <action> ['<json>'] [--seat s]`; `act` also takes the actions alone;
   observations print as text, other answers as one line of JSON. A client of a running host (the
   CLI, `amoris mcp` against a host) waits for a `wait` at least 10 s past its wall limit,
   `max_wall_ms` or the default 30 s, whatever `--timeout` says (`client::timeout_for`).
 
-Not built from mcp.md: grants with tokens over HTTP MCP, branches (`fork`, `discard`), snapshots and
-`replay` for players, `world` in answers, statistics across sessions (section 10). A decision model
-in process forks a game directly instead (section 8.1).
+Not built from mcp.md: branches (`fork`, `discard`), snapshots and `replay` for players, `world` in
+answers, statistics across sessions (section 10); of its grants, `policy`, `profile`, `decision`,
+`clock` and `max_wall_ms` (tokens that bind a client to a role are built since 2026-11-12,
+server.md 3.6). A decision model in process forks a game directly instead (section 8.1).
 
 ## 8. The sailing course
 
@@ -376,8 +383,10 @@ every tick, and its player scenario passes the four checks.
   `amoris-script` natives, an interface bridge and executors, about 3,000 lines of source and 2,500
   of tests) against a script host this line has since changed (the debugger, types, the prelude);
   porting them is the next step. A game's own intents are therefore engine catalogs in Rust for now.
-- **Lockstep for players, branches, snapshots and `replay` for players, grants over HTTP MCP**:
-  amoris-interface has lockstep's `commit`; nothing carries it, nor mcp.md's fork tools. The fork
+- **Lockstep for players, branches, snapshots and `replay` for players, a grant's policy**:
+  amoris-interface has lockstep's `commit`; nothing carries it, nor mcp.md's fork tools (token
+  grants that bind a client to a role are built since 2026-11-12, server.md 3.6; their `policy`,
+  which would allow and bound a player's forks, is not). The fork
   lookahead (8.1) forks a game in process (`Game::fork`, `Game::fork_into`); an agent outside the
   process still has no `fork` or `discard` (mcp.md 5.5), no `world` in answers to address a branch
   by, and the game thread runs no branch beside main (threads.md 3.6, `branch.main_lateness`).
@@ -459,6 +468,7 @@ every tick, and its player scenario passes the four checks.
 | A developer naming a seat leaves its push cursor | `amoris-runtime/tests/player.rs` |
 | A player's developer calls refused by the game and the thread; a throwing rule halts the players until a hot update, a developer's resume or a restore; a restore rebases the seat's decisions and push cursor | `amoris-runtime/tests/player.rs`, `amoris-runtime/tests/player_session.rs`, `amoris-interface/src/time/control.rs` (tests) |
 | A seat over HTTP and a seat-bound MCP session (in process, newline JSON-RPC over a pipe) play through the player tools alone; the host refuses the game's and its own developer methods; an unknown seat says `seat.unknown` | `amoris-app/tests/player_host.rs` |
+| A locked host: a player grant's token is its seat whatever the request says, over HTTP, MCP by header and by path, the CLI and `amoris mcp --attach --grant-token`; a checker's reads alone; an unlocked host unchanged; the same world hash locked and unlocked | `amoris-app/tests/locked_host.rs` |
 | The review's three findings replayed against the release `amoris serve` over HTTP | `tools/host/player_http_probe.py`, [evidence/player/seat-http.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/player/seat-http.txt) |
 | Fork lookahead: a decision leaves main's hash, tick and session untouched and keeps to 4 branches and 600 ticks; the same variant decides the same twice, with kept branches as with fresh forks; a branch is reached as the seat alone; a kept branch forked into again matches a fresh fork; `fork_into` refuses a game that is not a branch of main; with forks off the model never forks; the variants follow their seed | `amoris-runtime/tests/lookahead.rs` |
 | The lookahead's choice needs the margin and never takes a branch that refused its first act; the fork-off estimate reads the chart alone | `amoris-runtime/src/lookahead.rs` (tests) |

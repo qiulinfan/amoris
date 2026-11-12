@@ -445,6 +445,10 @@ application in `editor/`, specified in [editor.md](editor.md).
   `serve` and `mcp --attach` (shared/benchmark/README.md, 3.2). It enables the native features of
   the crates it links (`amoris-runtime`'s `thread` and `transpile`, `amoris-check`'s `native`,
   `amoris-render`'s `window` and `import`, section 7.4).
+  2026-11-12: of what this list calls planned, grants for `serve` are built (`serve <project>
+  --grants <file>`, docs/spec/server.md 3.6), with `mcp --attach <url|port> [--grant-token
+  <token>]` and the client commands' `--token` (`AMORIS_TOKEN`). `new`, `--tick-limit` and the
+  benchmark's engine adapter stay planned. No crate, edge or external crate changed for it.
 - **Build script**: `build.rs` computes `EngineVersion.source` (versions.md 3.1) over the files
   `git ls-files --cached --others --exclude-standard` lists under `crates/` and
   `shared/contract/rust/`, the workspace `Cargo.toml` and `Cargo.lock`, `rust-toolchain.toml`,

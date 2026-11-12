@@ -47,14 +47,30 @@ pub(crate) enum Transport {
     Bridge,
     /// Calls made as a seat with no session (`/api/call {seat}`).
     Api,
+    /// A grant of a locked host (`amoris serve --grants`, `grants.rs`): every client that
+    /// presents the grant's token, over `/api/call` or MCP.
+    Grant,
 }
 
-/// What a session may call: everything, or its seat's player tools alone.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+/// What a session may call: everything, or its seat's player tools alone; a checker, which only
+/// a grant of a locked host makes (`grants.rs`), the catalog's reads alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Role {
     Developer,
     Player,
+    Checker,
+}
+
+impl Role {
+    /// The role as rows, refusals and the grants file say it.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Role::Developer => "developer",
+            Role::Player => "player",
+            Role::Checker => "checker",
+        }
+    }
 }
 
 /// A session as `agent.session.list` lists it. Every key is always present; `seat` and
@@ -174,8 +190,25 @@ impl Registry {
 
     /// Opens a session and records it; the event to push. A seat's row with no session
     /// (`player:<seat>`) is opened only while none is listed ([`Host::seat_row`] looks first,
-    /// under the registry's lock); every other id is new.
+    /// under the registry's lock); every other id is new. Its role follows its seat: a player's
+    /// with one, a developer's without.
     pub(crate) fn open(&mut self, spec: Spec, client: Option<Client>, ts: u64) -> (Opened, Value) {
+        let role = if spec.seat.is_some() {
+            Role::Player
+        } else {
+            Role::Developer
+        };
+        self.open_as(spec, role, client, ts)
+    }
+
+    /// [`Registry::open`] with the role given: a grant's row says the role its grant names.
+    pub(crate) fn open_as(
+        &mut self,
+        spec: Spec,
+        role: Role,
+        client: Option<Client>,
+        ts: u64,
+    ) -> (Opened, Value) {
         let label = cut(&spec.label);
         let id = match (&spec.transport, &spec.seat) {
             (Transport::Api, Some(seat)) => format!("player:{seat}"),
@@ -189,11 +222,7 @@ impl Registry {
         let row = Row {
             id: id.clone(),
             transport: spec.transport,
-            role: if spec.seat.is_some() {
-                Role::Player
-            } else {
-                Role::Developer
-            },
+            role,
             seat: spec.seat.clone(),
             label: label.clone(),
             calls: 0,
@@ -337,11 +366,11 @@ impl Registry {
             .map(|e| &e.row)
     }
 
-    /// Who an open session calls as: its seat and the client it has; none when it is closed or
-    /// not listed.
-    fn caller(&self, id: &str) -> Option<(Option<String>, Option<Client>)> {
+    /// Who an open session calls as: its seat, the client it has and its role; none when it is
+    /// closed or not listed.
+    fn caller(&self, id: &str) -> Option<(Option<String>, Option<Client>, Role)> {
         let e = self.entry(id).filter(|e| !e.closed)?;
-        Some((e.row.seat.clone(), e.client.clone()))
+        Some((e.row.seat.clone(), e.client.clone(), e.row.role))
     }
 
     fn set_client(&mut self, id: &str, client: Client) {
@@ -501,10 +530,20 @@ impl Host {
     /// its source named after the session in the history; a player's seat is not looked up
     /// until its first call, so opening never asks the game.
     fn open_in(&self, sessions: &mut Registry, spec: Spec) -> Opened {
+        self.open_in_as(sessions, spec, None)
+    }
+
+    /// [`Host::open_in`] with the role given, or the one the seat says. A session with no seat,
+    /// a developer's or a checker's, gets a developer client of its own: the game sees a
+    /// checker as a developer source, and the host keeps its calls to reads ([`Via::Checker`]).
+    fn open_in_as(&self, sessions: &mut Registry, spec: Spec, role: Option<Role>) -> Opened {
         let client = spec.seat.is_none().then(|| (self.0.developer)());
         let source = client.as_ref().map(GameClient::source);
         let client = client.map(|c| Arc::new(Mutex::new(c)));
-        let (opened, event) = sessions.open(spec, client, now_ms());
+        let (opened, event) = match role {
+            Some(role) => sessions.open_as(spec, role, client, now_ms()),
+            None => sessions.open(spec, client, now_ms()),
+        };
         if let Some(source) = source
             && let Ok(mut names) = self.0.names.write()
         {
@@ -556,6 +595,27 @@ impl Host {
         id
     }
 
+    /// The row of a grant of a locked host (`grants.rs`), opened when the host locks: live for
+    /// the host's life, under the grant's label. A developer's and a checker's have a developer
+    /// client of their own from now on; a player's is given its seat's client by the lock
+    /// ([`Host::grant_client`]), which looks the seat up first.
+    pub(crate) fn grant_row(&self, role: Role, seat: Option<&str>, label: &str) -> String {
+        let spec = Spec {
+            transport: Transport::Grant,
+            seat: seat.map(str::to_owned),
+            label: label.to_owned(),
+            live: true,
+            shared: false,
+        };
+        let mut sessions = self.sessions();
+        self.open_in_as(&mut sessions, spec, Some(role)).id
+    }
+
+    /// Gives a player grant's row the client of its seat.
+    pub(crate) fn grant_client(&self, id: &str, client: Client) {
+        self.sessions().set_client(id, client);
+    }
+
     /// Closes a session; the row as it is then, when it is listed.
     pub(crate) fn session_close(&self, id: &str) -> Option<Row> {
         let mut sessions = self.sessions();
@@ -574,7 +634,13 @@ impl Host {
 
     /// A call refused before it has a client to go through: recorded as a call and its failed
     /// result, as [`Host::call`] records the others.
-    fn agent_refused(&self, id: &str, method: &str, params: &Value, problem: Problem) -> Problem {
+    pub(crate) fn agent_refused(
+        &self,
+        id: &str,
+        method: &str,
+        params: &Value,
+        problem: Problem,
+    ) -> Problem {
         self.agent_event(
             id,
             Step::Call {
@@ -593,9 +659,10 @@ impl Host {
         problem
     }
 
-    /// One call of the session `id`. A developer's goes through its own client. A player's is
-    /// first checked against the player tools ([`seat_permits`]), before the seat is looked
-    /// up; the seat's client is found on the first permitted call and kept.
+    /// One call of the session `id`. A developer's goes through its own client, as does a
+    /// checker's, which [`Host::call`] keeps to the catalog's reads ([`Via::Checker`]). A
+    /// player's is first checked against the player tools ([`seat_permits`]), before the seat is
+    /// looked up; the seat's client is found on the first permitted call and kept.
     pub(crate) async fn session_call(
         &self,
         id: &str,
@@ -603,16 +670,18 @@ impl Host {
         params: Value,
     ) -> Result<Value, Problem> {
         let caller = self.sessions().caller(id);
-        let Some((seat, client)) = caller else {
+        let Some((seat, client, role)) = caller else {
             return Err(session_unknown("session", id));
         };
         let Some(seat) = seat else {
             let Some(client) = client else {
                 return Err(session_unknown("session", id));
             };
-            return self
-                .call(&Via::Session(client, id.to_owned()), method, params)
-                .await;
+            let via = match role {
+                Role::Checker => Via::Checker(client, id.to_owned()),
+                _ => Via::Session(client, id.to_owned()),
+            };
+            return self.call(&via, method, params).await;
         };
         if let Err(p) = seat_permits(method) {
             return Err(self.agent_refused(id, method, &params, p));
@@ -1016,5 +1085,65 @@ mod tests {
         assert!(a.caller("mcp-1").is_none());
         assert!(a.caller("mcp-2").is_some());
         assert!(a.close("nope", 7).is_none());
+    }
+
+    /// A grant of a locked host is a row from the moment the host locks: live, numbered like
+    /// every session, with the role its grant names, which its seat alone would not say.
+    #[test]
+    fn a_grants_row_is_live_and_says_its_role() {
+        let mut r = Registry::new(7);
+        let grant = |seat: Option<&str>, label: &str| Spec {
+            transport: Transport::Grant,
+            seat: seat.map(str::to_owned),
+            label: label.to_owned(),
+            live: true,
+            shared: false,
+        };
+        let (player, _) = r.open_as(grant(Some("skipper"), "agent"), Role::Player, None, 10);
+        let (checker, opened) = r.open_as(grant(None, "harness"), Role::Checker, None, 11);
+        let (developer, _) = r.open_as(grant(None, "setup"), Role::Developer, None, 12);
+        assert_eq!(
+            [
+                player.id.as_str(),
+                checker.id.as_str(),
+                developer.id.as_str()
+            ],
+            ["mcp-1", "mcp-2", "mcp-3"]
+        );
+        assert_eq!(
+            opened["row"],
+            json!({"id": "mcp-2", "transport": "grant", "role": "checker", "seat": null,
+                   "label": "harness", "calls": 0, "failed_calls": 0, "last_method": null,
+                   "live": true, "opened_ts": 11, "last_ts": 11})
+        );
+        // No grant has a handle: its token is its address, and the registry never holds one.
+        assert!(player.handle.is_none() && checker.handle.is_none() && developer.handle.is_none());
+        let role = |r: &Registry, id: &str| r.caller(id).map(|(seat, _, role)| (seat, role));
+        assert_eq!(
+            role(&r, "mcp-1"),
+            Some((Some("skipper".to_owned()), Role::Player))
+        );
+        assert_eq!(role(&r, "mcp-2"), Some((None, Role::Checker)));
+        assert_eq!(role(&r, "mcp-3"), Some((None, Role::Developer)));
+        // A role is read back as the grants file says it.
+        for role in [Role::Developer, Role::Player, Role::Checker] {
+            assert_eq!(json!(role), json!(role.name()));
+            assert_eq!(
+                serde_json::from_value::<Role>(json!(role.name())).ok(),
+                Some(role)
+            );
+        }
+        // A live row stays, whatever the ring holds.
+        for i in 0..(2 * RING as u64) {
+            r.step(
+                "mcp-3",
+                Step::Call {
+                    method: "status",
+                    summary: String::new(),
+                },
+                i,
+            );
+        }
+        assert_eq!(r.list()["sessions"].as_array().unwrap().len(), 3);
     }
 }

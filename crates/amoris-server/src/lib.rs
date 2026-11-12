@@ -10,6 +10,7 @@
 //! (the debugger, captures, the render feed).
 
 mod dispatch;
+mod grants;
 pub mod hostfile;
 mod http;
 mod local;
@@ -30,6 +31,7 @@ use serde_json::{Value, json};
 use tokio::sync::broadcast;
 
 pub use dispatch::{Via, seat_permits};
+pub use grants::Grants;
 pub use http::{find_editor_dist, router};
 pub use local::{RewindParams, WritesParams, debug_catalog, server_catalog};
 pub use mcp::McpBackend;
@@ -113,6 +115,9 @@ struct Inner {
     players: RwLock<Option<PlayerClients>>,
     /// The player clients opened, one per seat index, shared by every call made as that seat.
     seats: Mutex<std::collections::BTreeMap<u32, Arc<Mutex<GameClient>>>>,
+    /// The lock of a host started with grants (`grants.rs`), settled once: by [`Host::lock`], or
+    /// as none when the host first serves without one. Host state, never the world's.
+    grants: OnceLock<Option<grants::Lock>>,
 }
 
 /// Opens the client of a player's source: the seat's index in the game's declared seats.
@@ -149,6 +154,7 @@ impl Host {
             last_history: std::sync::Mutex::new(None),
             players: RwLock::new(None),
             seats: Mutex::new(std::collections::BTreeMap::new()),
+            grants: OnceLock::new(),
         }))
     }
 

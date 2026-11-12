@@ -279,11 +279,14 @@ where
     Ok(())
 }
 
+/// The Streamable HTTP service of [`http_service`], named so that a host can keep several (a
+/// locked host keeps one per grant, docs/spec/server.md 3.6) and drive each from a handler of
+/// its own (`handle`).
+pub type HttpService = StreamableHttpService<AmorisMcp, LocalSessionManager>;
+
 /// The Streamable HTTP service a host mounts at `/mcp`: one session per MCP client, loopback hosts
 /// only (rmcp's default `allowed_hosts`).
-pub fn http_service(
-    backend: Arc<dyn Backend>,
-) -> StreamableHttpService<AmorisMcp, LocalSessionManager> {
+pub fn http_service(backend: Arc<dyn Backend>) -> HttpService {
     let config = StreamableHttpServerConfig::default();
     StreamableHttpService::new(
         move || Ok(AmorisMcp::over_http(backend.open())),

@@ -2,7 +2,9 @@
 //! project's game on its game thread (real time, paused: the edit world) with the host's server on
 //! 127.0.0.1, or one MCP session over stdio, against a host already serving the project when there
 //! is one (as an agent session of that host, server.md 3.5) and otherwise against a game of its
-//! own.
+//! own. `amoris serve --grants <file>` locks the host (server.md 3.6): every request then needs a
+//! grant's token, and `amoris mcp --attach <url> --grant-token <token>` is the stdio session of
+//! one grant.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -13,14 +15,25 @@ use amoris_link::Source;
 use amoris_mcp::{Backend, BoxFuture, Caller, Hello};
 use amoris_runtime::Project;
 use amoris_runtime::thread::{GameHandle, GameThread, Pacing, ThreadOptions};
-use amoris_server::{GameAccess, Host, McpBackend, ServeOptions, hostfile};
+use amoris_server::{GameAccess, Grants, Host, McpBackend, ServeOptions, hostfile};
 use serde_json::{Value, json};
 
 use crate::check::Outcome;
 use crate::cli::{Args, Flag};
 
-const SERVE_FLAGS: &[Flag] = &[("port", true), ("editor", true), ("seed", true)];
-const MCP_FLAGS: &[Flag] = &[("seed", true), ("own", false), ("seat", true)];
+const SERVE_FLAGS: &[Flag] = &[
+    ("port", true),
+    ("editor", true),
+    ("seed", true),
+    ("grants", true),
+];
+const MCP_FLAGS: &[Flag] = &[
+    ("seed", true),
+    ("own", false),
+    ("seat", true),
+    ("attach", true),
+    ("grant-token", true),
+];
 
 fn fail(p: &Problem, code: i32) -> Outcome {
     Outcome {
@@ -66,6 +79,18 @@ impl Served {
 }
 
 fn start(root: &Path, seed: Option<u64>, editor: Option<PathBuf>) -> Result<Served, Problem> {
+    start_with(root, seed, editor, true)
+}
+
+/// [`start`], with the debugger's CDP endpoint or without it. A locked host starts none: that
+/// endpoint has no admission, and any local process that reached it could evaluate in a paused
+/// frame, past every grant (server.md 3.6). The debugger itself stays, behind `debug.*`.
+fn start_with(
+    root: &Path,
+    seed: Option<u64>,
+    editor: Option<PathBuf>,
+    cdp: bool,
+) -> Result<Served, Problem> {
     let feed = amoris_assets::Feed::new();
     let project = Project::load(root)?;
     let seed = seed.unwrap_or(project.manifest.seed);
@@ -87,14 +112,15 @@ fn start(root: &Path, seed: Option<u64>, editor: Option<PathBuf>) -> Result<Serv
         title: format!("Amoris: {}", project.manifest.name),
         ..amoris_debug::HubOptions::default()
     });
-    let cdp = match hub.serve_cdp(amoris_debug::CdpOptions::default()) {
-        Ok(c) => Some(c),
-        Err(e) => {
+    let cdp = match cdp.then(|| hub.serve_cdp(amoris_debug::CdpOptions::default())) {
+        Some(Ok(c)) => Some(c),
+        Some(Err(e)) => {
             eprintln!(
                 "amoris: the debugger's CDP endpoint did not start ({e}); debug.* still works"
             );
             None
         }
+        None => None,
     };
     let h = hub.clone();
     let handle = GameThread::spawn(
@@ -193,19 +219,35 @@ fn serving(args: &Args) -> Result<(), Problem> {
         .value("editor")
         .map(PathBuf::from)
         .or_else(amoris_server::find_editor_dist);
-    let served = start(&root, args.number::<u64>("seed")?, editor.clone())?;
+    // The grants are read before the game starts: a file that is refused starts nothing.
+    let grants = match args.value("grants") {
+        Some(file) => Some(Grants::load(Path::new(file), &root)?),
+        None => None,
+    };
+    let locked = grants.as_ref().map(Grants::counts);
+    let served = start_with(
+        &root,
+        args.number::<u64>("seed")?,
+        editor.clone(),
+        locked.is_none(),
+    )?;
     let host = served.host.clone();
     let rt = runtime()?;
     let r = rt.block_on(async {
+        if let Some(grants) = grants {
+            host.lock(grants).await?;
+        }
         let (addr, task) = host.serve(&ServeOptions { port }, stopped()).await?;
-        let file = hostfile::write(&root, addr.port())
+        let file = hostfile::write_as(&root, addr.port(), locked.is_some())
             .map_err(|e| Problem::new("host.file", e.to_string(), detail([])))?;
-        println!(
-            "{}",
-            json!({"url": file.url, "port": addr.port(), "pid": file.pid,
-                   "project": file.project, "mcp": format!("{}/mcp", file.url),
-                   "editor": editor.as_ref().map(|e| e.display().to_string())})
-        );
+        let mut ready = json!({"url": file.url, "port": addr.port(), "pid": file.pid,
+                               "project": file.project, "mcp": format!("{}/mcp", file.url),
+                               "editor": editor.as_ref().map(|e| e.display().to_string())});
+        if locked.is_some() {
+            // Said only by a locked host; no line, file or log of the host says a token.
+            ready["locked"] = json!(true);
+        }
+        println!("{ready}");
         eprintln!(
             "amoris: serving {} at {} (editor {}, MCP {}/mcp); Ctrl-C stops",
             root.display(),
@@ -217,6 +259,13 @@ fn serving(args: &Args) -> Result<(), Problem> {
             },
             file.url
         );
+        if let Some((players, checkers, developers)) = locked {
+            eprintln!(
+                "amoris: locked: grants for {players} player, {checkers} checker and \
+                 {developers} developer tokens, and every request needs one; the debugger's \
+                 CDP endpoint is off"
+            );
+        }
         let _ = task.await;
         Ok::<(), Problem>(())
     });
@@ -362,6 +411,39 @@ impl Bridge {
     }
 }
 
+/// `amoris mcp --attach <url> --grant-token <token>` (server.md 3.6; shared/contract/mcp.md 10):
+/// the stdio session of one grant of a locked host. Each call is `POST /api/call` with the
+/// grant's token as its bearer, so it is the grant's session on the host, listed under the
+/// grant's label. It registers nothing, holds no handle and closes nothing: the grant's session
+/// is the host's, open for the host's life.
+#[derive(Clone)]
+struct Granted {
+    url: Arc<str>,
+    token: Arc<str>,
+    /// The seat of a player grant: the session then lists the `player` tool alone.
+    seat: Option<String>,
+}
+
+impl Caller for Granted {
+    fn call(&self, method: String, params: Value) -> BoxFuture<Result<Value, Problem>> {
+        let (url, token) = (self.url.clone(), self.token.clone());
+        Box::pin(blocking(move || {
+            let timeout = crate::client::timeout_for(None, &method, &params);
+            crate::client::call_url_granted(&url, &method, params, None, Some(&token), timeout)
+        }))
+    }
+
+    fn seat(&self) -> Option<String> {
+        self.seat.clone()
+    }
+}
+
+impl Backend for Granted {
+    fn open(&self) -> Arc<dyn Caller> {
+        Arc::new(self.clone())
+    }
+}
+
 /// A host serving the project over HTTP, as `amoris mcp` reaches it: the bridge's session.
 struct Remote(Arc<Bridge>);
 
@@ -394,13 +476,72 @@ impl Backend for Remote {
     }
 }
 
+/// What `amoris mcp`'s flags ask for, settled before anything starts.
+struct McpPlan {
+    /// `--own`: a game of this process's own, whatever host serves the project.
+    own: bool,
+    /// `--attach <url|port>`: the host to be a session of. No game of its own is started then.
+    attach: Option<String>,
+    /// A grant's token (`--grant-token`, else `AMORIS_TOKEN`): the session is that grant's.
+    token: Option<String>,
+    seat: Option<String>,
+}
+
+fn mcp_plan(args: &Args) -> Result<McpPlan, Problem> {
+    let flags: Vec<&str> = MCP_FLAGS.iter().map(|(n, _)| *n).collect();
+    let own = args.has("own");
+    let attach = args.value("attach").map(crate::client::host_of);
+    for other in ["attach", "grant-token"] {
+        if own && args.has(other) {
+            return Err(crate::cli::usage(
+                format!("--own runs a game of this process's own; --{other} is for a running host"),
+                other,
+                &flags,
+            ));
+        }
+    }
+    // `AMORIS_TOKEN` is the token of a running host's grant: a game of its own takes none.
+    let token = if own {
+        None
+    } else {
+        crate::client::token_of(args.value("grant-token"))?
+    };
+    let seat = args.value("seat").map(str::to_owned);
+    if token.is_some() && seat.is_some() {
+        return Err(crate::cli::usage(
+            "a grant fixes its role and its seat: --seat is not given with a token \
+             (--grant-token, AMORIS_TOKEN)"
+                .to_owned(),
+            "seat",
+            &flags,
+        ));
+    }
+    Ok(McpPlan {
+        own,
+        attach,
+        token,
+        seat,
+    })
+}
+
 /// `amoris mcp`.
 pub fn mcp(raw: &[String]) -> Outcome {
     let args = match Args::parse(raw, MCP_FLAGS) {
         Ok(a) => a,
         Err(p) => return fail(&p, 2),
     };
-    match mcp_session(&args) {
+    let plan = match mcp_plan(&args) {
+        Ok(p) => p,
+        Err(p) => {
+            // To stderr: stdout is the MCP client's.
+            eprintln!("{}", json!({"error": p}));
+            return Outcome {
+                stdout: String::new(),
+                code: 2,
+            };
+        }
+    };
+    match mcp_session(&args, plan) {
         Ok(()) => Outcome {
             stdout: String::new(),
             code: 0,
@@ -415,17 +556,83 @@ pub fn mcp(raw: &[String]) -> Outcome {
     }
 }
 
-fn mcp_session(args: &Args) -> Result<(), Problem> {
-    let root = project_dir(args)?;
+/// The stdio session of the grant `token` is on the locked host at `url`. The grant is asked of
+/// the host first, so a token the host does not know, a host without grants and a host that
+/// does not answer end the process before anything goes to stdout.
+fn granted_session(rt: &tokio::runtime::Runtime, url: &str, token: &str) -> Result<(), Problem> {
+    let grant = crate::client::grant(url, token)?;
+    let role = grant["role"].as_str().unwrap_or("");
+    eprintln!(
+        "amoris mcp: using the host at {url} as its {role} grant '{}' (session {})",
+        grant["label"].as_str().unwrap_or(""),
+        grant["session"].as_str().unwrap_or("")
+    );
+    let backend: Arc<dyn Backend> = Arc::new(Granted {
+        url: Arc::from(url),
+        token: Arc::from(token),
+        seat: (role == "player")
+            .then(|| grant["seat"].as_str().map(str::to_owned))
+            .flatten(),
+    });
+    // Until the client closes stdin, or the bridge is asked to stop.
+    rt.block_on(async {
+        tokio::select! {
+            r = amoris_mcp::serve_stdio(backend) => r,
+            () = stopped() => Ok(()),
+        }
+    })
+}
+
+fn mcp_session(args: &Args, plan: McpPlan) -> Result<(), Problem> {
+    // With `--attach` the host is named, and the project argument is not needed.
+    let root = match plan.attach {
+        Some(_) => None,
+        None => Some(project_dir(args)?),
+    };
     let rt = runtime()?;
-    let running = (!args.has("own"))
-        .then(|| hostfile::read(&hostfile::path(&root)))
-        .flatten()
-        .filter(|f| crate::client::call_url(&f.url, "status", json!({})).is_ok());
-    let seat = args.value("seat").map(str::to_owned);
-    if let Some(f) = running {
-        eprintln!("amoris mcp: using the host at {}", f.url);
-        let bridge = Arc::new(Bridge::new(f.url, seat));
+    // The host to be a session of: the one `--attach` names, else the one serving the project.
+    let target = plan.attach.clone().or_else(|| {
+        root.as_ref()
+            .filter(|_| !plan.own)
+            .and_then(|root| hostfile::read(&hostfile::path(root)))
+            .map(|f| f.url)
+    });
+    if let Some(token) = &plan.token {
+        // A grant's session is a running host's: never a game of this process's own.
+        let Some(url) = target else {
+            return Err(Problem::new(
+                "host.not_found",
+                "A grant's token needs the host it is a grant of: no host serves this project \
+                 (.amoris/host.json); name one with --attach <url|port>.",
+                detail([]),
+            ));
+        };
+        let r = granted_session(&rt, &url, token);
+        rt.shutdown_timeout(Duration::from_secs(2));
+        return r;
+    }
+    let running = match target {
+        None => None,
+        Some(url) => match crate::client::call_url(&url, "status", json!({})) {
+            Ok(_) => Some(url),
+            // The host `--attach` names must answer: no game is started in its place.
+            Err(p) if plan.attach.is_some() => return Err(p),
+            // A locked host serving the project: a private game here would not be the world
+            // the client was pointed at.
+            Err(p) if p.code == "host.unauthorized" => {
+                eprintln!(
+                    "amoris mcp: the host at {url} is locked: give its grant's token with \
+                     --grant-token or AMORIS_TOKEN, or --own for a game of this process's own"
+                );
+                return Err(p);
+            }
+            Err(_) => None,
+        },
+    };
+    let seat = plan.seat;
+    if let Some(url) = running {
+        eprintln!("amoris mcp: using the host at {url}");
+        let bridge = Arc::new(Bridge::new(url, seat));
         let backend: Arc<dyn Backend> = Arc::new(Remote(bridge.clone()));
         // Until the client closes stdin, or the bridge is asked to stop; either way its session
         // on the host is closed before it leaves.
@@ -440,6 +647,11 @@ fn mcp_session(args: &Args) -> Result<(), Problem> {
         rt.shutdown_timeout(Duration::from_secs(2));
         return r;
     }
+    // Reached without `--attach` only: the project was named.
+    let root = match root {
+        Some(root) => root,
+        None => project_dir(args)?,
+    };
     let served = start(&root, args.number::<u64>("seed")?, None)?;
     eprintln!("amoris mcp: running {} in this process", root.display());
     let backend: Arc<dyn Backend> = match &seat {
@@ -463,7 +675,7 @@ mod tests {
     use amoris_server::{ServeOptions, Via};
     use serde_json::json;
 
-    use super::{Bridge, runtime, start};
+    use super::{Bridge, runtime, start, start_with};
     use crate::present::FEED_GAP;
 
     /// Each frame `/render` sends, with the time it was read and its tick.
@@ -528,6 +740,23 @@ mod tests {
         drop(rt);
         served.shutdown();
     }
+    /// A locked host starts no CDP endpoint (server.md 3.6): the debugger stays, behind the
+    /// host's `debug.*`, and says it serves none.
+    #[test]
+    fn a_host_started_without_cdp_serves_none() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../samples/sailing");
+        let served = start_with(&root, None, None, false).unwrap();
+        assert!(served.cdp.is_none());
+        let rt = runtime().unwrap();
+        let state = rt
+            .block_on(served.host.call(&Via::Api, "debug.state", json!({})))
+            .unwrap();
+        assert_eq!(state["cdp"], serde_json::Value::Null, "{state:#}");
+        assert_eq!(state["state"], json!("running"), "{state:#}");
+        drop(rt);
+        served.shutdown();
+    }
+
     /// `amoris mcp` attached to a host that started again holds a handle the new host never
     /// gave: its calls are refused with `host.session_unknown`, the bridge registers again and
     /// retries, and two calls that find the handle stale together open one session.

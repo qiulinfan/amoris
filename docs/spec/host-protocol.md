@@ -29,10 +29,21 @@ endpoint, which `amoris-debug` serves on its own port (9229). A request whose `H
 | `GET /wasm/<path>` | `web/viewport`: amoris-viewport's committed wasm-bindgen package (`pkg/`) and its glue `amoris_web.js` exporting `createViewport` (editor.md 5); `AMORIS_WEB_VIEWPORT` names another directory; 404 when none is found (`tools/build_viewport.sh` builds it) | editor viewport |
 | `POST /mcp` | MCP Streamable HTTP (rmcp) | agents |
 | `GET /json/list`, `GET /json/version`, `WS /devtools/game` | CDP discovery and endpoint (section 6), on `amoris-debug`'s own port (default 9229, where VS Code's `node` attach looks); the host may proxy them | Chrome DevTools, VS Code, the editor |
+| `GET /api/grant` | a locked host only: JSON `{role, seat, label, session}`, what the presented token is | a client that holds a grant's token |
+| `/mcp/<token>` | a locked host only: MCP Streamable HTTP as `/mcp`, for a client that cannot set a header | agents |
 
 `amoris mcp <project>` serves the same MCP tools over stdio instead (through the running host when
 there is one, as an agent session of that host: server.md 3.5). The `amoris` CLI is a client of the
 same `/api/call` (server.md 8).
+
+2026-11-12, a locked host (server.md 3.6). `amoris serve <project> --grants <file>` registers
+grants, each a token of 32 hex digits bound to one role: a seat's player, a checker or a developer.
+Every endpoint of the table then needs a registered token, `Authorization: Bearer <token>` (MCP also
+at `/mcp/<token>`), and the token decides what the request may be: a player's `/api/call` and MCP
+alone, as its seat; a checker's also the catalog and `/assets`, its calls the catalog's reads; a
+developer's everything. Such a host adds `"locked": true` to its readiness line and to
+`.amoris/host.json`, which never hold a token, and starts no CDP endpoint. A host started without
+grants serves as this file says everywhere else and reads no token.
 
 ## 2. Requests and responses
 
@@ -56,7 +67,10 @@ for a body that is not JSON).
 The body of `POST /api/call` may also say whose call it is: `"seat": "skipper"` makes it that seat's
 player's ([player.md](player.md) 7), `"handle": "<handle>"` the call of the agent session
 `agent.session.open` gave the handle to (server.md 3.5). Both together are refused
-(`request.conflict`); with neither it is the HTTP API's shared developer client.
+(`request.conflict`); with neither it is the HTTP API's shared developer client. A locked host
+answers `401 host.unauthorized`, or `403 permission.denied` for an endpoint the token's role may
+not open, before it reads the body; a call it admits is the grant's session's, and the body's
+`seat` and `handle` are a developer's to give (server.md 3.6).
 
 ## 3. Pushed events (`/ws`)
 

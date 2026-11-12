@@ -16,9 +16,10 @@ where they differ, this file is what runs and host-protocol.md has been updated.
 ## 1. Starting it
 
 ```sh
-amoris serve samples/sailing [--port 7878] [--editor DIR] [--seed S]
+amoris serve samples/sailing [--port 7878] [--editor DIR] [--seed S] [--grants FILE]
 amoris status                  # any client command, from the project's directory
 amoris mcp samples/sailing     # MCP over stdio (uses the running host if there is one)
+amoris mcp --attach <url|port> [--grant-token T]   # MCP over stdio as a session of that host
 ```
 
 - `amoris serve` loads the project, builds its game on the game thread (threads.md 3) in real time
@@ -41,6 +42,17 @@ amoris mcp samples/sailing     # MCP over stdio (uses the running host if there 
   and on SIGTERM.
 - Client commands (section 8) find the host through `--host <url|port>`, `AMORIS_HOST`, or the
   nearest `.amoris/host.json` at or above `--project <dir>` or the working directory.
+- 2026-11-12, grants (3.6). `amoris serve --grants FILE` locks the host: every request then needs
+  the token of one of the file's grants, the readiness line and `.amoris/host.json` say
+  `"locked": true` (and never a token; an unlocked host writes neither key), and the debugger's CDP
+  endpoint is not started. `amoris mcp --attach <url|port>` names the host to be a session of (the
+  project argument is then not needed, and no game of its own is ever started in the host's place);
+  with `--grant-token T`, or `AMORIS_TOKEN`, the session is that grant's: it asks the host what the
+  token is (`GET /api/grant`) before anything goes to stdout, makes every call with the token as
+  its bearer, and registers, holds and closes nothing. `--own` with `--attach` or `--grant-token`,
+  and `--seat` with a token (a grant fixes its seat), are usage errors (exit 2). `amoris mcp
+  <project>` without a token, when the project's host is locked, exits 1 with `host.unauthorized`
+  instead of running a private game.
 
 ## 2. Architecture
 
@@ -65,7 +77,9 @@ amoris mcp samples/sailing     # MCP over stdio (uses the running host if there 
   tests) shares one `Developer(n)`; each MCP session opens its own `Developer(n)`. A boundary
   applies the editor's commands before developers' (threads.md 5.2). 2026-11-12: one developer
   client per agent session (3.5), a bridge that registered itself included, so `amoris mcp`
-  attached to a host no longer shares the API's client; `agent.session.*` is answered here.
+  attached to a host no longer shares the API's client; `agent.session.*` is answered here. A
+  checker (3.6) is a developer source too: the game does not know the role, and the server keeps
+  its calls to the catalog's reads before they reach a client (`Via::Checker`).
 - Threads: the game thread; tokio's worker threads (`amoris-server`) for HTTP, WebSocket, MCP and
   the pushers. A game stuck in a tick (a breakpoint) leaves the server answering and pushing the
   last snapshot, and no call waits on it (3.4): reads answer from the last publication, others are
@@ -336,7 +350,8 @@ A row, as `agent.session.list` answers it, every key always present:
 ```
 
 `id` is `mcp-<n>` (one counter for every session, never given again) or `player:<seat>`; `role` is
-`developer` or `player`, with the `seat` a player's session plays; `label` is what the client calls
+`developer`, `player` or, for a checker's grant alone (3.6), `checker`, with the `seat` a player's
+session plays; `label` is what the client calls
 itself (an MCP client's `clientInfo` as `name version`, a bridge's `label`; at most 80 characters);
 `failed_calls` counts the calls answered with an error; times are ms since the Unix epoch. `live`
 says that a connection or a registration holds the session.
@@ -348,6 +363,7 @@ says that a connection or a registration holds the session.
 | `stdio` | `amoris mcp` running the game in its own process | at `initialize` (or the first call of a client that sent none) | when the client closes stdin | while open |
 | `bridge` | a process that registered with `agent.session.open {label?, seat?}`: `amoris mcp` attached to this host (1) | by the call, which answers the row and a `handle` | `agent.session.close` | until closed |
 | `api` | calls made as a seat with no session (`POST /api/call {seat}`), under the id `player:<seat>` | at the first such call | never | never |
+| `grant` | a grant of a locked host (3.6): every client that presents the grant's token, on `/api/call` and on MCP, under the grant's label | when the host locks, in the grants file's order, before it serves | never | for the host's life |
 
 The editor's socket and the HTTP API's shared `api` client (the CLI, plain `/api/call`) are not
 sessions: their calls are not in the stream, as before.
@@ -408,6 +424,112 @@ Not built: a bridge killed without closing (SIGKILL) stays live until `agent.ses
 {session}` or the host's end, and an MCP client that vanishes stays live for rmcp's 300 s; an
 agent that idles longer than that and calls again is a new `mcp-<n>`. The requests of two
 instances of one sessionless client program share a row.
+
+### 3.6 Grants: a locked host
+
+2026-11-12. Until then a client picked its own role: `/api/call` took `seat` from the body, or none
+and was a developer; `/mcp` was always a developer session; `/ws`, `/render` and `/assets` were open
+to every local process. That is right for one person and the agents they trust, and stays what a
+host without grants does. A benchmark's agent must not be able to become the harness that checks
+it, so a host can be started locked (amoris-server `grants.rs` and `http/locked.rs`;
+shared/contract/mcp.md 3.1 and 14).
+
+**The grants file.** `amoris serve <project> --grants <file>` reads, before the game starts:
+
+```json
+{"grants": [
+  {"token": "0123456789abcdef0123456789abcdef", "role": "player", "seat": "skipper", "label": "agent"},
+  {"token": "fedcba9876543210fedcba9876543210", "role": "checker", "label": "harness"},
+  {"token": "00112233445566778899aabbccddeeff", "role": "developer", "label": "setup"}
+]}
+```
+
+`token` is 32 hex digits in either case: 128 bits the process owner draws (the editor, a benchmark
+harness; `openssl rand -hex 16`). The engine draws none. `role` is `player`, `checker` or
+`developer`; `seat` is required for a player and refused for the others; `label` is the session's
+label in the list (default: the role's name; at most 80 characters). The file is strict: a field it
+does not take, mcp.md 3.1's `policy`, `profile`, `clock`, `decision` and `max_wall_ms` included
+(nothing enforces them yet), is refused, never accepted and ignored. Each of these ends the process
+with exit 1 and `host.grants_invalid {file, grant?, label?, field?, reason, problem?}`, no readiness
+line and no host file: a file that cannot be read or is not JSON; a field the file does not take
+(`problem` is the decoder's `request.unknown_field` with its suggestions); an empty list; a token
+that is not 32 hex digits or is given twice; a player without `seat`; a `seat` on a checker or a
+developer; two player grants on one seat (`problem` is `session.seat_taken`); a seat the game gives
+no player (`problem` is the game's refusal, `seat.unknown` for a seat it does not declare), found
+when the host locks; and a file that lies inside the project, whose files the host serves at
+`/assets/<path>`. No refusal, line, file, row, event or answer of the host says a token: the type
+that holds one cannot be serialized and prints nothing.
+
+**Admission.** On a locked host every route sits behind an admission, inside the loopback guard
+(5). A request presents a token as `Authorization: Bearer <token>` (the scheme in any case), or,
+for MCP, as the path `/mcp/<token>` (a client that cannot set a header); one that gives both must
+give the same. A token in the query or in the body is never read. The token is compared with every
+grant's, every byte of each, with no early exit and the match picked without a branch, so the time
+taken says nothing of a registered token. A missing token, a malformed one and one no grant has get
+the same answer, byte for byte, on every route: `401` with `WWW-Authenticate: Bearer` and
+`{"error": host.unauthorized}`. A route the grant's role may not open is `403 permission.denied
+{request, role, needs}`, where `request` is the method and the route (`GET /assets`), never the
+path.
+
+| Route | player | checker | developer |
+|---|---|---|---|
+| `POST /api/call` | its seat's `player.*`; a body `seat` other than its own is `seat.not_yours`, a body `handle` is `permission.denied` | the catalog's reads (below); a body `seat` or `handle` is `permission.denied` | everything, as its own session; a body `seat` or `handle` as on a host without grants (5) |
+| `/mcp`, `/mcp/<token>` | the `player` tool alone, with the player instructions | the developer's tools; the host refuses what is no read | every tool |
+| `GET /api/grant` | `{role, seat, label, session}`: what the token is, answered without the game | the same | the same |
+| `GET /api/catalog`, `GET /assets/<path>` | 403 | yes | yes |
+| `/ws`, `/render`, `/wasm/<path>`, the editor's files | 403 | 403 | yes |
+
+**One session per grant.** When the host locks (`Host::lock`, once, before it serves) it asks the
+game for each player grant's seat and then opens one row per grant, in the file's order: `mcp-1` to
+`mcp-k`, transport `grant`, live for the host's life, labelled as the file says (3.5). Every call
+made with a grant's token, over `/api/call` or over any number of MCP clients, is that row's call,
+recorded and pushed like every session's; what an MCP client calls itself changes nothing. A
+developer's and a checker's row has a developer client of its own, so the file's order fixes each
+one's `Developer(n)`: the same grants file gives the same sources, and so the same order of
+commands within a boundary, in every run. A grant's row is not closed by its id
+(`request.not_applicable`), and sessions opened later are numbered after the grants. Grants are
+host state like the sessions: nothing of them is in the world, its hash, a snapshot or a recording
+(amoris-app's `tests/locked_host.rs` compares the hash of a locked and an unlocked host).
+
+**The player.** Its calls are its seat's player's whatever the request says: sent from the seat's
+player source, the player tools alone (`seat_permits`, player.md 7), no omniscient view. The body's
+`seat` may repeat its own; another seat is refused with `seat.not_yours {path: "/seat", seat,
+yours}` before any seat is looked up, and a `seat` that is not a string with `request.wrong_type`.
+Other keys of the body (`role`, `token`) are not read.
+
+**The checker.** Its calls are the catalog entries of kind `read`, by name or alias; every other
+entry is `permission.denied {request, role: "checker", needs: "developer"}`, and a name the catalog
+does not have is `request.unknown_method` with the reads as its candidates. The refusal is made in
+`Host::call`, before the call reaches the game or a plug-in, and is recorded as the session's
+failed call. A checker reads everything a developer does, the marked omniscient view included
+(`player.observe {seat, omniscient: true}`); `player.session` answers `role: "developer"`, because
+the game sees a developer source. Two entries the catalog calls reads are withheld, because they
+do more than read: `scripts.check` compiles through `scripts.apply {dry_run}` (a request) and starts
+`tsc`, and `scripts.types` writes `.amoris/types/` and, in a project that has none, `tsconfig.json`
+in the project's root. By section 3's kinds both are requests; when the catalog says so the list
+(`CHECKER_WITHHELD`) goes. `capture` stays a checker's: it writes a PNG under `.amoris/captures/`
+and nothing of the world. `debug.eval` is kind `write` since this date (debugger.md 7), so a
+checker cannot evaluate in a paused frame. `/ws` and `/render` are a developer's only: a socket's
+requests go through the editor's client, which no gate of a checker's stands before, so a checker
+polls `events.since` and `agent.session.events`.
+
+**The debugger's CDP endpoint is off.** That endpoint (port 9229, debugger.md) has no admission,
+and any local process that reached it could evaluate in a paused frame, past every grant. A locked
+host does not start it; `debug.state` says `cdp: null`, and the debugger stays behind `debug.*`,
+which a developer's token reaches.
+
+**What the lock does not protect.** It guards the port, not the disk: a process of the same user can
+read the project's files and the grants file itself, and a token given as `--token` or
+`--grant-token` is on a command line, where `ps` shows it (`AMORIS_TOKEN` keeps it off the command
+line). Keeping an agent from those is its sandbox's job. The host still serves loopback only; a
+token is a role among local clients, not a remote identity. A token cannot be added, revoked or
+expired while the host runs.
+
+Not built: mcp.md 3.1's `policy`, `profile`, `decision`, `clock` and `max_wall_ms`; `--grant
+<json>` for a stdio session that runs its own game; `session.seat_taken` between sessions opened
+at run time; a tool list of the checker's own (it lists the developer's eleven tools, so mcp.md
+3.3's "a tool the session may not call is not listed" holds for players only); the browser editor
+on a locked host (a page load and a WebSocket set no `Authorization`); a push stream for checkers.
 
 ## 4. Pushes on `/ws`
 
@@ -471,10 +593,15 @@ numbers. The host draws no frame: the editor's profiler adds its own viewport's 
 | `GET /assets/<path>` | a project file; no `..`, no dot files, contained after resolving links |
 | `POST /mcp` | MCP Streamable HTTP (rmcp, sessions per client) |
 | `GET /*` | the editor's files; paths without an extension get `index.html` |
+| `GET /api/grant` | a locked host only (3.6): `{role, seat, label, session}`, what the presented token is |
+| `/mcp/<token>` | a locked host only: `/mcp` for a client that cannot set a header, the grant's token as the path's one segment |
+| any route of a locked host | `401 host.unauthorized` with `WWW-Authenticate: Bearer` without a registered token; `403 permission.denied` for a route the grant's role may not open (3.6) |
 
 Every request whose `Host` is not `127.0.0.1`, `localhost` or `::1` (any port), or whose `Origin`
 (when present) is not one of them, gets `403 host.forbidden` (DNS rebinding). The CDP endpoint is
-amoris-debug's own port (9229), not this one.
+amoris-debug's own port (9229), not this one. On a locked host the guard stands before the
+admission, so a registered token from another `Host` is refused like any request from there, and
+the CDP endpoint is not started (3.6).
 
 ## 6. The integrator's plug-ins
 
@@ -553,6 +680,16 @@ drops the handler and the calls in flight have answered: the client's `DELETE /m
 session 300 s without a request (rmcp's default, kept), the closed stream of a stdio session, or
 the host's end. No tool or action was added for the session methods; `tools/list` keeps its size.
 
+Grants (2026-11-12; 3.6). A locked host keeps one MCP service per grant (`amoris_mcp::HttpService`,
+each with rmcp sessions of its own, held by the router, never by the host) and hands a request to
+the service of the grant whose token it presented, on `/mcp` or `/mcp/<token>`, without the
+token's header or path. So an `Mcp-Session-Id` of one grant is no session under another's token.
+Every handler of a grant's service calls as the grant's one row: a hello opens nothing and the end
+of an MCP session closes nothing. A player grant's clients get the player instructions and list the
+`player` tool alone; a checker's list the developer's eleven tools, and the host refuses each call
+that is no read with `permission.denied` as a tool result. `amoris mcp --attach <url>
+--grant-token <token>` serves the same over stdio (1).
+
 ## 8. The CLI
 
 `amoris <command>` talks to the running host over `/api/call`; `amoris help` lists the commands and
@@ -598,6 +735,13 @@ check` with an error diagnostic (compile, load or `tsc`) or a `tsc` past its tim
 error exits 2. Every call waits 60 s at most (`--timeout <s>`, `AMORIS_TIMEOUT`), then exits 1 with
 `host.timeout`.
 
+A locked host (3.6; 2026-11-12): every command takes `--token <32 hex>`, else `AMORIS_TOKEN`, and
+sends it as `Authorization: Bearer`; the call is then the grant's (`amoris player observe --token
+<player's>` plays the grant's seat, with no `--seat`). Without one a command exits 1 with
+`host.unauthorized`. A token that is not 32 hex digits is a usage error (exit 2) whose message does
+not repeat it. `amoris help` needs no token: when the host refuses the catalog it prints the one
+this binary would serve. A host without grants reads no token, so the flag changes nothing there.
+
 ## 9. Error codes added
 
 | Code | When |
@@ -617,6 +761,9 @@ error exits 2. Every call waits 60 s at most (`--timeout <s>`, `AMORIS_TIMEOUT`)
 | `debug.paused` | the call needs the game thread, which the debugger holds (3.4); `queued: true` when it was sent before the stop (or is a `time.control` sent while held) and runs at the boundary after the held tick |
 | `debug.not_available`, `capture.not_available`, `render.not_available` | plug-in not installed |
 | `host.session_unknown` | a `handle` or a session id that names no open agent session: it was closed, or the host started again since it opened (3.5) |
+| `host.unauthorized` | a request to a locked host with no token, a malformed one or one no grant has: HTTP 401, the same answer on every route (3.6) |
+| `host.grants_invalid` | `amoris serve --grants`: the grants file, or one of its grants, is refused, `{file, grant?, label?, field?, reason, problem?}`; also `Host::lock` on a host that is locked or serves already (3.6) |
+| `host.not_locked` | raised by `amoris mcp --grant-token`, not by the host: the host it was pointed at was started without grants and takes no token (1) |
 
 ## 10. Verification
 
@@ -659,6 +806,26 @@ bridge holding a handle of another host run registers once and retries; `tests/p
 the four methods answer while the debugger holds the game. `editor/tools/agent-sessions.ts` drives
 the editor's Agent panel against a real host in headless Chrome (editor.md 9).
 
+Grants (3.6; 2026-11-12, macOS; Direct3D 12 and Windows not run): amoris-server's `grants` unit
+tests read the file strictly (each refusal, and that none says a token), find a token whatever
+differs (each of the 128 bits of a registered one flipped) and derive the checker's reads from a
+catalog; `http::locked`'s the tokens a request presents and the route table by role; `sessions`' a
+grant's row; `hostfile`'s that only a locked host writes `locked`. amoris-app's
+`tests/locked_host.rs` serves the sailing course locked with a player, a checker and a developer
+grant: more than 200 requests with no token, an unknown, cut, lengthened, non-hex or one-bit-off
+one, another scheme, a token in the query, the body, a cookie or the path, on every route, get one
+byte-identical 401, and none is anybody's call; a registered token from another `Host` is 403; the
+player's token is its seat whatever the body says (`seat`, `handle`, `role`, `token`), is refused
+every developer method and route, and over MCP by header and by path lists the `player` tool alone;
+the checker's reads answer and every catalog entry and alias of another kind, asked of the catalog
+itself, is refused, as are the two withheld reads, a body `seat` or `handle`, and the non-reads over
+MCP, with the world's tick, hash and writes unchanged; the developer's does everything and the three
+grants are the list's first rows; a host never locked answers with and without a token alike; a
+locked and an unlocked host hash the same world after the same edit and 60 ticks; and the built
+`amoris serve --grants`, its CLI with `--token` and `AMORIS_TOKEN`, and
+`amoris mcp --attach --grant-token` are driven end to end, the refused grants files included.
+`serve.rs` tests that a host started without CDP serves none.
+
 ## 11. Open
 
 1. A hierarchy component (`Parent`) for `world.tree`'s `children` and `depth`.
@@ -681,4 +848,7 @@ the editor's Agent panel against a real host in headless Chrome (editor.md 9).
    which program, with whose credentials. A dead bridge's row has no expiry (a lease belongs with
    the tokens and grants of shared/contract/mcp.md, which are not built: a handle admits nobody).
    An agent driven through the `amoris` CLI still calls as the shared `api` client and is no
-   session; the stream is not kept across host restarts.
+   session; the stream is not kept across host restarts. 2026-11-12: tokens now admit (3.6), on a
+   host started with `--grants`, and there an agent driven through the CLI with its token is its
+   grant's session. Still not built: leases for dead bridge rows, tokens minted, revoked or expired
+   at run time, the browser editor on a locked host, and serving beyond loopback.

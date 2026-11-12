@@ -108,7 +108,7 @@ export const CATALOG: CatalogCommand[] = [
   { name: "debug.continue", kind: "control", doc: "Resumes a paused game (and releases a game waiting for a debugger).", params: obj() },
   { name: "debug.step", kind: "control", doc: "Steps over, into or out of the current statement and returns where it stopped.", params: obj({ kind: { type: "string", enum: ["over", "into", "out"] }, timeout_ms: int("Wait up to this long for the step to stop (default 5000).") }, ["kind"]) },
   { name: "debug.state", kind: "read", doc: "Running or paused; when paused, why, the tick and system, and the frames with TypeScript locations and locals.", params: obj() },
-  { name: "debug.eval", kind: "read", doc: "Evaluates an expression in a frame of the paused game.", params: obj({ expr: str("A JavaScript expression; it sees the frame's arguments, locals and closure variables."), frame: int("The frame, as debug.state numbers them (0: where the game stopped).") }, ["expr"]) },
+  { name: "debug.eval", kind: "write", doc: "Evaluates an expression in a frame of the paused game.", params: obj({ expr: str("A JavaScript expression; it sees the frame's arguments, locals and closure variables."), frame: int("The frame, as debug.state numbers them (0: where the game stopped).") }, ["expr"]) },
   {
     name: "debug.set",
     kind: "control",

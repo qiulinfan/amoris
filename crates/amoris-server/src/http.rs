@@ -2,6 +2,8 @@
 //! (the integrator's feed), `/assets/<path>`, `/mcp` and the editor's static files, behind a guard
 //! that refuses any request whose `Host` or `Origin` is not loopback (DNS rebinding).
 
+mod locked;
+
 use std::path::{Path, PathBuf};
 
 use amoris_contract::{Problem, detail};
@@ -281,6 +283,11 @@ fn placeholder() -> Response {
 /// The server's routes over `host`; `port` is the bound port (for the MCP service's checks).
 pub fn router(host: Host, port: u16) -> Router {
     let _ = port;
+    // A host started with grants serves its routes behind their tokens (server.md 3.6).
+    if host.locked() {
+        return locked::router(host);
+    }
+    host.serves_unlocked();
     let mcp = amoris_mcp::http_service(std::sync::Arc::new(McpBackend::new(host.clone())));
     Router::new()
         .route("/api/catalog", get(catalog))

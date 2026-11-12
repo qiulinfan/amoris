@@ -454,6 +454,9 @@ beta 功能，测试已移除（4.4）。
   算的停止点（包括正则表达式触发的停止）与世界哈希相同；同一状态的剖析逐字节相同，原生与 wasm32 相
   同。原因：agent 要知道哪些 TS 行花掉步数（步数正是预算的单位），按毫秒采样的剖析不确定、无法复现，
   也无法与预算对照。为此新增补丁 P13（4.2）。
+- 2026-11-12：锁定的宿主（`amoris serve --grants`，5.1）不启动 CDP 端点。原因：该端点没有准入，任何
+  本地进程连上后都能在暂停帧里求值，绕过全部 grant。调试核心仍在，由持 developer token 的客户端经
+  `debug.*` 使用；代价是锁定的宿主上不能用 Chrome DevTools 或 VS Code 附加。未锁定的宿主不变。
 
 ### 4.4 渲染
 
@@ -1322,6 +1325,29 @@ ns，WebAssembly 23 到 30 ns，比 M5 慢 1.3 到 1.9 倍；blockcraft 的 256�
   被断点暂停的 Play；snapshot restore 默认保留 applied scripts，并将 restore/swap 记录进
   replay。构建注入 source-based EngineVersion；Windows host 的启动、compiler 与 check 工具
   修复一同采用。此阶段不改变图形后端、渲染算法或 LOD/neural assets；采用后的检查独立记录。
+
+2026-11-12：上面第二条里“尚不包含 HTTP token grants”的部分现已补上（规格见
+[server.md](spec/server.md) 3.6，契约记录见 `shared/contract/mcp.md`
+14）。`amoris serve <project> --grants <file>` 让宿主进入锁定状态：文件里每个 grant 是一个 token（32
+个十六进制字符，128 位）加一个角色，即某个 seat 的 player、checker 或 developer。锁定后每条路由都要
+求已登记的 token（`Authorization: Bearer`，MCP 另有 `/mcp/<token>`），缺失的与未知的 token 得到同一
+个 401，比较不随内容提前结束。player 的 token 不论请求里写什么都只是它那个 seat 的玩家；checker 只能
+调用命令目录里 kind 为 read 的方法；developer 不受限。原因：基准里被测的 agent 不能靠改一个请求字段
+变成检查它的 harness（mcp.md 3.1 的 “A client never chooses its grant”）。几点取舍：
+
+- token 由进程所有者（编辑器、基准的 harness）抽取并写进文件，引擎自己不抽取，因此不新增外部
+  crate，`Cargo.lock` 不变。
+- grant、token 与锁都是宿主状态，不进入世界、世界 hash、快照或录制。runtime 仍只看到命令来自哪个
+  `Developer(n)` 或 `Player(i)`：checker 在 runtime 眼里是 developer source，只读限制由宿主在调用到
+  达游戏之前执行。各 grant 的会话按文件顺序在锁定时打开，所以同一份文件在每次运行里给出相同的
+  source。
+- 不带 `--grants` 启动的宿主行为不变，也不读取任何 token。唯一对所有宿主可见的变化是 `debug.eval` 在
+  命令目录里的 kind 由 read 改为 write（经对象的赋值会写入 query column 并使运行 tainted，见 4.3 与
+  debugger.md 7），否则 checker 能在暂停帧里求值。
+- 这仍是 loopback 上本地客户端之间的角色限制，不是远程身份鉴权。锁保护的是端口而不是磁盘：同一用户
+  的进程仍可直接读项目文件与 grants 文件，隔离 agent 是其沙箱的事。
+- 未做：grant 的 `policy`、`profile`、`clock`、`decision`、`max_wall_ms`（文件里出现即拒绝，而不是
+  接受后忽略），运行期签发、吊销 token，浏览器编辑器连接锁定的宿主，loopback 以外的监听。
 
 2026-10-30（所有者决定："如果引擎没有足够的骨骼动画支持能力, 那正好补上. 参考ue和godot"，为第三人称
 战斗游戏 Thornkeep）：角色动画进入模拟。之前模拟只推进 `Animator` 的时间、从不加载片段，姿态只在渲染

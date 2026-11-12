@@ -6,7 +6,9 @@
 //! event or edit, defaults left out; `--json` prints the exact result. A refusal prints
 //! `code: message` (with its suggestions) to stderr and exits 1, as does a `scripts check` that finds
 //! an error; a usage error exits 2. Help comes from the catalog's docs and schemas, so it says what
-//! the host takes.
+//! the host takes. A host started with grants (`amoris serve --grants`, server.md 3.6) is locked:
+//! every command then carries a grant's token, `--token <32 hex>` or `AMORIS_TOKEN`, as
+//! `Authorization: Bearer`.
 
 use std::fmt::Write as _;
 use std::io::Read as _;
@@ -55,6 +57,7 @@ const FLAGS: &[Flag] = &[
     ("interval", true),
     ("top", true),
     ("folded", true),
+    ("token", true),
 ];
 
 /// How long the CLI waits for an answer unless `--timeout <s>` or `AMORIS_TIMEOUT` says otherwise
@@ -196,6 +199,41 @@ pub fn timeout_for(given: Option<f64>, method: &str, params: &Value) -> Duration
     Duration::from_secs_f64(base.max(asked))
 }
 
+/// A grant's token as the CLI is given it (docs/spec/server.md 3.6): `given` (`--token`,
+/// `--grant-token`), else a non-empty `AMORIS_TOKEN`. A token is 32 hex digits; anything else is a
+/// usage error that does not repeat what was given.
+pub fn token_of(given: Option<&str>) -> Result<Option<String>, Problem> {
+    token_from(given, std::env::var("AMORIS_TOKEN").ok())
+}
+
+/// [`token_of`] with the environment's `AMORIS_TOKEN` passed in.
+fn token_from(given: Option<&str>, env: Option<String>) -> Result<Option<String>, Problem> {
+    let (token, from) = match (given, env) {
+        (Some(t), _) => (t.to_owned(), "the token given"),
+        (None, Some(t)) if !t.is_empty() => (t, "AMORIS_TOKEN"),
+        (None, _) => return Ok(None),
+    };
+    if token.len() == 32 && token.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Ok(Some(token))
+    } else {
+        Err(bad(format!(
+            "{from} is not a grant's token: a token is 32 hex digits (--token, AMORIS_TOKEN)"
+        )))
+    }
+}
+
+/// `host.not_locked`: a token offered to a host that was started without grants.
+fn not_locked(url: &str) -> Problem {
+    Problem::new(
+        "host.not_locked",
+        format!(
+            "The host at {url} was started without grants (amoris serve <project> --grants \
+             <file>): it takes no token, and every local client is a developer."
+        ),
+        detail([("url", json!(url))]),
+    )
+}
+
 /// Calls `method` on the host at `url` (`POST /api/call`), waiting as [`timeout_for`] says.
 pub fn call_url(url: &str, method: &str, params: Value) -> Result<Value, Problem> {
     let timeout = timeout_for(None, method, &params);
@@ -221,11 +259,52 @@ pub fn call_url_as(
     seat: Option<&str>,
     timeout: Duration,
 ) -> Result<Value, Problem> {
+    call_url_granted(url, method, params, seat, None, timeout)
+}
+
+/// [`call_url_as`] carrying a grant's `token` when one is given (a locked host, server.md 3.6):
+/// the call is then the grant's, a seat's player's, a checker's or a developer's, whatever else
+/// the request says.
+pub fn call_url_granted(
+    url: &str,
+    method: &str,
+    params: Value,
+    seat: Option<&str>,
+    token: Option<&str>,
+    timeout: Duration,
+) -> Result<Value, Problem> {
     let mut body = json!({"id": 1, "method": method, "params": params});
     if let Some(s) = seat {
         body["seat"] = json!(s);
     }
-    post_call(url, method, &body, timeout)
+    post_call(url, method, &body, token, timeout)
+}
+
+/// The grant `token` is on the locked host at `url` (`GET /api/grant`): `{role, seat, label,
+/// session}`. A host that knows no such token says so (`host.unauthorized`); one that answers
+/// anything else was started without grants (`host.not_locked`).
+pub fn grant(url: &str, token: &str) -> Result<Value, Problem> {
+    let mut resp = agent(Duration::from_secs(10))
+        .get(format!("{url}/api/grant"))
+        .header("Authorization", format!("Bearer {token}"))
+        .call()
+        .map_err(|e| unreachable(url, &e.to_string()))?;
+    let text = resp
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| unreachable(url, &e.to_string()))?;
+    let Ok(v) = serde_json::from_str::<Value>(&text) else {
+        return Err(not_locked(url));
+    };
+    if let Some(e) = v.get("error") {
+        return Err(serde_json::from_value(e.clone())
+            .unwrap_or_else(|_| Problem::new("host.error", e.to_string(), detail([]))));
+    }
+    if v["role"].is_string() {
+        Ok(v)
+    } else {
+        Err(not_locked(url))
+    }
 }
 
 /// [`call_url_within`] made as the agent session `agent.session.open` gave `handle` to
@@ -239,21 +318,30 @@ pub fn call_url_in(
     timeout: Duration,
 ) -> Result<Value, Problem> {
     let body = json!({"id": 1, "method": method, "params": params, "handle": handle});
-    post_call(url, method, &body, timeout)
+    post_call(url, method, &body, None, timeout)
 }
 
-/// `POST /api/call` with `body`: the result, or the host's refusal.
-fn post_call(url: &str, method: &str, body: &Value, timeout: Duration) -> Result<Value, Problem> {
+/// `POST /api/call` with `body`, and a grant's `token` as its bearer when one is given: the
+/// result, or the host's refusal.
+fn post_call(
+    url: &str,
+    method: &str,
+    body: &Value,
+    token: Option<&str>,
+    timeout: Duration,
+) -> Result<Value, Problem> {
     let body = body.to_string();
     let failed = |e: ureq::Error| match e {
         ureq::Error::Timeout(_) => timed_out(url, method, timeout),
         e => unreachable(url, &e.to_string()),
     };
-    let mut resp = agent(timeout)
+    let mut req = agent(timeout)
         .post(format!("{url}/api/call"))
-        .content_type("application/json")
-        .send(&body)
-        .map_err(failed)?;
+        .content_type("application/json");
+    if let Some(t) = token {
+        req = req.header("Authorization", format!("Bearer {t}"));
+    }
+    let mut resp = req.send(&body).map_err(failed)?;
     let text = resp
         .body_mut()
         .with_config()
@@ -269,16 +357,37 @@ fn post_call(url: &str, method: &str, body: &Value, timeout: Duration) -> Result
     Ok(v.get("result").cloned().unwrap_or(Value::Null))
 }
 
-fn get_url(url: &str, path: &str) -> Result<Value, Problem> {
-    let mut resp = agent(Duration::from_secs(10))
-        .get(format!("{url}{path}"))
-        .call()
-        .map_err(|e| unreachable(url, &e.to_string()))?;
+/// `GET <path>` of the host at `url`, with a grant's `token` as its bearer when one is given: the
+/// JSON it answers. An answer that is an error object (a locked host's refusal of the token, or
+/// of none) is that problem, not the answer.
+fn get_url(url: &str, path: &str, token: Option<&str>) -> Result<Value, Problem> {
+    let mut req = agent(Duration::from_secs(10)).get(format!("{url}{path}"));
+    if let Some(t) = token {
+        req = req.header("Authorization", format!("Bearer {t}"));
+    }
+    let mut resp = req.call().map_err(|e| unreachable(url, &e.to_string()))?;
     let text = resp
         .body_mut()
         .read_to_string()
         .map_err(|e| unreachable(url, &e.to_string()))?;
-    serde_json::from_str(&text).map_err(|e| unreachable(url, &e.to_string()))
+    let v: Value = serde_json::from_str(&text).map_err(|e| unreachable(url, &e.to_string()))?;
+    if let Some(e) = v.get("error") {
+        return Err(serde_json::from_value(e.clone())
+            .unwrap_or_else(|_| Problem::new("host.error", e.to_string(), detail([]))));
+    }
+    Ok(v)
+}
+
+/// A host's URL from what `--host`, `AMORIS_HOST` or `amoris mcp --attach` name: a port
+/// (`7878`), an address (`127.0.0.1:7878`) or a URL.
+pub fn host_of(text: &str) -> String {
+    if text.chars().all(|c| c.is_ascii_digit()) {
+        format!("http://127.0.0.1:{text}")
+    } else if text.contains("://") {
+        text.trim_end_matches('/').to_owned()
+    } else {
+        format!("http://{text}")
+    }
 }
 
 /// The host's URL: `--host`, `AMORIS_HOST`, or the project's `.amoris/host.json`.
@@ -288,13 +397,7 @@ fn host_url(args: &Args) -> Result<String, Problem> {
         .map(str::to_owned)
         .or_else(|| std::env::var("AMORIS_HOST").ok());
     if let Some(h) = given {
-        return Ok(if h.chars().all(|c| c.is_ascii_digit()) {
-            format!("http://127.0.0.1:{h}")
-        } else if h.contains("://") {
-            h.trim_end_matches('/').to_owned()
-        } else {
-            format!("http://{h}")
-        });
+        return Ok(host_of(&h));
     }
     let dir = match args.value("project") {
         Some(p) => PathBuf::from(p),
@@ -2101,9 +2204,12 @@ impl amoris_server::DebugHub for OfflineDebugger {
     }
 }
 
+/// The catalog of the running host, or the one this binary would serve when no host answers
+/// with it (none runs, or a locked one refuses the token given, or none was given).
 fn catalog(args: &Args) -> Value {
+    let token = token_of(args.value("token")).ok().flatten();
     if let Ok(url) = host_url(args)
-        && let Ok(c) = get_url(&url, "/api/catalog")
+        && let Ok(c) = get_url(&url, "/api/catalog", token.as_deref())
     {
         return c;
     }
@@ -2125,12 +2231,14 @@ fn help(args: &Args) -> String {
     if topic.is_empty() {
         out.push_str(
             "amoris: a client of a running host (amoris serve <project>), found through \
-             --host, AMORIS_HOST or .amoris/host.json. --json prints exact JSON; --timeout <s> (default 60, AMORIS_TIMEOUT) bounds the wait.\n\n",
+             --host, AMORIS_HOST or .amoris/host.json. --json prints exact JSON; --timeout <s> (default 60, AMORIS_TIMEOUT) bounds the wait. \
+             A host started with grants is locked: --token <32 hex> or AMORIS_TOKEN carries a grant's token.\n\n",
         );
         for (_, _, u) in COMMANDS {
             let _ = writeln!(out, "  {u}");
         }
-        out.push_str("\nHost commands: amoris serve <project> [--port 7878], amoris mcp <project>; \
+        out.push_str("\nHost commands: amoris serve <project> [--port 7878] [--grants <file>], \
+                      amoris mcp <project> | --attach <url|port> [--grant-token <token>]; \
                       also amoris run|check|replay|hashes|version.\nMethods (amoris call <method> '<json>'; \
                       amoris help <method>):\n");
         for c in catalog(args).as_array().into_iter().flatten() {
@@ -2231,6 +2339,10 @@ pub fn run(cmd: &str, raw: &[String]) -> Outcome {
         Ok(r) => r,
         Err(p) => return failed(&p, 2),
     };
+    let token = match token_of(args.value("token")) {
+        Ok(t) => t,
+        Err(p) => return failed(&p, 2),
+    };
     let url = match host_url(&args) {
         Ok(u) => u,
         Err(p) => return failed(&p, 1),
@@ -2247,7 +2359,7 @@ pub fn run(cmd: &str, raw: &[String]) -> Outcome {
     {
         return failed(&p, 2);
     }
-    match call_url_as(&url, &method, params, seat, timeout) {
+    match call_url_granted(&url, &method, params, seat, token.as_deref(), timeout) {
         Ok(v) => {
             // `amoris scripts profile --folded <file>`: the folded stacks go to the file.
             if method == "scripts.profile"
@@ -2293,6 +2405,49 @@ mod tests {
     }
 
     /// The debugger's short forms (docs/bench/debug-eval.md, finding 4).
+    /// A grant's token comes from the flag before the environment, and one that is no token is
+    /// a usage error that does not say it.
+    #[test]
+    fn a_token_is_the_flags_then_the_environments() {
+        let (flag, env) = (
+            "0123456789abcdef0123456789ABCDEF",
+            "fedcba9876543210fedcba9876543210",
+        );
+        let from =
+            |given: Option<&str>, env: Option<&str>| token_from(given, env.map(str::to_owned));
+        assert_eq!(from(Some(flag), Some(env)).unwrap().as_deref(), Some(flag));
+        assert_eq!(from(None, Some(env)).unwrap().as_deref(), Some(env));
+        assert_eq!(from(None, None).unwrap(), None);
+        assert_eq!(from(None, Some("")).unwrap(), None);
+        let short = &flag[..31];
+        let long = format!("{flag}0");
+        let not_hex = format!("{}g", &flag[..31]);
+        let not_ascii = format!("{}é", &flag[..30]);
+        for bad in [
+            short,
+            long.as_str(),
+            not_hex.as_str(),
+            not_ascii.as_str(),
+            "",
+            "x",
+        ] {
+            for p in [
+                from(Some(bad), None).unwrap_err(),
+                from(Some(bad), Some(env)).unwrap_err(),
+                from(None, Some(bad).filter(|b| !b.is_empty()).or(Some("y"))).unwrap_err(),
+            ] {
+                assert_eq!(p.code, "check.usage", "{p:#?}");
+                let said = format!("{p:?}");
+                assert!(bad.len() < 2 || !said.contains(bad), "{said}");
+                assert!(!said.contains(env), "{said}");
+            }
+        }
+        // The form `--host` and `amoris mcp --attach` take.
+        assert_eq!(host_of("7878"), "http://127.0.0.1:7878");
+        assert_eq!(host_of("127.0.0.1:7950"), "http://127.0.0.1:7950");
+        assert_eq!(host_of("http://localhost:7950/"), "http://localhost:7950");
+    }
+
     #[test]
     fn debug_short_forms() {
         assert_eq!(

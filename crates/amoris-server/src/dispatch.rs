@@ -40,6 +40,10 @@ pub enum Via {
     /// are listed under (`mcp-<n>`, or `player:<seat>` for calls made with no session): calls
     /// made as that seat, which send the player tools alone ([`seat_permits`]).
     Player(Arc<Mutex<GameClient>>, String),
+    /// A checker's developer client (a grant of a locked host, `grants.rs`) and the session its
+    /// calls are listed under: the game sees a developer source, and the host lets through the
+    /// catalog's reads alone (`Host::checker_permits`).
+    Checker(Arc<Mutex<GameClient>>, String),
 }
 
 /// Whether a call made as `seat`'s player may name `method`: the player tools alone. Every other
@@ -89,7 +93,7 @@ impl Host {
         match via {
             Via::Editor => self.0.editor.clone(),
             Via::Api => self.0.api.clone(),
-            Via::Session(c, _) | Via::Player(c, _) => c.clone(),
+            Via::Session(c, _) | Via::Player(c, _) | Via::Checker(c, _) => c.clone(),
         }
     }
 
@@ -215,7 +219,9 @@ impl Host {
     /// One catalog call: answered here or by the game, with the pushes it causes.
     pub async fn call(&self, via: &Via, method: &str, params: Value) -> Result<Value, Problem> {
         let session = match via {
-            Via::Session(_, name) | Via::Player(_, name) => Some(name.clone()),
+            Via::Session(_, name) | Via::Player(_, name) | Via::Checker(_, name) => {
+                Some(name.clone())
+            }
             _ => None,
         };
         if let Some(session) = &session {
@@ -229,6 +235,8 @@ impl Host {
         }
         let permitted = match via {
             Via::Player(..) => seat_permits(method),
+            // Refused here, before `respond`: nothing but a read reaches the game or a plug-in.
+            Via::Checker(..) => self.checker_permits(method),
             _ => Ok(()),
         };
         let r = match permitted {

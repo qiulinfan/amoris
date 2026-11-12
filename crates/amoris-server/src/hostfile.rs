@@ -14,6 +14,10 @@ pub struct HostFile {
     pub pid: u32,
     /// The project's directory.
     pub project: String,
+    /// The host was started with grants (`amoris serve --grants`, server.md 3.6): every request
+    /// needs a registered token. The file never holds one. Absent when the host is not locked.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub locked: bool,
 }
 
 /// Where the file of `project` is.
@@ -23,11 +27,17 @@ pub fn path(project: &Path) -> PathBuf {
 
 /// Writes the file for a host on `port`.
 pub fn write(project: &Path, port: u16) -> std::io::Result<HostFile> {
+    write_as(project, port, false)
+}
+
+/// [`write`], saying whether the host is locked.
+pub fn write_as(project: &Path, port: u16, locked: bool) -> std::io::Result<HostFile> {
     let f = HostFile {
         url: format!("http://127.0.0.1:{port}"),
         port,
         pid: std::process::id(),
         project: project.display().to_string(),
+        locked,
     };
     let p = path(project);
     if let Some(dir) = p.parent() {
@@ -175,6 +185,36 @@ mod tests {
         assert_eq!(plain_str(&long), long);
         let fits = format!(r"\\?\C:\{}", "a".repeat(250));
         assert_eq!(plain_str(&fits), &fits[4..]);
+    }
+
+    /// A host that is not locked writes the file it always wrote; a locked one adds `locked`,
+    /// and a file written before the key existed reads as not locked.
+    #[test]
+    fn the_file_says_locked_only_for_a_locked_host() {
+        let dir = std::env::temp_dir().join(format!("amoris-hostfile-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let open = write(&dir, 7878).unwrap();
+        assert!(!open.locked);
+        let text = std::fs::read_to_string(path(&dir)).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(keys.len(), 4, "{text}");
+        for k in ["url", "port", "pid", "project"] {
+            assert!(keys.contains(&k), "{text}");
+        }
+        assert_eq!(read(&path(&dir)), Some(open));
+        let locked = write_as(&dir, 7879, true).unwrap();
+        assert!(locked.locked);
+        let text = std::fs::read_to_string(path(&dir)).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["locked"], serde_json::json!(true), "{text}");
+        assert_eq!(v.as_object().unwrap().len(), 5, "{text}");
+        assert_eq!(read(&path(&dir)), Some(locked));
+        // A file of a host built before the key.
+        let old = r#"{"url": "http://127.0.0.1:7878", "port": 7878, "pid": 1, "project": "/p"}"#;
+        std::fs::write(path(&dir), old).unwrap();
+        assert_eq!(read(&path(&dir)).map(|f| f.locked), Some(false));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// On Windows `canonicalize` gives a verbatim path, which the host reports without the prefix;
