@@ -1,0 +1,10 @@
+# Layers (docs/spec/animation.md 3a): a figure whose graph adds a lean under a parameter weight and
+# a mask, plays an additive flinch montage taken from another clip's pose, waves an arm on an
+# override layer at half weight and turns its head by IK after the layers, through the charter's
+# checks.
+name = "layers"
+rate = 60
+seed = 1
+
+[animation]
+graphs = ["anim/figure.anim.json"]

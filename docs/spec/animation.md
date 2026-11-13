@@ -104,7 +104,9 @@ bone masks, layers of state machines and montages:
 - **Layers** blend in order. The first is the base and must be a state machine. A later layer is a
   state machine or a **slot**, which plays montages. A layer's `mask` limits it to joint subtrees,
   each with a weight (Unreal's layered blend per bone with blend depth 0; Godot's filters); without
-  one, it covers the whole body. A layer's weight fades in and out with what it plays.
+  one, it covers the whole body. A layer's weight fades in and out with what it plays. A later
+  layer may also have a weight of its own and may add its clips' change to the pose under it
+  instead of replacing it (section 3a).
 - **Montages** (Unreal's montages, Godot's `OneShot` with sections) play in a slot: sections in
   order, each a clip, `next` naming the section after it (none: the montage ends and fades out). A
   script plays one (`ctx.anim.play`), may change the section that follows (`ctx.anim.next`, combos'
@@ -119,6 +121,86 @@ bone masks, layers of state machines and montages:
   the body instead of drawing them (Unreal's root motion from montages only, Godot's root motion
   track), weighted like the pose. A `Walker` with root motion moves by it for that tick, through
   its collision, in place of its controls' motion (section 6).
+
+## 3a. Layer weights, additive layers and masks
+
+- Status: Proposed (2026-11-12, gap A3). References: Unreal's Apply Additive and Layered blend per
+  bone with additive animations (local-space additive; the base pose a sequence's first frame, a
+  chosen frame or another animation's frame; per-bone blend weights, a node's alpha from a
+  variable), Godot 4's `AnimationNodeAdd2` and `Blend2` with filters.
+
+Section 3's layers override the pose under them, by masks whose weights cover joint subtrees. This
+adds a layer's own weight, additive layers, and mask entries that cover one joint alone:
+
+```json
+"params": {"speed": 0, "lean": 0, "flinch": 1},
+"masks": {
+  "upper": [{"joint": "spine", "weight": 0.5}, {"joint": "chest"}, {"joint": "head", "weight": 0}],
+  "chest": [{"joint": "chest", "descendants": false}]
+},
+"layers": [
+  {"name": "base", "start": "move", "states": {"move": {"blend1d": {"param": "speed", ...}}}},
+  {"name": "lean", "blend": "additive", "mask": "upper", "weight": "lean",
+   "start": "lean", "states": {"lean": {"clip": "lean_fwd"}}},
+  {"name": "react", "blend": "additive", "reference": {"clip": "idle", "at": 0},
+   "weight": "flinch", "slot": "react"}
+]
+```
+
+**Layer weights.** A layer after the first may have a `weight`: a number or the name of a graph
+parameter (the form of an IK node's weight, section 6a), clamped to 0..1, default 1. It multiplies
+all the layer does: each joint's mask weight, a slot's fades and the root motion the layer hands. A
+layer of weight 0 still advances its states and montages and emits their notifies; only its pose is
+left out. Scripts set a parameter weight with `ctx.anim.set` (no new API); a weight steps to what
+it is set to, and a script fades it by setting it each tick.
+
+**Additive layers.** `"blend": "additive"` (default `"override"`) makes a later layer, a state
+machine or a slot, add its clips' change from a reference pose to the pose under it instead of
+replacing it: a lean on whatever the legs do, a breath, a flinch over an attack. glTF clips are
+absolute, so the change is computed. When the graph binds, every clip the layer plays gets its
+reference pose, sampled once by the same code that samples clips each tick: by default the clip's
+own pose at its start; with `"reference": {"at": s}`, its own pose `s` seconds in (held at its
+end); with `"reference": {"clip": "idle", "at": s}`, another clip's pose, the one reference of
+every clip of the layer (that clip binds like the graph's others). Each tick a clip's sample (its
+root held in place when the clip hands root motion, as in section 3) becomes its change from its
+reference: per joint the translation's difference, the rotation from the reference's to its own
+(`q * conj(q_ref)`, normalized) and the scale's ratio (1 where the reference's is 0); per morph
+weight the difference (section 5a). Blend spaces, a state's fade and a montage's fade from an
+interrupted one mix changes as they mix poses. The change goes onto the pose under the layer by each
+joint's `u`, its mask weight times the layer's weight (times a slot's fade): the translation
+`t + dt * u`; the rotation `nlerp(identity, dq, u) * q`, normalized (Unreal's local-space additive:
+the change turns the joint in its parent's frame, before its own rotation); the scale
+`s * (1 + (ds - 1) * u)`; a morph weight `w + dw * u`. A joint whose `u` is 0, or whose change is
+none, keeps its bits, and so does a weight whose difference is 0: a clip at its reference pose, or
+at weight 0, leaves the pose exactly as it was. A mask weight above 1 exaggerates an additive
+layer's change (an override layer takes its whole pose at 1 or more, as before). An additive layer
+hands no root motion. The first layer is the base: it has no weight and adds to nothing. Like the
+rest of the evaluator, all of it is `f32` additions, subtractions, multiplications, divisions and
+square roots in a fixed order (section 2).
+
+**Masks.** A mask's entry is `{"joint", "weight" (default 1), "descendants" (default true)}`. The
+joints are visited parents first. A joint an entry names (the last entry naming it) takes the
+entry's weight and hands its children that weight when `descendants` is true, else what it was
+handed itself; a joint no entry names takes what its parent hands it, or 0. So an entry of weight 0
+cuts a subtree out of a mask (the head out of the upper body), and one without descendants weighs
+one joint alone (the chest leans while the head keeps what the spine hands it). Joints the skeleton
+lacks are ignored. Override and additive layers take masks alike; a node holding a mesh with
+targets weighs its morph weights by its own mask weight (section 5a).
+
+**Order with IK.** The layers, override and additive in their file order, make the graph's pose in
+`anim.graph`; the IK nodes (section 6a) bend that pose afterwards, in `anim.ik`, so a foot set on
+the ground or a hand on its target stays there whatever the layers added.
+
+**Off by default.** A graph without layer weights, additive layers or entries without descendants
+evaluates as before, bit for bit: a weight of 1 multiplies exactly, and masks resolve to the same
+weights. No persisted type changes (a parameter weight lives in `AnimState`'s parameters), no
+component is added, and the render feed's format does not change.
+
+**Follow-ups** (not built): sync groups across layers (an additive layer's clip following the base
+layer's phase); blend trees inside a state (a blend of poses as one node) rather than layers;
+mesh-space additive (the change in the model's space); additive settings per clip in `clips`; a
+weight under which a layer's notifies are left out; layer weights smoothed by the engine; a mask
+entry's blend depth (its weight fading over n levels of descendants).
 
 ## 4. Components, systems and the script API
 
@@ -263,7 +345,8 @@ as before, and meshes without targets are drawn as before, pixel for pixel.
   (`TwoBoneIK3D` with a pole, `LookAtModifier3D` with angle limits, a modifier's influence); Andy
   Nicholas's soft IK for the reach near full extension.
 
-A graph's pose is bent after its layers by an ordered list of IK nodes, data in the graph file. A
+A graph's pose is bent after its layers (override and additive alike, section 3a) by an ordered
+list of IK nodes, data in the graph file. A
 graph without `ik` (every graph made before this) is evaluated as before, bit for bit: `anim.ik`
 leaves its pose, its sockets and its state alone, and no entity of it gets an `AnimIk`.
 
@@ -416,11 +499,24 @@ the game's rules (steering), not in the grid.
   turns no further than its limit, a restore runs on to the same poses, and the poses' digest is the
   recorded one; the fixture's `check.toml` runs determinism, forks and reloads. The existing
   samples' and fixtures' checks (thornkeep's graphs, the morph fixture's digest) are unchanged.
+- Layers (section 3a; `tests/fixtures/scenes/layers`, generated by its `gen_layers.py`):
+  amoris-assets `anim::graph`: a clip at its reference pose and an additive layer at weight 0 leave
+  the pose's bits as they were; a full-weight change of the reference turns, moves and scales a
+  joint as the clip does and half a weight goes half way; mask weights with and without
+  descendants and an entry of weight 0 cut where specified; the graph file's weights, blends and
+  references parse and refuse what is wrong. amoris-assets' `tests/layers.rs`: thornkeep's five
+  graphs keep their recorded digests over a fixed sequence of parameters and montages (graphs
+  without the new fields evaluate as before); the fixture's layered sequence (an additive lean
+  under a parameter weight and a mask, an additive flinch montage against another clip's
+  reference, additive morph weights, an override layer at half weight) has the recorded digest in
+  debug and release builds. The fixture's `check.toml` runs determinism, forks, replays and
+  reloads, its script setting the layers' weights through `ctx.anim.set`.
 
 ## 10. Limits
 
-- Inverse kinematics is two-bone, look-at and feet only (section 6a's follow-ups); no additive
-  layers; no physics-driven ragdolls; no animation compression. Nav cells are a grid, not polygons.
+- Inverse kinematics is two-bone, look-at and feet only (section 6a's follow-ups); additive layers
+  are local-space, their reference set per layer, with no sync groups (section 3a's follow-ups); no
+  physics-driven ragdolls; no animation compression. Nav cells are a grid, not polygons.
 - Morph targets: at most 16 active per part and frame; no sparse storage on the GPU (every target
   keeps an offset for every vertex); overrides need a graph; the ray-traced shadows and reflections
   see the morphed vertices as they see skinned ones.

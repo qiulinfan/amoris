@@ -1,0 +1,26 @@
+{
+  "format": "amoris-animgraph", "version": 1,
+  "skeleton": "models/figure.gltf",
+  "params": {"speed": 0, "lean": 0, "flinch": 1},
+  "sockets": ["chest", "head", "hand_r"],
+  "masks": {
+    "upper": [{"joint": "spine", "weight": 0.5}, {"joint": "chest"},
+              {"joint": "upper_arm_l", "weight": 0}, {"joint": "upper_arm_r", "weight": 0}],
+    "arm_r": [{"joint": "upper_arm_r"}, {"joint": "hand_r", "weight": 0.5, "descendants": false}]
+  },
+  "layers": [
+    {"name": "base", "start": "move", "states": {
+      "move": {"blend1d": {"param": "speed", "points": [[0, "idle"], [1.2, "walk"]]}}}},
+    {"name": "wave", "mask": "arm_r", "weight": 0.5, "states": {"wave": {"clip": "wave"}}},
+    {"name": "lean", "blend": "additive", "mask": "upper", "weight": "lean",
+     "states": {"lean": {"clip": "lean", "loop": false}}},
+    {"name": "react", "blend": "additive", "reference": {"clip": "idle", "at": 0},
+     "weight": "flinch", "slot": "react"}
+  ],
+  "montages": {
+    "flinch": {"slot": "react", "fade_in": 0.05, "fade_out": 0.2, "sections": [{"name": "a", "clip": "flinch"}]}
+  },
+  "ik": [
+    {"name": "look", "look_at": {"joints": ["neck", "head"], "limit_deg": 60}}
+  ]
+}

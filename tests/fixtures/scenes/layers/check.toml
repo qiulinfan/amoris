@@ -1,0 +1,13 @@
+# Determinism, fork, replay and reload of a graph's override and additive layers, their weights
+# set by a script through graph parameters, an additive montage and IK after the layers
+# (docs/spec/animation.md 3a).
+[run]
+ticks = 300
+seeds = [1, 2]
+
+[fork]
+at = [100, 190]
+ticks = 40
+
+[reload]
+at = [100, 190]

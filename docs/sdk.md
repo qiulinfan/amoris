@@ -89,7 +89,8 @@ colours) and the `Environment` (sky colour, ambient, fog, exposure, bloom); the 
 paths a `Model` was built with are part of those fields too.
 
 Characters (docs/spec/animation.md): a body's `AnimGraph` names its graph and is driven through
-`ctx.anim` (parameters, montages and their sections, its notifies' events, socket poses, and
+`ctx.anim` (parameters, among them the weights of a graph's layers, additive or not, when the
+graph names them, montages and their sections, its notifies' events, socket poses, and
 the weights of its model's morph targets, read and held by name with `weight` and `setWeight`,
 and the goals of its graph's IK nodes, a hand's or a head's target in the world or a feet node's
 weight, set and read with `setIk` and `ik`); an

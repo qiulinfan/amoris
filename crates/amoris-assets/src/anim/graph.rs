@@ -1,7 +1,8 @@
 //! Animation graphs (animation.md 3): a file's parameters, clips' metadata, masks, layers of state
-//! machines and slots, and montages; a graph bound to its skeleton and clips (`Rig`); and one tick
-//! of a graph's state (`step`): transitions and fades, blend spaces, montages and their sections,
-//! notifies, root motion and the pose.
+//! machines and slots, override or additive, and montages; a graph bound to its skeleton and clips
+//! (`Rig`, with its additive layers' reference poses); and one tick of a graph's state (`step`):
+//! transitions and fades, blend spaces, montages and their sections, layer weights, notifies, root
+//! motion and the pose.
 
 use std::collections::BTreeMap;
 
@@ -10,8 +11,8 @@ use serde_json::Value;
 
 use amoris_sim::math::{max, min};
 
-use super::clip::{Bound, ClipSet, Skeleton};
-use super::ik::{IkDef, IkNode};
+use super::clip::{Bound, Clip, ClipSet, Skeleton};
+use super::ik::{IkDef, IkNode, IkWeight};
 use super::math::{self, V3, Xform};
 use super::state::{AnimParam, AnimState, LayerState, SlotState};
 
@@ -66,11 +67,44 @@ pub enum LayerKind {
     Slot(String),
 }
 
+/// What an additive layer's clips are taken relative to (animation.md 3a).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Reference {
+    /// Another clip, the one reference of every clip the layer plays; none: each clip's own pose.
+    pub clip: Option<String>,
+    /// Seconds into that clip (held at its ends).
+    pub at: f64,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LayerDef {
     pub name: String,
     pub mask: Option<String>,
     pub kind: LayerKind,
+    /// The layer's weight, a number or a graph parameter, clamped to 0..1 (animation.md 3a).
+    #[serde(default = "full_weight", skip_serializing_if = "is_full_weight")]
+    pub weight: IkWeight,
+    /// An additive layer's reference; none for a layer that overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub additive: Option<Reference>,
+}
+
+fn full_weight() -> IkWeight {
+    IkWeight::Value(1.0)
+}
+
+fn is_full_weight(w: &IkWeight) -> bool {
+    *w == IkWeight::Value(1.0)
+}
+
+/// One entry of a bone mask: a joint, its weight, and whether its descendants take that weight.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MaskEntry {
+    pub joint: String,
+    pub weight: f32,
+    /// True (the default): the joint's subtree takes the weight, down to a joint another entry
+    /// names; false: the joint alone, its children taking what it was handed.
+    pub descendants: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -117,7 +151,7 @@ pub struct GraphDef {
     pub root: String,
     pub params: Vec<(String, f64)>,
     pub clips: Vec<ClipMeta>,
-    pub masks: Vec<(String, Vec<(String, f32)>)>,
+    pub masks: Vec<(String, Vec<MaskEntry>)>,
     pub layers: Vec<LayerDef>,
     pub montages: Vec<MontageDef>,
     /// Joints whose place the simulation keeps each tick (`AnimState.sockets`).
@@ -250,9 +284,20 @@ impl GraphDef {
                     let e = e
                         .as_object()
                         .ok_or(format!("an entry of mask {name} must be an object"))?;
-                    let j = text(e.get("joint").unwrap_or(&Value::Null), "a mask's joint")?;
-                    let w = opt_num(e, "weight", 1.0, "a mask entry")? as f32;
-                    joints.push((j, w));
+                    let joint = text(e.get("joint").unwrap_or(&Value::Null), "a mask's joint")?;
+                    let weight = opt_num(e, "weight", 1.0, "a mask entry")? as f32;
+                    let descendants = match e.get("descendants") {
+                        None => true,
+                        Some(Value::Bool(b)) => *b,
+                        Some(_) => {
+                            return Err(format!("mask {name}'s descendants must be a boolean"));
+                        }
+                    };
+                    joints.push(MaskEntry {
+                        joint,
+                        weight,
+                        descendants,
+                    });
                 }
                 g.masks.push((name.clone(), joints));
             }
@@ -284,7 +329,19 @@ impl GraphDef {
             } else {
                 parse_machine(&name, l)?
             };
-            g.layers.push(LayerDef { name, mask, kind });
+            let (weight, additive) = parse_blend(&name, l, &g.params)?;
+            if i == 0 && (additive.is_some() || l.contains_key("weight")) {
+                return Err(
+                    "the first layer is the base: it has no weight and adds to nothing".into(),
+                );
+            }
+            g.layers.push(LayerDef {
+                name,
+                mask,
+                kind,
+                weight,
+                additive,
+            });
         }
         if g.layers.is_empty() {
             return Err("a graph needs at least one layer".into());
@@ -372,8 +429,104 @@ impl GraphDef {
         for m in &self.montages {
             m.sections.iter().for_each(|s| add(&s.clip));
         }
+        for l in &self.layers {
+            if let Some(Reference { clip: Some(c), .. }) = &l.additive {
+                add(c);
+            }
+        }
         out
     }
+
+    /// The clips layer `layer` plays: its states' or its slot's montages'.
+    fn layer_clips(&self, layer: usize) -> Vec<&str> {
+        let mut all: Vec<&str> = Vec::new();
+        match &self.layers[layer].kind {
+            LayerKind::Machine { states, .. } => {
+                for s in states {
+                    match &s.motion {
+                        Motion::Clip(c) => all.push(c),
+                        Motion::Blend1 { points, .. } => all.extend(points.iter().map(|p| &*p.1)),
+                        Motion::Blend2 { points, .. } => all.extend(points.iter().map(|p| &*p.2)),
+                    }
+                }
+            }
+            LayerKind::Slot(slot) => {
+                for m in self.montages.iter().filter(|m| &m.slot == slot) {
+                    all.extend(m.sections.iter().map(|s| &*s.clip));
+                }
+            }
+        }
+        let mut out: Vec<&str> = Vec::new();
+        for n in all {
+            if !out.contains(&n) {
+                out.push(n);
+            }
+        }
+        out
+    }
+}
+
+/// A layer's `weight` (a number or a parameter's name), `blend` and an additive layer's
+/// `reference` (animation.md 3a).
+fn parse_blend(
+    layer: &str,
+    l: &serde_json::Map<String, Value>,
+    params: &[(String, f64)],
+) -> Result<(IkWeight, Option<Reference>), String> {
+    let weight = match l.get("weight") {
+        None => full_weight(),
+        Some(Value::String(p)) => {
+            if !params.iter().any(|(n, _)| n == p) {
+                return Err(format!("layer {layer}'s weight names no parameter {p}"));
+            }
+            IkWeight::Param(p.clone())
+        }
+        Some(w) => {
+            let w = num(w, &format!("layer {layer}'s weight"))?;
+            if !w.is_finite() {
+                return Err(format!("layer {layer}'s weight must be finite"));
+            }
+            IkWeight::Value(w)
+        }
+    };
+    let blend = l
+        .get("blend")
+        .map(|b| text(b, &format!("layer {layer}'s blend")))
+        .transpose()?;
+    let additive = match blend.as_deref() {
+        None | Some("override") => false,
+        Some("additive") => true,
+        Some(b) => {
+            return Err(format!(
+                "layer {layer}'s blend {b} is neither override nor additive"
+            ));
+        }
+    };
+    let reference = match (l.get("reference"), additive) {
+        (Some(_), false) => {
+            return Err(format!("layer {layer} has a reference but does not add"));
+        }
+        (_, false) => None,
+        (None, true) => Some(Reference {
+            clip: None,
+            at: 0.0,
+        }),
+        (Some(Value::Object(r)), true) => {
+            let at = opt_num(r, "at", 0.0, &format!("layer {layer}'s reference"))?;
+            if !(at.is_finite() && at >= 0.0) {
+                return Err(format!("layer {layer}'s reference at must be 0 or more"));
+            }
+            Some(Reference {
+                clip: r
+                    .get("clip")
+                    .map(|c| text(c, "a reference's clip"))
+                    .transpose()?,
+                at,
+            })
+        }
+        (Some(_), true) => return Err(format!("layer {layer}'s reference must be an object")),
+    };
+    Ok((weight, reference))
 }
 
 fn parse_machine(layer: &str, l: &serde_json::Map<String, Value>) -> Result<LayerKind, String> {
@@ -525,6 +678,9 @@ pub struct Rig {
     sockets: Vec<(String, usize)>,
     /// The IK nodes bound to the skeleton (animation.md 6a).
     ik: Vec<IkNode>,
+    /// Per layer, for an additive one, each clip's reference pose (by clip; none for a clip the
+    /// layer does not play), sampled once here (animation.md 3a).
+    refs: Vec<Option<Vec<Option<Pose>>>>,
 }
 
 impl Rig {
@@ -577,23 +733,31 @@ impl Rig {
                         .expect("parse checks masks")
                         .1;
                     let mut w = vec![0.0f32; n];
-                    let mut set = vec![false; n];
+                    // What each joint hands its children: an entry's weight with its
+                    // descendants, else what the joint was handed itself.
+                    let mut down: Vec<Option<f32>> = vec![None; n];
                     // Parents first, so an entry deeper in the tree overrides one above it.
                     for &j in &skeleton.order {
                         let j = j as usize;
-                        if let Some(&(_, wt)) = entries
+                        let handed = skeleton.joints[j]
+                            .parent
+                            .map(|p| p as usize)
+                            .filter(|&p| p < n)
+                            .and_then(|p| down[p]);
+                        if let Some(e) = entries
                             .iter()
                             .rev()
-                            .find(|(name, _)| *name == skeleton.joints[j].name)
+                            .find(|e| e.joint == skeleton.joints[j].name)
                         {
-                            w[j] = wt;
-                            set[j] = true;
-                        } else if let Some(p) = skeleton.joints[j].parent.map(|p| p as usize)
-                            && p < n
-                            && set[p]
-                        {
-                            w[j] = w[p];
-                            set[j] = true;
+                            w[j] = e.weight;
+                            down[j] = if e.descendants {
+                                Some(e.weight)
+                            } else {
+                                handed
+                            };
+                        } else if let Some(h) = handed {
+                            w[j] = h;
+                            down[j] = Some(h);
                         }
                     }
                     w
@@ -619,7 +783,7 @@ impl Rig {
             .iter()
             .map(|d| IkNode::bind(d, &skeleton))
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Rig {
+        let mut rig = Rig {
             def,
             skeleton,
             clips,
@@ -631,7 +795,77 @@ impl Rig {
             root_parent,
             sockets,
             ik,
-        })
+            refs: Vec::new(),
+        };
+        rig.refs = (0..rig.def.layers.len())
+            .map(|li| rig.references(li, sets))
+            .collect::<Result<_, _>>()?;
+        Ok(rig)
+    }
+
+    /// An additive layer's reference poses, by clip: the reference clip's pose (or each clip's
+    /// own) at the reference's time, sampled as the layer samples its clips.
+    fn references(
+        &self,
+        layer: usize,
+        sets: &[(String, ClipSet)],
+    ) -> Result<Option<Vec<Option<Pose>>>, String> {
+        let Some(r) = &self.def.layers[layer].additive else {
+            return Ok(None);
+        };
+        let source = |c: usize| {
+            let (set, clip) = self.clips[c].at();
+            &sets[set].1.clips[clip]
+        };
+        let at = |c: usize| clip_time(f64::from(self.clips[c].duration), r.at, false);
+        let shared = match &r.clip {
+            Some(name) => {
+                let c = self
+                    .clip(name)
+                    .ok_or(format!("no library has its clip {name}"))?;
+                Some(self.sample_pose(c, source(c), at(c), true))
+            }
+            None => None,
+        };
+        let mut out = vec![None; self.clips.len()];
+        for name in self.def.layer_clips(layer) {
+            let Some(c) = self.clip(name) else { continue };
+            out[c] = Some(match &shared {
+                Some(p) => p.clone(),
+                None => self.sample_pose(c, source(c), at(c), true),
+            });
+        }
+        Ok(Some(out))
+    }
+
+    /// Clip `c` (its bound `clip`) at `t` seconds over the rest pose, its root held in place when
+    /// it hands root motion and `lock_root` asks.
+    fn sample_pose(&self, c: usize, clip: &Clip, t: f64, lock_root: bool) -> Pose {
+        let rest = Pose::rest(self);
+        let mut p = rest.clone();
+        self.sample_into(c, clip, t, lock_root, &rest, &mut p);
+        p
+    }
+
+    /// `sample_pose` written into `into`, from `rest` (the rest pose).
+    fn sample_into(
+        &self,
+        c: usize,
+        clip: &Clip,
+        t: f64,
+        lock_root: bool,
+        rest: &Pose,
+        into: &mut Pose,
+    ) {
+        into.x.copy_from_slice(&rest.x);
+        self.clips[c].sample_of(clip, t as f32, &mut into.x);
+        if lock_root && self.meta(c).is_some_and(|m| m.root_motion) {
+            lock(self, clip, c, &mut into.x);
+        }
+        if !into.w.is_empty() {
+            into.w.copy_from_slice(&rest.w);
+            self.clips[c].sample_weights_of(clip, t as f32, &mut into.w);
+        }
     }
 
     fn clip(&self, name: &str) -> Option<usize> {
@@ -753,7 +987,9 @@ pub struct Output {
     pub root_motion: V3,
 }
 
-/// A pose while it is blended: the joints' transforms and the flat morph weights.
+/// A pose while it is blended: the joints' transforms and the flat morph weights. An additive
+/// layer's pose is a delta: each joint's change from its reference, each weight's difference.
+#[derive(Clone, Debug)]
 struct Pose {
     x: Vec<Xform>,
     w: Vec<f32>,
@@ -764,6 +1000,36 @@ impl Pose {
         Pose {
             x: rig.skeleton.rest(),
             w: rig.skeleton.rest_weights(),
+        }
+    }
+
+    /// The delta that changes nothing.
+    fn unchanged(rig: &Rig) -> Pose {
+        Pose {
+            x: vec![Xform::IDENTITY; rig.skeleton.joints.len()],
+            w: vec![0.0; rig.morph_len()],
+        }
+    }
+
+    /// `self` becomes its change from `reference` (animation.md 3a): per joint the translation's
+    /// difference, the rotation taking the reference's to its own (applied before the pose under
+    /// the layer, Unreal's local-space additive) and the scales' ratio; per morph weight the
+    /// difference. A pose equal to its reference becomes exactly the unchanged delta.
+    fn take_off(&mut self, reference: &Pose) {
+        for (x, r) in self.x.iter_mut().zip(&reference.x) {
+            let ratio = |a: f32, b: f32| if b != 0.0 { a / b } else { 1.0 };
+            *x = Xform {
+                t: math::sub(x.t, r.t),
+                r: math::normalize(math::qmul(x.r, math::qconj(r.r))),
+                s: [
+                    ratio(x.s[0], r.s[0]),
+                    ratio(x.s[1], r.s[1]),
+                    ratio(x.s[2], r.s[2]),
+                ],
+            };
+        }
+        for (w, r) in self.w.iter_mut().zip(&reference.w) {
+            *w -= r;
         }
     }
 
@@ -938,35 +1204,41 @@ fn is_blend(s: &StateDef) -> bool {
     !matches!(s.motion, Motion::Clip(_))
 }
 
-/// Writes a sampled state's pose (its clips weighted) over the rest.
-fn pose_of(rig: &Rig, sets: &[ClipSet], sampled: &Sampled, lock_root: bool) -> Pose {
+/// Writes a sampled state's pose (its clips weighted) over the rest; with an additive layer's
+/// reference poses (`refs`, by clip), each clip's change from its reference, over the unchanged
+/// delta.
+fn pose_of(
+    rig: &Rig,
+    sets: &[ClipSet],
+    sampled: &Sampled,
+    lock_root: bool,
+    refs: Option<&[Option<Pose>]>,
+) -> Pose {
     let rest = Pose::rest(rig);
-    let mut out = Pose {
-        x: rest.x.clone(),
-        w: rest.w.clone(),
+    let mut out = match refs {
+        None => rest.clone(),
+        Some(_) => Pose::unchanged(rig),
     };
     let mut acc = 0.0f64;
-    let mut buf = rest.x.clone();
-    let mut wbuf = rest.w.clone();
+    let mut buf = rest.clone();
     for &(c, t, w) in &sampled.parts {
         if w <= 0.0 {
             continue;
         }
-        buf.copy_from_slice(&rest.x);
-        rig.clips[c].sample(sets, t as f32, &mut buf);
-        if lock_root && rig.meta(c).is_some_and(|m| m.root_motion) {
-            lock(rig, sets, c, &mut buf);
-        }
-        if !wbuf.is_empty() {
-            wbuf.copy_from_slice(&rest.w);
-            rig.clips[c].sample_weights(sets, t as f32, &mut wbuf);
+        rig.sample_into(c, rig.clips[c].source(sets), t, lock_root, &rest, &mut buf);
+        if let Some(refs) = refs {
+            // Every clip an additive layer plays has its reference (`Rig::references`).
+            let Some(r) = refs.get(c).and_then(Option::as_ref) else {
+                continue;
+            };
+            buf.take_off(r);
         }
         acc += w;
         let u = (w / acc) as f32;
-        for (o, b) in out.x.iter_mut().zip(&buf) {
+        for (o, b) in out.x.iter_mut().zip(&buf.x) {
             *o = if acc == w { *b } else { Xform::mix(o, b, u) };
         }
-        for (o, b) in out.w.iter_mut().zip(&wbuf) {
+        for (o, b) in out.w.iter_mut().zip(&buf.w) {
             *o = if acc == w { *b } else { *o + (b - *o) * u };
         }
     }
@@ -974,10 +1246,10 @@ fn pose_of(rig: &Rig, sets: &[ClipSet], sampled: &Sampled, lock_root: bool) -> P
 }
 
 /// Holds a root-motion clip's root at its horizontal place at the clip's start (the body moves
-/// instead).
-fn lock(rig: &Rig, sets: &[ClipSet], clip: usize, pose: &mut [Xform]) {
+/// instead); `source` is the bound clip `clip`'s own.
+fn lock(rig: &Rig, source: &Clip, clip: usize, pose: &mut [Xform]) {
     let Some(r) = rig.root else { return };
-    let Some(start) = rig.clips[clip].translation(sets, r, 0.0) else {
+    let Some(start) = rig.clips[clip].translation_of(source, r, 0.0) else {
         return;
     };
     let p = &rig.root_parent;
@@ -1212,6 +1484,9 @@ pub fn step(rig: &Rig, sets: &[ClipSet], st: &mut AnimState, dt: f64) -> Output 
     let mut root = [0.0f32; 3];
     for (li, layer) in rig.def.layers.iter().enumerate() {
         let weights = &rig.weights[li];
+        let refs = rig.refs[li].as_deref();
+        // The layer's own weight (1 for a layer without one: every product by it keeps its bits).
+        let lw = layer_weight(layer, st);
         match &layer.kind {
             LayerKind::Machine { .. } => {
                 let (states, transitions) = rig.machine(li).expect("a machine");
@@ -1282,29 +1557,35 @@ pub fn step(rig: &Rig, sets: &[ClipSet], st: &mut AnimState, dt: f64) -> Output 
                         (t0, t1)
                     };
                     crossed(rig, c, a, b, s.looped, &mut out.notices);
-                    let w = layer_share(&st.layers[li]);
-                    let dv = root_delta(rig, sets, c, a, b, s.looped);
-                    let k =
-                        (w * f64::from(weights.get(rig.root.unwrap_or(0)).copied().unwrap_or(0.0)))
-                            as f32;
-                    root = math::add(root, math::scale(dv, k));
-                }
-                let mut lp = pose_of(rig, sets, &now, true);
-                let ls = &st.layers[li];
-                if ls.fade_len > 0.0 && ls.fade < ls.fade_len && !ls.from.is_empty() {
-                    if let Some(f) = states.iter().find(|x| x.name == ls.from) {
-                        let from =
-                            pose_of(rig, sets, &sample_state(rig, st, f, ls.from_time), true);
-                        let u = (ls.fade / ls.fade_len) as f32;
-                        lp.fade_from(&from, u);
+                    // An additive layer hands no root motion.
+                    if refs.is_none() {
+                        let w = layer_share(&st.layers[li]);
+                        let dv = root_delta(rig, sets, c, a, b, s.looped);
+                        let m =
+                            f64::from(weights.get(rig.root.unwrap_or(0)).copied().unwrap_or(0.0));
+                        let k = (w * m * lw) as f32;
+                        root = math::add(root, math::scale(dv, k));
                     }
-                } else if ls.fade_len > 0.0 {
+                }
+                let ls = &st.layers[li];
+                let fading = ls.fade_len > 0.0 && ls.fade < ls.fade_len && !ls.from.is_empty();
+                if !fading && ls.fade_len > 0.0 {
                     let ls = &mut st.layers[li];
                     ls.from.clear();
                     ls.fade_len = 0.0;
                     ls.fade = 0.0;
                 }
-                over(rig, &mut pose, &lp, weights, 1.0);
+                if lw > 0.0 {
+                    let mut lp = pose_of(rig, sets, &now, true, refs);
+                    let ls = &st.layers[li];
+                    if fading && let Some(f) = states.iter().find(|x| x.name == ls.from) {
+                        let from = sample_state(rig, st, f, ls.from_time);
+                        let from = pose_of(rig, sets, &from, true, refs);
+                        let u = (ls.fade / ls.fade_len) as f32;
+                        lp.fade_from(&from, u);
+                    }
+                    blend(rig, &mut pose, &lp, weights, lw as f32, refs.is_some());
+                }
             }
             LayerKind::Slot(name) => {
                 let Some(si) = st.slots.iter().position(|s| &s.slot == name) else {
@@ -1337,28 +1618,22 @@ pub fn step(rig: &Rig, sets: &[ClipSet], st: &mut AnimState, dt: f64) -> Output 
                     let t1 = t0 + left * sec.rate;
                     if t1 < d {
                         crossed(rig, c, t0, t1, false, &mut out.notices);
-                        let dv = root_delta(rig, sets, c, t0, t1, false);
-                        root = math::add(
-                            root,
-                            math::scale(
-                                dv,
-                                slot_weight(rig, slot) as f32
-                                    * weights.get(rig.root.unwrap_or(0)).copied().unwrap_or(0.0),
-                            ),
-                        );
+                        if refs.is_none() {
+                            let dv = root_delta(rig, sets, c, t0, t1, false);
+                            let m = weights.get(rig.root.unwrap_or(0)).copied().unwrap_or(0.0);
+                            let k = (slot_weight(rig, slot) * lw) as f32 * m;
+                            root = math::add(root, math::scale(dv, k));
+                        }
                         slot.time = t1;
                         left = 0.0;
                     } else {
                         crossed(rig, c, t0, d, false, &mut out.notices);
-                        let dv = root_delta(rig, sets, c, t0, d, false);
-                        root = math::add(
-                            root,
-                            math::scale(
-                                dv,
-                                slot_weight(rig, slot) as f32
-                                    * weights.get(rig.root.unwrap_or(0)).copied().unwrap_or(0.0),
-                            ),
-                        );
+                        if refs.is_none() {
+                            let dv = root_delta(rig, sets, c, t0, d, false);
+                            let m = weights.get(rig.root.unwrap_or(0)).copied().unwrap_or(0.0);
+                            let k = (slot_weight(rig, slot) * lw) as f32 * m;
+                            root = math::add(root, math::scale(dv, k));
+                        }
                         left -= if sec.rate > 0.0 {
                             (d - t0) / sec.rate
                         } else {
@@ -1397,6 +1672,7 @@ pub fn step(rig: &Rig, sets: &[ClipSet], st: &mut AnimState, dt: f64) -> Output 
                         parts: vec![(c, slot.time, 1.0)],
                     },
                     true,
+                    refs,
                 );
                 // A montage that interrupted another fades from its frozen pose.
                 let fade_in = m.fade_in;
@@ -1412,6 +1688,7 @@ pub fn step(rig: &Rig, sets: &[ClipSet], st: &mut AnimState, dt: f64) -> Output 
                                 parts: vec![(fc, slot.from_time, 1.0)],
                             },
                             true,
+                            refs,
                         );
                         let u = (slot.age / fade_in) as f32;
                         lp.fade_from(&from, u);
@@ -1425,7 +1702,14 @@ pub fn step(rig: &Rig, sets: &[ClipSet], st: &mut AnimState, dt: f64) -> Output 
                 } else {
                     max(slot.from_weight, w)
                 };
-                over(rig, &mut pose, &lp, weights, w as f32);
+                blend(
+                    rig,
+                    &mut pose,
+                    &lp,
+                    weights,
+                    (w * lw) as f32,
+                    refs.is_some(),
+                );
             }
         }
     }
@@ -1442,6 +1726,68 @@ fn layer_share(ls: &LayerState) -> f64 {
         (ls.fade / ls.fade_len).clamp(0.0, 1.0)
     } else {
         1.0
+    }
+}
+
+/// A layer's weight: its number or its parameter's value, clamped to 0..1.
+fn layer_weight(layer: &LayerDef, st: &AnimState) -> f64 {
+    match &layer.weight {
+        IkWeight::Value(v) => v.clamp(0.0, 1.0),
+        IkWeight::Param(p) => param(st, p).clamp(0.0, 1.0),
+    }
+}
+
+/// A layer's pose onto `pose`: over it, or added to it (`additive`, the layer's pose a delta).
+fn blend(rig: &Rig, pose: &mut Pose, layer: &Pose, weights: &[f32], w: f32, additive: bool) {
+    if additive {
+        add(rig, pose, layer, weights, w);
+    } else {
+        over(rig, pose, layer, weights, w);
+    }
+}
+
+/// Whether a joint's delta changes nothing (a pose equal to its reference gives exactly this).
+fn unchanged(d: &Xform) -> bool {
+    d.t == [0.0; 3] && d.r[0] == 0.0 && d.r[1] == 0.0 && d.r[2] == 0.0 && d.s == [1.0; 3]
+}
+
+/// The delta `layer` added to `pose` by each joint's weight times `w` (animation.md 3a): the
+/// translation's difference scaled by it, the rotation's change mixed from none (nlerp) and turned
+/// before the joint's own, the scale's ratio mixed from 1; a joint's morph weights take their
+/// differences scaled the same. A joint whose weight is 0 or whose delta changes nothing keeps its
+/// bits.
+fn add(rig: &Rig, pose: &mut Pose, layer: &Pose, weights: &[f32], w: f32) {
+    for ((p, d), m) in pose.x.iter_mut().zip(&layer.x).zip(weights) {
+        let u = m * w;
+        if !(u > 0.0) || unchanged(d) {
+            continue;
+        }
+        let r = if u == 1.0 {
+            d.r
+        } else {
+            math::nlerp(math::IDENTITY, d.r, u)
+        };
+        let s = |k: usize| p.s[k] * (1.0 + (d.s[k] - 1.0) * u);
+        *p = Xform {
+            t: math::add(p.t, math::scale(d.t, u)),
+            r: math::normalize(math::qmul(r, p.r)),
+            s: [s(0), s(1), s(2)],
+        };
+    }
+    if pose.w.is_empty() {
+        return;
+    }
+    for (j, m) in weights.iter().enumerate() {
+        let u = m * w;
+        if !(u > 0.0) {
+            continue;
+        }
+        let (a, b) = (rig.morph_at[j], rig.morph_at[j + 1]);
+        for (p, d) in pose.w[a..b].iter_mut().zip(&layer.w[a..b]) {
+            if *d != 0.0 {
+                *p += d * u;
+            }
+        }
     }
 }
 
@@ -1532,5 +1878,346 @@ mod tests {
         let mut bad = ok.clone();
         bad["layers"][0]["transitions"][0]["to"] = "flying".into();
         assert!(GraphDef::parse(&bad).unwrap_err().contains("flying"));
+    }
+
+    use super::super::clip::{Clip, Joint, Keys, Track};
+    use super::super::state::AnimCommand;
+
+    /// A chain root, spine, chest, head and a face (a node with one target, "smile") on the head;
+    /// clips "idle" (keys nothing but the chest at rest) and "lean" (over one second the chest
+    /// turns 30 degrees about x, the spine moves 0.1 m forward, the head grows by half and the
+    /// smile goes from 0 to 1).
+    fn sets() -> Vec<(String, ClipSet)> {
+        let joint = |name: &str, parent: Option<u32>, y: f32| Joint {
+            name: name.into(),
+            parent,
+            rest: Xform {
+                t: [0.0, y, 0.0],
+                ..Xform::IDENTITY
+            },
+            targets: Vec::new(),
+            weights: Vec::new(),
+        };
+        let mut face = joint("face", Some(3), 0.1);
+        face.targets = vec!["smile".into()];
+        face.weights = vec![0.0];
+        let skeleton = Skeleton::new(vec![
+            joint("root", None, 0.0),
+            joint("spine", Some(0), 1.0),
+            joint("chest", Some(1), 0.3),
+            joint("head", Some(2), 0.3),
+            face,
+        ]);
+        let keys = |times: &[f32], values: &[f32]| Keys {
+            times: times.to_vec(),
+            values: values.to_vec(),
+            step: false,
+        };
+        let track = |joint: &str| Track {
+            joint: joint.into(),
+            t: Keys::default(),
+            r: Keys::default(),
+            s: Keys::default(),
+            w: Keys::default(),
+        };
+        let (s, c) = (0.258_819_04_f32, 0.965_925_8_f32); // sin and cos of 15 degrees
+        let mut chest = track("chest");
+        chest.r = keys(&[0.0, 1.0], &[0.0, 0.0, 0.0, 1.0, s, 0.0, 0.0, c]);
+        let mut spine = track("spine");
+        spine.t = keys(&[0.0, 1.0], &[0.0, 1.0, 0.0, 0.0, 1.0, 0.1]);
+        let mut head = track("head");
+        head.s = keys(&[0.0, 1.0], &[1.0, 1.0, 1.0, 1.5, 1.5, 1.5]);
+        let mut smile = track("face");
+        smile.w = keys(&[0.0, 1.0], &[0.0, 1.0]);
+        let mut idle = track("chest");
+        idle.r = keys(&[0.0], &[0.0, 0.0, 0.0, 1.0]);
+        let set = ClipSet {
+            skeleton,
+            clips: vec![
+                Clip {
+                    name: "idle".into(),
+                    duration: 1.0,
+                    tracks: vec![idle],
+                },
+                Clip {
+                    name: "lean".into(),
+                    duration: 1.0,
+                    tracks: vec![chest, spine, head, smile],
+                },
+            ],
+        };
+        vec![("a.gltf".into(), set)]
+    }
+
+    /// A graph of `layers` after a base layer playing "idle", with `masks` and a parameter "w".
+    fn rig(masks: Value, layers: Value) -> (Rig, Vec<ClipSet>) {
+        let mut all =
+            vec![serde_json::json!({"name": "base", "states": {"idle": {"clip": "idle"}}})];
+        all.extend(layers.as_array().unwrap().iter().cloned());
+        let mut v = serde_json::json!({
+            "format": "amoris-animgraph", "version": 1, "skeleton": "a.gltf",
+            "retarget": {"translate": ["spine"]},
+            "params": {"w": 1}, "masks": masks, "layers": all
+        });
+        if all.iter().any(|l| l["slot"] == "react") {
+            v["montages"] = serde_json::json!({"jolt": {"slot": "react", "fade_in": 0,
+                "sections": [{"name": "a", "clip": "lean"}]}});
+        }
+        let named = sets();
+        let rig = Rig::new(GraphDef::parse(&v).unwrap(), &named).unwrap();
+        (rig, named.into_iter().map(|s| s.1).collect())
+    }
+
+    /// An additive lean layer whose state stays where `eval` puts it (its rate 0, not looping).
+    fn lean(extra: Value) -> Value {
+        let mut l = serde_json::json!({"name": "lean", "blend": "additive",
+            "states": {"lean": {"clip": "lean", "rate": 0, "loop": false}}});
+        for (k, v) in extra.as_object().unwrap() {
+            l[k] = v.clone();
+        }
+        serde_json::json!([l])
+    }
+
+    fn eval(rig: &Rig, sets: &[ClipSet], w: f64, at: f64) -> Output {
+        let mut st = rig.initial("g");
+        st.params = vec![AnimParam {
+            name: "w".into(),
+            value: w,
+        }];
+        for l in &mut st.layers {
+            l.time = at;
+        }
+        step(rig, sets, &mut st, 1.0 / 60.0)
+    }
+
+    fn same_bits(a: &Output, b: &Output) -> bool {
+        let x = |o: &Output| -> Vec<u32> {
+            o.pose
+                .iter()
+                .flat_map(|x| x.t.iter().chain(&x.r).chain(&x.s).map(|v| v.to_bits()))
+                .chain(o.morph.iter().map(|v| v.to_bits()))
+                .collect()
+        };
+        x(a) == x(b)
+    }
+
+    #[test]
+    fn an_additive_layer_at_its_reference_or_at_weight_0_leaves_the_pose_as_it_was() {
+        let (plain, sets) = rig(serde_json::json!({}), serde_json::json!([]));
+        let base = eval(&plain, &sets, 1.0, 0.0);
+        // At its reference: the clip's start, a chosen time, another clip's pose that equals it.
+        for extra in [
+            serde_json::json!({}),
+            serde_json::json!({"reference": {"at": 0.5}}),
+        ] {
+            let at = extra["reference"]["at"].as_f64().unwrap_or(0.0);
+            let (r, sets) = rig(serde_json::json!({}), lean(extra));
+            assert!(same_bits(&eval(&r, &sets, 1.0, at), &base));
+        }
+        let (r, sets) = rig(
+            serde_json::json!({}),
+            lean(serde_json::json!({"reference": {"clip": "lean", "at": 0.25}})),
+        );
+        assert!(same_bits(&eval(&r, &sets, 1.0, 0.25), &base));
+        // Weight 0, by a number and by a parameter.
+        let (r, sets) = rig(
+            serde_json::json!({}),
+            lean(serde_json::json!({"weight": 0})),
+        );
+        assert!(same_bits(&eval(&r, &sets, 1.0, 1.0), &base));
+        let (r, sets) = rig(
+            serde_json::json!({}),
+            lean(serde_json::json!({"weight": "w"})),
+        );
+        assert!(same_bits(&eval(&r, &sets, 0.0, 1.0), &base));
+        assert!(!same_bits(&eval(&r, &sets, 1.0, 1.0), &base));
+        // So does an override layer at weight 0.
+        let (r, sets) = rig(
+            serde_json::json!({}),
+            serde_json::json!([{"name": "o", "weight": "w", "states": {"lean": {"clip": "lean"}}}]),
+        );
+        assert!(same_bits(&eval(&r, &sets, 0.0, 1.0), &base));
+    }
+
+    #[test]
+    fn an_additive_layer_adds_its_change_by_its_weight() {
+        let (r, sets) = rig(
+            serde_json::json!({}),
+            lean(serde_json::json!({"weight": "w", "reference": {"clip": "idle"}})),
+        );
+        let full = eval(&r, &sets, 1.0, 1.0);
+        let (s, c) = (0.258_819_04_f32, 0.965_925_8_f32);
+        let near = |a: &[f32], b: &[f32]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6);
+        assert!(
+            near(&full.pose[2].r, &[s, 0.0, 0.0, c]),
+            "{:?}",
+            full.pose[2].r
+        );
+        assert!(
+            near(&full.pose[1].t, &[0.0, 1.0, 0.1]),
+            "{:?}",
+            full.pose[1].t
+        );
+        assert!(near(&full.pose[3].s, &[1.5; 3]), "{:?}", full.pose[3].s);
+        assert_eq!(full.morph, [1.0]);
+        // Half the weight: half the turn (nlerp halves an angle exactly), the move and the growth.
+        let half = eval(&r, &sets, 0.5, 1.0);
+        let (s7, c7) = (0.130_526_19_f32, 0.991_444_9_f32); // 7.5 degrees
+        assert!(
+            near(&half.pose[2].r, &[s7, 0.0, 0.0, c7]),
+            "{:?}",
+            half.pose[2].r
+        );
+        assert!(
+            near(&half.pose[1].t, &[0.0, 1.0, 0.05]),
+            "{:?}",
+            half.pose[1].t
+        );
+        assert!(near(&half.pose[3].s, &[1.25; 3]), "{:?}", half.pose[3].s);
+        assert_eq!(half.morph, [0.5]);
+        // The change goes onto the pose under the layer: twice the lean, once by an override
+        // layer playing it and once added, turns the chest 60 degrees.
+        let (r2, sets) = rig(
+            serde_json::json!({}),
+            serde_json::json!([{"name": "o", "states": {"lean": {"clip": "lean", "rate": 0, "loop": false}}},
+                lean(serde_json::json!({}))[0].clone()]),
+        );
+        let twice = eval(&r2, &sets, 1.0, 1.0);
+        assert!(
+            near(&twice.pose[2].r, &[0.5, 0.0, 0.0, 0.866_025_4]),
+            "{:?}",
+            twice.pose[2].r
+        );
+        // An additive slot plays a montage's change; at weight 0 it adds nothing.
+        let (r3, sets) = rig(
+            serde_json::json!({}),
+            serde_json::json!([{"name": "react", "slot": "react", "blend": "additive",
+                                "weight": "w", "reference": {"clip": "idle"}}]),
+        );
+        let mut st = r3.initial("g");
+        st.commands.push(AnimCommand {
+            op: "play".into(),
+            montage: "jolt".into(),
+            rate: 1.0,
+            ..AnimCommand::default()
+        });
+        let o = step(&r3, &sets, &mut st, 0.5);
+        assert!((o.morph[0] - 0.5).abs() < 1e-6, "{:?}", o.morph);
+        assert_eq!(o.root_motion, [0.0; 3]);
+    }
+
+    #[test]
+    fn mask_entries_weigh_subtrees_or_single_joints() {
+        let masks = serde_json::json!({
+            "upper": [{"joint": "spine", "weight": 0.5}, {"joint": "head", "weight": 0}],
+            "chest": [{"joint": "spine", "weight": 0.5},
+                      {"joint": "chest", "weight": 1, "descendants": false}],
+            "alone": [{"joint": "chest", "descendants": false}]
+        });
+        let layers = serde_json::json!([
+            {"name": "a", "mask": "upper", "slot": "react"},
+            {"name": "b", "mask": "chest", "slot": "s2"},
+            {"name": "c", "mask": "alone", "slot": "s3"}
+        ]);
+        let (r, _) = rig(masks, layers);
+        // root, spine, chest, head, face (which follows the head).
+        assert_eq!(
+            r.weights[1],
+            [0.0, 0.5, 0.5, 0.0, 0.0],
+            "a weight of 0 cuts the head out"
+        );
+        assert_eq!(
+            r.weights[2],
+            [0.0, 0.5, 1.0, 0.5, 0.5],
+            "the chest alone; the head takes what the spine hands down"
+        );
+        assert_eq!(r.weights[3], [0.0, 0.0, 1.0, 0.0, 0.0]);
+        assert_eq!(r.weights[0], [1.0; 5], "the base covers the body");
+    }
+
+    #[test]
+    fn layer_weights_blends_and_references_parse_and_refuse_what_is_wrong() {
+        let named = sets();
+        let parse = |masks: Value, layers: Value| {
+            let mut all =
+                vec![serde_json::json!({"name": "base", "states": {"idle": {"clip": "idle"}}})];
+            all.extend(layers.as_array().unwrap().iter().cloned());
+            let v = serde_json::json!({
+                "format": "amoris-animgraph", "version": 1, "skeleton": "a.gltf",
+                "params": {"w": 1}, "masks": masks, "layers": all
+            });
+            GraphDef::parse(&v).and_then(|d| Rig::new(d, &named).map(|_| ()))
+        };
+        let m = serde_json::json!({});
+        let lean = |extra: Value| {
+            let mut l = serde_json::json!({"name": "l", "states": {"s": {"clip": "lean"}}});
+            for (k, v) in extra.as_object().unwrap() {
+                l[k] = v.clone();
+            }
+            serde_json::json!([l])
+        };
+        assert!(
+            parse(
+                m.clone(),
+                lean(serde_json::json!({"blend": "additive", "weight": 0.5}))
+            )
+            .is_ok()
+        );
+        let def = GraphDef::parse(&serde_json::json!({
+            "format": "amoris-animgraph", "version": 1, "skeleton": "a.gltf", "params": {"w": 1},
+            "layers": [{"states": {"s": {"clip": "idle"}}},
+                       {"name": "l", "blend": "additive", "weight": "w",
+                        "reference": {"clip": "idle", "at": 0.5}, "states": {"s": {"clip": "lean"}}}]
+        }))
+        .unwrap();
+        assert_eq!(def.layers[1].weight, IkWeight::Param("w".into()));
+        assert_eq!(
+            def.layers[1].additive,
+            Some(Reference {
+                clip: Some("idle".into()),
+                at: 0.5
+            })
+        );
+        assert_eq!(def.layers[0].weight, IkWeight::Value(1.0));
+        assert_eq!(def.layers[0].additive, None);
+        let refused = |masks: Value, layers: Value, want: &str| {
+            let e = parse(masks, layers).unwrap_err();
+            assert!(e.contains(want), "{e}");
+        };
+        refused(
+            m.clone(),
+            lean(serde_json::json!({"blend": "multiply"})),
+            "neither",
+        );
+        refused(
+            m.clone(),
+            lean(serde_json::json!({"reference": {"at": 0}})),
+            "does not add",
+        );
+        refused(
+            m.clone(),
+            lean(serde_json::json!({"weight": "nope"})),
+            "no parameter nope",
+        );
+        refused(
+            m.clone(),
+            lean(serde_json::json!({"blend": "additive", "reference": {"at": -1}})),
+            "0 or more",
+        );
+        refused(
+            m.clone(),
+            lean(serde_json::json!({"blend": "additive", "reference": {"clip": "gone"}})),
+            "gone",
+        );
+        refused(
+            serde_json::json!({"x": [{"joint": "chest", "descendants": 1}]}),
+            serde_json::json!([]),
+            "descendants",
+        );
+        let base_adds = serde_json::json!({
+            "format": "amoris-animgraph", "version": 1, "skeleton": "a.gltf",
+            "layers": [{"blend": "additive", "states": {"s": {"clip": "idle"}}}]
+        });
+        assert!(GraphDef::parse(&base_adds).unwrap_err().contains("base"));
     }
 }

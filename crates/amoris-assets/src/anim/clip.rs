@@ -332,7 +332,21 @@ impl Bound {
     /// The clip's morph weights at `t` written over `weights` (the pose's flat weights; those it
     /// does not key keep what they hold).
     pub fn sample_weights(&self, sets: &[ClipSet], t: f32, weights: &mut [f32]) {
-        let clip = &sets[self.set].clips[self.clip];
+        self.sample_weights_of(self.source(sets), t, weights);
+    }
+
+    /// The clip this binds, found in `sets` (the sets it was bound among, in their order).
+    pub fn source<'a>(&self, sets: &'a [ClipSet]) -> &'a Clip {
+        &sets[self.set].clips[self.clip]
+    }
+
+    /// Where its clip is among the sets it was bound among: the set's index and the clip's.
+    pub fn at(&self) -> (usize, usize) {
+        (self.set, self.clip)
+    }
+
+    /// `sample_weights` from the bound clip itself (`source`).
+    pub fn sample_weights_of(&self, clip: &Clip, t: f32, weights: &mut [f32]) {
         let mut buf = Vec::new();
         for m in &self.morph {
             clip.tracks[m.track].w.sample_n(t, m.width, &mut buf);
@@ -350,7 +364,11 @@ impl Bound {
     /// The clip at `t` seconds (held at its ends) written over `pose` (the target's rest for
     /// joints it does not key).
     pub fn sample(&self, sets: &[ClipSet], t: f32, pose: &mut [Xform]) {
-        let clip = &sets[self.set].clips[self.clip];
+        self.sample_of(self.source(sets), t, pose);
+    }
+
+    /// `sample` from the bound clip itself (`source`).
+    pub fn sample_of(&self, clip: &Clip, t: f32, pose: &mut [Xform]) {
         for &(j, k, mode) in &self.tracks {
             let tr = &clip.tracks[k];
             let x = &mut pose[j];
@@ -370,7 +388,11 @@ impl Bound {
 
     /// The clip's translation of `joint` at `t`, in the target's scale, if it keys and keeps it.
     pub fn translation(&self, sets: &[ClipSet], joint: usize, t: f32) -> Option<V3> {
-        let clip = &sets[self.set].clips[self.clip];
+        self.translation_of(self.source(sets), joint, t)
+    }
+
+    /// `translation` from the bound clip itself (`source`).
+    pub fn translation_of(&self, clip: &Clip, joint: usize, t: f32) -> Option<V3> {
         self.tracks.iter().find_map(|&(j, k, mode)| match mode {
             Translate::Scaled(s) if j == joint && !clip.tracks[k].t.is_empty() => {
                 Some(math::scale(clip.tracks[k].t.sample3(t), s))

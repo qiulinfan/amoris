@@ -405,7 +405,8 @@ export interface AnimInfo {
 /** An entity's animation graph (`AnimGraph`; docs/spec/animation.md 4): its parameters, its
  * montages and its sockets. Requests apply at the next evaluation (Forces, this tick). */
 export interface AnimAccess {
-    /** Sets a parameter (a boolean is stored as 1 or 0). */
+    /** Sets a parameter (a boolean is stored as 1 or 0); a layer's or an IK node's weight may
+     * name one (docs/spec/animation.md 3a, 6a). */
     set(e: Entity, name: string, value: number | boolean): void;
     /** A parameter's value (0 if unset). */
     param(e: Entity, name: string): number;
