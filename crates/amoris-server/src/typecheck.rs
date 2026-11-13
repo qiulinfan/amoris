@@ -9,8 +9,8 @@
 //! The compiler is `AMORIS_TSC` as given, else the first TypeScript 7 (`tsc --version`) in a
 //! `node_modules` (or `sdk/node_modules`, the repository's toolchain: `cd sdk && bun install`,
 //! pinned by `sdk/bun.lock`) of the project or a directory above it, else in the repository this
-//! binary was built from, else as `tsc` on `PATH`; an older `tsc` is passed over and named in the
-//! reason. The native binary of the platform package is preferred over the `node` launcher in
+//! binary was built from, else as `tsc` on `PATH` (on Windows with `PATHEXT`'s extensions, so
+//! `tsc.cmd` too); an older `tsc` is passed over and named in the reason. The native binary of the platform package is preferred over the `node` launcher in
 //! `.bin`.
 //!
 //! [`run`] is the server's (tokio, after a swap); [`run_blocking`] is `amoris check`'s `types` step
@@ -103,6 +103,21 @@ fn is_supported(version: &str) -> bool {
         .is_some_and(|m| m >= 7)
 }
 
+/// The file names `tsc` has in a `PATH` directory: `tsc`, and on Windows `tsc` with each of
+/// `PATHEXT`'s extensions instead, as `cmd.exe` looks a command up (npm's launcher is `tsc.cmd`;
+/// the extensionless `tsc` beside it is a shell script Windows cannot start).
+fn path_names() -> Vec<String> {
+    if !cfg!(windows) {
+        return vec!["tsc".to_owned()];
+    }
+    std::env::var("PATHEXT")
+        .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_owned())
+        .split(';')
+        .filter(|e| !e.is_empty())
+        .map(|e| format!("tsc{}", e.to_ascii_lowercase()))
+        .collect()
+}
+
 /// The `tsc` to run for `project`, or why there is none (no `tsc`, or only older ones, named).
 pub fn find_tsc(project: &Path) -> Result<Tsc, String> {
     if let Some(p) = std::env::var_os("AMORIS_TSC") {
@@ -118,11 +133,12 @@ pub fn find_tsc(project: &Path) -> Result<Tsc, String> {
         .chain(std::iter::once(built_from.as_path()))
         .flat_map(|d| [d.join("node_modules"), d.join("sdk").join("node_modules")])
         .filter_map(|nm| in_node_modules(&nm));
+    let names = path_names();
     let on_path = std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
         .unwrap_or_default()
         .into_iter()
-        .map(|d| d.join("tsc"))
+        .flat_map(|d| names.iter().map(move |n| d.join(n)).collect::<Vec<_>>())
         .filter(|p| p.is_file());
     let mut older = Vec::new();
     for path in in_dirs.chain(on_path) {
@@ -378,5 +394,16 @@ mod tests {
                 .ends_with("Did you mean '\"Log.distance\"'?")
         );
         assert_eq!(d[1]["code"], json!("TS2304"));
+    }
+
+    #[test]
+    fn tsc_on_path_has_the_names_a_shell_finds() {
+        let names = path_names();
+        if cfg!(windows) {
+            assert!(names.iter().any(|n| n == "tsc.cmd"), "{names:?}");
+            assert!(!names.iter().any(|n| n == "tsc"), "{names:?}");
+        } else {
+            assert_eq!(names, ["tsc"]);
+        }
     }
 }

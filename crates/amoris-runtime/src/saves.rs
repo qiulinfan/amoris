@@ -62,6 +62,12 @@ pub fn path(root: &Path, name: &str) -> Result<PathBuf, Problem> {
     Ok(root.join(DIR).join(format!("{name}.{EXT}")))
 }
 
+/// The save `name`'s file as answers name it: relative to the project, `/`-separated on every
+/// platform, as the host protocol's project paths are.
+pub fn shown(name: &str) -> String {
+    format!("{DIR}/{name}.{EXT}")
+}
+
 fn io_problem(path: &Path, e: &std::io::Error) -> Problem {
     Problem::new(
         "saves.unwritable",
