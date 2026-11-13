@@ -1067,6 +1067,7 @@ fn row_shadows(
                 patch(plain, cam, p, 1),
                 patch(ambient, cam, p, 1),
             );
+            eprintln!("DBG {what} x={x} img={s:?} plain={u:?} ambient={a:?}");
             assert!(
                 luminance(u) > 1.5 * luminance(a),
                 "{what}: the spot at x = {x} lights the floor under its cube"
@@ -1083,8 +1084,18 @@ fn row_shadows(
         .collect()
 }
 
+struct DbgLog;
+impl log::Log for DbgLog {
+    fn enabled(&self, m: &log::Metadata) -> bool { m.level() <= log::Level::Info }
+    fn log(&self, r: &log::Record) { if self.enabled(r.metadata()) { eprintln!("LOG {} {}: {}", r.level(), r.target(), r.args()); } }
+    fn flush(&self) {}
+}
+static DBG: DbgLog = DbgLog;
+
 #[test]
 fn one_spot_more_than_the_limit_is_counted() {
+    let _ = log::set_logger(&DBG);
+    log::set_max_level(log::LevelFilter::Info);
     let Ok(gpu) = Gpu::headless(BackendChoice::from_env()) else {
         eprintln!("no GPU: skipped");
         return;
@@ -1103,6 +1114,8 @@ fn one_spot_more_than_the_limit_is_counted() {
     let plain = shot(&mut r, dim(&row(ids, vec![], false), unshadowed));
     let ambient = shot(&mut r, dim(&row(ids, vec![], false), dark));
     let img = shot(&mut r, row(ids, vec![], false));
+    let diff = |a: &[f32], b: &[f32]| a.iter().zip(b).filter(|(x, y)| x != y).count();
+    eprintln!("DBG diffs plain/ambient {} plain/img {} ambient/img {}", diff(&plain, &ambient), diff(&plain, &img), diff(&ambient, &img));
     assert_eq!(
         (r.last.local_shadows, r.last.local_shadows_dropped),
         (views, 1),
