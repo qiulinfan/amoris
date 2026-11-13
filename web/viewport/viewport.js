@@ -6,7 +6,8 @@
 //   vp.setCamera([x, y, z], [qx, qy, qz, qw], fovDeg);   // or vp.useSceneCamera()
 //   vp.onStats((s) => ...);                               // {gpu_ms, instances, tick, passes, frame_ms,
 //                                                         //  render_ms, draw_path, draw_calls,
-//                                                         //  local_shadows, local_shadows_dropped},
+//                                                         //  local_shadows, local_shadows_dropped,
+//                                                         //  texture_blocks},
 //                                                         //  per frame drawn
 //   vp.pushFrame(bytes);                                  // a render-feed frame from elsewhere (a game worker)
 //   vp.uiHit(clientX, clientY); vp.uiPointer(x, y, over, down); // the game UI's buttons (ui.md 6)

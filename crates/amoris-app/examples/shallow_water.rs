@@ -238,6 +238,8 @@ fn main() {
                 fog_color: [0.6, 0.7, 0.8],
                 exposure_ev: 0.5,
                 bloom: 0.05,
+                color_lut: String::new(),
+                color_lut_intensity: 1.0,
             });
             f.lights = Some(vec![amoris_assets::frame::LightView {
                 id: 1 << 40,

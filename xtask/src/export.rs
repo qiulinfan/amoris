@@ -20,7 +20,7 @@ use std::process::Command;
 /// The project files the viewport fetches, as `tools/build_web.sh` copies them.
 const ASSETS: &[&str] = &[
     "glb", "gltf", "bin", "png", "jpg", "jpeg", "ktx2", "ply", "spz", "splat", "wav", "ogg", "mp3",
-    "flac", "ttf",
+    "flac", "ttf", "cube",
 ];
 
 /// The page's own files, from `web/`, at their published paths.

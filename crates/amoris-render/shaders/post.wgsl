@@ -1,16 +1,21 @@
 // Post-processing on the HDR image: bloom (a 13-tap downsample chain with a Karis average on the
 // first step against fireflies, then a tent-filtered upsample chain added back), and the display
-// transform: exposure, AgX tone mapping with its punchy look, and dithering.
+// transform: exposure, AgX tone mapping with its punchy look, the optional color-grading table
+// (docs/spec/color-grading.md) and dithering.
 
 struct PostParams {
     texel: vec4f,            // 1/width, 1/height of the source; z: bloom strength; w: first step (1/0)
-    exposure: vec4f,         // x: exposure multiplier; y: output is sRGB-encoded by the surface (1/0)
+    // x: exposure multiplier; y: output is sRGB-encoded by the surface (1/0); z: sharpening; w: the
+    // grading table's share (fs_tonemap_graded)
+    exposure: vec4f,
 };
 
 @group(0) @binding(0) var<uniform> pp: PostParams;
 @group(0) @binding(1) var src: texture_2d<f32>;
 @group(0) @binding(2) var src_sampler: sampler;
 @group(0) @binding(3) var bloom: texture_2d<f32>;
+// The color-grading table (fs_tonemap_graded only): rgba32float, read with textureLoad.
+@group(0) @binding(4) var lut: texture_3d<f32>;
 
 struct FsIn {
     @builtin(position) pos: vec4f,
@@ -152,8 +157,9 @@ fn sharpened(uv: vec2f, c: vec3f, amount: f32) -> vec3f {
     return p / max(1.0 - luminance(p), 1e-4);
 }
 
-@fragment
-fn fs_tonemap(in: FsIn) -> @location(0) vec4f {
+// The display transform up to AgX: sharpening, bloom, exposure, then AgX, whose output is
+// display-encoded (sRGB-like transfer built in).
+fn displayed(in: FsIn) -> vec3f {
     var c = textureSample(src, src_sampler, in.uv).rgb;
     if (pp.exposure.z > 0.0) {
         c = sharpened(in.uv, c, pp.exposure.z);
@@ -163,11 +169,15 @@ fn fs_tonemap(in: FsIn) -> @location(0) vec4f {
     let b = textureSample(bloom, src_sampler, in.uv).rgb / max(pp.texel.w, 1.0);
     c = mix(c, b, pp.texel.z);
     c *= pp.exposure.x;
-    // AgX's output is display-encoded (sRGB-like transfer built in).
-    var o = agx(c);
+    return agx(c);
+}
+
+// A display-encoded color as the output takes it: dithered, and decoded when the surface encodes.
+fn encoded(o_in: vec3f, pos: vec2f) -> vec4f {
+    var o = o_in;
     // Dither against banding in skies: a uniform value per pixel from an integer hash, identical on
     // every GPU and API (common.wgsl, `pcg_hash`).
-    let px = vec2u(in.pos.xy);
+    let px = vec2u(pos);
     let n = unit_from_hash(pcg_hash(px.x + pcg_hash(px.y)));
     o += (n - 0.5) / 255.0;
     if (pp.exposure.y > 0.5) {
@@ -175,6 +185,44 @@ fn fs_tonemap(in: FsIn) -> @location(0) vec4f {
         o = srgb_to_linear(clamp(o, vec3f(0.0), vec3f(1.0)));
     }
     return vec4f(o, 1.0);
+}
+
+@fragment
+fn fs_tonemap(in: FsIn) -> @location(0) vec4f {
+    return encoded(displayed(in), in.pos.xy);
+}
+
+// The grading table at a display-encoded color (clamped to [0, 1]): trilinear between its eight
+// nearest entries, interpolated here from textureLoad so every GPU computes it alike
+// (amoris_assets::lut::ColorLut::sample is the same on the CPU).
+fn graded(c: vec3f) -> vec3f {
+    let n = textureDimensions(lut).x;
+    let p = clamp(c, vec3f(0.0), vec3f(1.0)) * f32(n - 1u);
+    let i = min(vec3u(p), vec3u(n - 2u));
+    let f = p - vec3f(i);
+    let c000 = textureLoad(lut, i, 0).rgb;
+    let c100 = textureLoad(lut, i + vec3u(1u, 0u, 0u), 0).rgb;
+    let c010 = textureLoad(lut, i + vec3u(0u, 1u, 0u), 0).rgb;
+    let c110 = textureLoad(lut, i + vec3u(1u, 1u, 0u), 0).rgb;
+    let c001 = textureLoad(lut, i + vec3u(0u, 0u, 1u), 0).rgb;
+    let c101 = textureLoad(lut, i + vec3u(1u, 0u, 1u), 0).rgb;
+    let c011 = textureLoad(lut, i + vec3u(0u, 1u, 1u), 0).rgb;
+    let c111 = textureLoad(lut, i + vec3u(1u, 1u, 1u), 0).rgb;
+    let x00 = c000 + (c100 - c000) * f.x;
+    let x10 = c010 + (c110 - c010) * f.x;
+    let x01 = c001 + (c101 - c001) * f.x;
+    let x11 = c011 + (c111 - c011) * f.x;
+    let y0 = x00 + (x10 - x00) * f.y;
+    let y1 = x01 + (x11 - x01) * f.y;
+    return y0 + (y1 - y0) * f.z;
+}
+
+// The display transform with a grading table: the graded color blended in by its share, before
+// the dither.
+@fragment
+fn fs_tonemap_graded(in: FsIn) -> @location(0) vec4f {
+    let o = displayed(in);
+    return encoded(mix(o, graded(o), pp.exposure.w), in.pos.xy);
 }
 
 @fragment

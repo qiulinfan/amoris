@@ -316,7 +316,7 @@ beta 功能，测试已移除（4.4）。
 | 原生图形后端 | **Metal**（macOS）、**Vulkan**（Linux/Windows；macOS 上经 MoltenVK 验证）、**Direct3D 12**（Windows，Pioneer 2026-10-09） | — | 所有者 2026-10-04 指定只做 Metal 与 Vulkan；Pioneer 2026-10-09 应所有者的探索要求加入 Direct3D 12；所有者 2026-10-09 指定 Windows 默认后端为 Direct3D 12（见 4.4），2026-10-24 起找不到 DXC 1.8.2502 或更新的版本时改用 Vulkan |
 | Web 图形 | WebGPU（wgpu 的浏览器后端，同一份代码） | — | 证明 web 渲染；不做 WebGL 回退 |
 | 窗口与输入 | winit；gilrs（手柄） | 0.30 | 事实标准 |
-| 资源 | glTF 2.0（`gltf`）、PNG/JPEG（`image`）、网格处理（`meshopt`：LOD、顶点缓存）；导入在工作线程异步进行；内容哈希作为 ID | gltf 1.4、meshopt 0.6 | Amoris Pioneer 的 OBJ 导入冻结 14–27 秒，本线只走 glTF 且异步 |
+| 资源 | glTF 2.0（`gltf`）、PNG/JPEG（`image`）、KTX2 纹理（`ktx2`、Zstd 用 `ruzstd`、CPU 块解码用 `texture2ddecoder`，2026-11-12）、网格处理（`meshopt`：LOD、顶点缓存）；导入在工作线程异步进行；内容哈希作为 ID | gltf 1.4、meshopt 0.6、ktx2 0.5 | Amoris Pioneer 的 OBJ 导入冻结 14–27 秒，本线只走 glTF 且异步 |
 | 神经渲染 | 3D Gaussian Splatting（GPU 排序、与网格深度混合）；神经纹理压缩（潜变量网格 + 小型 MLP，在片元着色器里解码；2026-10-23 起为 beta 功能） | 自研 | 见 4.4 |
 | 音频 | kira（cpal；web 上为 WebAudio） | 0.12 | 混音、空间音频、补间 |
 | agent 接口 | **CLI 优先**：一张命令目录 → `amoris` CLI（连接运行中的宿主，紧凑文本输出，`--json` 精确输出，帮助文本来自目录）、编辑器 WebSocket、脚本 API、测试；MCP（`rmcp`）是同一目录的薄投影 | rmcp 3.7 | agent 在 shell 里最顺手、最省 token；目录唯一，所有前端不漂移 |
@@ -958,6 +958,28 @@ beta 功能，测试已移除（4.4）。
   数组里一层 2048 x 2048（16 MiB），一个点光源 96 MiB，满额 192 MiB；没有带阴影的局部光时内存与画
   面不变。理由：沿用已验证的聚光灯路径，不新增绑定（WebGPU 基线的纹理与存储缓冲数不变）；更小的点
   光贴图或图集留待以后。
+
+  2026-11-12：调色查找表。`Environment` 新增 `color_lut`（项目内 `.cube` 文件，Adobe Cube LUT 1.0 的
+  3D 表，每边 2 到 65 个条目）与 `color_lut_intensity`（0 到 1，默认 1），类型版本由 3 升到 4，经渲
+  染 feed 送到显示变换：在 AgX 之后、抖动之前，以显示编码（类 sRGB）的颜色查表，着色器里由
+  `textureLoad` 做三线性插值，再按强度与原色混合。没有表、表未载入或载入失败、强度为 0 时仍走原先
+  的 `fs_tonemap`，画面逐位不变；表载入失败记入日志与 `color_lut_error`，不替代。理由：查表放在色调
+  映射之后，调色工具在显示参考图像上做的"看法"表可以原样套用；用 `rgba32float` 三维纹理与
+  `textureLoad` 不需要 WebGPU 的可选特性，各家 GPU 算法相同。一维表、非默认定义域、色调映射前的
+  技术性查表与 PNG 条带格式留待以后。规格见 [color-grading.md](spec/color-grading.md)。
+
+  2026-11-12：KTX2 纹理与块压缩。glTF 的纹理可经 `KHR_texture_basisu` 或普通 `source` 指向 KTX2
+  文件（RGBA8、BC1、BC3、BC4、BC5、BC7，可带 Zstd 超压缩，带自身的 mip 链）。导入器在 CPU 上把第 0
+  层解码为 RGBA8 供路径追踪与烘焙读取，并保留文件的各层。设备有 `texture-compression-bc`（桌面 GPU、
+  桌面 Chrome）时，边长不小于纹理层（1024）、链完整的 BC7 图像按原样写入新的 BC7 纹理数组（sRGB 与线
+  性各一，第一次用到时才建），内存是 RGBA8 层的四分之一；其余 KTX2 图像以及没有 BC 的设备上的全部
+  KTX2 图像在 CPU 上解码，链合适时逐层写入 RGBA8 层，否则与 PNG 一样缩放并在 GPU 上生成 mip。没有
+  KTX2 的模型不建数组，画面逐位不变；`AMORIS_GPU_MINIMAL` 的 `texture-compression` 与浏览器的
+  `?gpu_minimal=` 走解码路径。理由：块压缩省显存与上传，而 WebGPU 基线里它是可选特性，所以解码路
+  径必须让每台设备画出同样的纹理；纹理组只能再加两个采样纹理绑定，故只有 BC7 原样上 GPU。Basis
+  Universal（ETC1S、UASTC）的转码需要 C++ 转码器进入浏览器的 wasm 模块，ASTC 与 ETC2 在此无设备可
+  验，二者留待以后，Basis 文件被拒绝并说明原因（有 PNG 回退时用回退）。规格见
+  [texture-formats.md](spec/texture-formats.md)。
 - **神经渲染**：
   - 3D Gaussian Splatting：预处理计算着色器（投影、剔除、球谐取色）、GPU 基数排序、实例化四边形混
     合，与网格深度缓冲合成，即混合网格与 splat 的场景。 2026-10-09（Pioneer）：另有可选的计算着色器

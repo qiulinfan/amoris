@@ -27,6 +27,6 @@ for project in "$@"; do
   # The project's assets (everything but its sources and tooling) at the same relative paths.
   (cd "$project" && find . -type f \( -name '*.glb' -o -name '*.gltf' -o -name '*.bin' -o -name '*.png' \
     -o -name '*.jpg' -o -name '*.ktx2' -o -name '*.ply' -o -name '*.spz' -o -name '*.wav' -o -name '*.ogg' \
-    -o -name '*.mp3' -o -name '*.flac' -o -name '*.ttf' \) -not -path './.amoris/*') |
+    -o -name '*.mp3' -o -name '*.flac' -o -name '*.ttf' -o -name '*.cube' \) -not -path './.amoris/*') |
     while read -r f; do mkdir -p "$out/$(dirname "$f")"; cp "$project/$f" "$out/$f"; done
 done

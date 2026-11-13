@@ -163,6 +163,8 @@ fn sunlit(instances: Vec<InstanceUpdate>, dir: Vec3, shadows: bool) -> RenderFra
             fog_color: [0.6, 0.7, 0.8],
             exposure_ev: 0.0,
             bloom: 0.1,
+            color_lut: String::new(),
+            color_lut_intensity: 1.0,
         }),
         sea: None,
         weather: None,
@@ -188,6 +190,7 @@ pub fn mixed_model() -> ModelAsset {
         }
     }
     let image = ImageData {
+        levels: None,
         name: "checker".into(),
         width: size,
         height: size,
@@ -1046,6 +1049,7 @@ pub fn aa_model() -> ModelAsset {
     ModelAsset {
         images: vec![
             ImageData {
+                levels: None,
                 name: "fine checker".into(),
                 width: size,
                 height: size,
@@ -1054,6 +1058,7 @@ pub fn aa_model() -> ModelAsset {
                 nearest: false,
             },
             ImageData {
+                levels: None,
                 name: "chain link".into(),
                 width: link,
                 height: link,

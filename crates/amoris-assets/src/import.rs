@@ -29,8 +29,10 @@ fn failed(path: &Path, why: impl std::fmt::Display) -> Problem {
 
 /// Imports the file at `path`.
 pub fn import_gltf(path: &Path) -> Result<ModelAsset, Problem> {
-    let (doc, buffers, images) = gltf::import(path).map_err(|e| failed(path, e))?;
-    Ok(convert(&doc, &buffers, &images))
+    let gltf::Gltf { document, blob } = gltf::Gltf::open(path).map_err(|e| failed(path, e))?;
+    let base = path.parent().unwrap_or_else(|| Path::new("./"));
+    let buffers = gltf::import_buffers(&document, Some(base), blob).map_err(|e| failed(path, e))?;
+    convert(&document, &buffers, Some(base)).map_err(|e| failed(path, e))
 }
 
 /// A PNG or JPEG file's pixels as RGBA8 (sRGB), with its width and height: a game UI image
@@ -44,49 +46,249 @@ pub fn decode_image(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
 
 /// Imports a `.glb` held in memory (the browser fetches it); external files are not resolved.
 pub fn import_glb_bytes(bytes: &[u8]) -> Result<ModelAsset, Problem> {
-    let (doc, buffers, images) =
-        gltf::import_slice(bytes).map_err(|e| failed(Path::new("<memory>"), e))?;
-    Ok(convert(&doc, &buffers, &images))
+    let memory = Path::new("<memory>");
+    let gltf::Gltf { document, blob } =
+        gltf::Gltf::from_slice(bytes).map_err(|e| failed(memory, e))?;
+    let buffers = gltf::import_buffers(&document, None, blob).map_err(|e| failed(memory, e))?;
+    convert(&document, &buffers, None).map_err(|e| failed(memory, e))
+}
+
+/// The image a texture names in `KHR_texture_basisu` (a KTX2 file), if any.
+fn basisu_source(t: &gltf::Texture<'_>) -> Option<usize> {
+    t.extension_value("KHR_texture_basisu")?["source"]
+        .as_u64()
+        .map(|i| i as usize)
+}
+
+/// The images a texture names: its `KHR_texture_basisu` source, then its own `source`.
+fn named_images(t: &gltf::Texture<'_>) -> impl Iterator<Item = usize> {
+    basisu_source(t)
+        .into_iter()
+        .chain(t.source().map(|s| s.index()))
+}
+
+/// Whether an image is a KTX2 file, by its media type, its file name or its first bytes.
+fn is_ktx2_image(image: &gltf::Image<'_>, buffers: &[gltf::buffer::Data]) -> bool {
+    match image.source() {
+        gltf::image::Source::View { view, mime_type } => {
+            mime_type == "image/ktx2"
+                || buffers.get(view.buffer().index()).is_some_and(|b| {
+                    b.0.get(view.offset()..view.offset() + view.length())
+                        .is_some_and(crate::ktx2::is_ktx2)
+                })
+        }
+        gltf::image::Source::Uri { uri, mime_type } => {
+            mime_type == Some("image/ktx2")
+                || uri.starts_with("data:image/ktx2")
+                || uri.to_ascii_lowercase().ends_with(".ktx2")
+        }
+    }
+}
+
+/// A KTX2 image's bytes: a buffer view, a base64 data URI, or a file beside the glTF file.
+fn ktx2_bytes(
+    image: &gltf::Image<'_>,
+    buffers: &[gltf::buffer::Data],
+    base: Option<&Path>,
+) -> Result<Vec<u8>, String> {
+    match image.source() {
+        gltf::image::Source::View { view, .. } => buffers
+            .get(view.buffer().index())
+            .and_then(|b| b.0.get(view.offset()..view.offset() + view.length()))
+            .map(<[u8]>::to_vec)
+            .ok_or_else(|| "its buffer view lies outside its buffer".into()),
+        gltf::image::Source::Uri { uri, .. } => {
+            if let Some(rest) = uri.strip_prefix("data:") {
+                let (_, data) = rest
+                    .split_once(";base64,")
+                    .ok_or("a data URI that is not base64")?;
+                return unbase64(data).ok_or_else(|| "a data URI that does not decode".into());
+            }
+            let base = base.ok_or("an external file, which an import from memory does not read")?;
+            let file = base.join(percent_decode(uri));
+            std::fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))
+        }
+    }
+}
+
+/// A URI's `%XX` escapes decoded (glTF's URIs are percent-encoded).
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    let hex = |c: u8| (c as char).to_digit(16);
+    while i < b.len() {
+        if b[i] == b'%'
+            && let (Some(h), Some(l)) = (
+                b.get(i + 1).copied().and_then(hex),
+                b.get(i + 2).copied().and_then(hex),
+            )
+        {
+            out.push((h * 16 + l) as u8);
+            i += 3;
+            continue;
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Standard or URL-safe base64, padding optional.
+fn unbase64(s: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(s.len() * 3 / 4);
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for c in s.bytes().filter(|c| !c.is_ascii_whitespace() && *c != b'=') {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' | b'-' => 62,
+            b'/' | b'_' => 63,
+            _ => return None,
+        };
+        acc = ((acc << 6) | u32::from(v)) & 0xFFFF;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    Some(out)
+}
+
+/// The file's images as imported (`None`: not decoded), and the image each texture takes
+/// (docs/spec/texture-formats.md 3). A texture with a `KHR_texture_basisu` source takes that KTX2
+/// image when it reads, else its own `source` (the extension's fallback), else none; a KTX2 image
+/// that does not read fails the import unless every texture naming it has a fallback that reads.
+/// An image that only fallbacks of KTX2 images that read name is not decoded. Every other image
+/// decodes as before: PNG and JPEG through the `image` crate, KTX2 by [`crate::ktx2`].
+#[allow(clippy::type_complexity)]
+fn load_images(
+    doc: &gltf::Document,
+    buffers: &[gltf::buffer::Data],
+    base: Option<&Path>,
+) -> Result<(Vec<Option<ImageData>>, Vec<Option<usize>>), String> {
+    let count = doc.images().count();
+    let ktx2: Vec<bool> = doc.images().map(|i| is_ktx2_image(&i, buffers)).collect();
+    // The KTX2 images textures name, each read once.
+    let mut wanted = vec![false; count];
+    for t in doc.textures() {
+        for i in named_images(&t).filter(|&i| i < count && ktx2[i]) {
+            wanted[i] = true;
+        }
+    }
+    let mut read: Vec<Option<Result<ImageData, String>>> = vec![None; count];
+    for image in doc.images() {
+        let i = image.index();
+        if wanted[i] {
+            read[i] = Some(
+                ktx2_bytes(&image, buffers, base)
+                    .and_then(|bytes| crate::ktx2::image_data(format!("image{i}"), &bytes, false)),
+            );
+        }
+    }
+    let reads = |i: usize| i < count && (!ktx2[i] || matches!(read[i], Some(Ok(_))));
+    let why = |t: &gltf::Texture<'_>, i: usize| {
+        let reason = match read.get(i) {
+            Some(Some(Err(e))) => e.clone(),
+            _ => "no such image".into(),
+        };
+        format!(
+            "texture {}'s KTX2 image {i} does not read: {reason}",
+            t.index()
+        )
+    };
+    let mut chosen = Vec::new();
+    for t in doc.textures() {
+        let fallback = t.source().map(|s| s.index());
+        let pick = match (basisu_source(&t), fallback) {
+            (Some(k), _) if reads(k) && ktx2[k] => Some(k),
+            (Some(_), Some(f)) if reads(f) => Some(f),
+            (Some(k), _) => return Err(why(&t, k)),
+            (None, Some(f)) if reads(f) => Some(f),
+            (None, Some(f)) => return Err(why(&t, f)),
+            (None, None) => None,
+        };
+        chosen.push(pick);
+    }
+    // An image a texture names but none takes is a fallback left unused: not decoded.
+    let mut used = vec![false; count];
+    let mut named = vec![false; count];
+    for (t, pick) in doc.textures().zip(&chosen) {
+        if let Some(i) = *pick {
+            used[i] = true;
+        }
+        for i in named_images(&t).filter(|&i| i < count) {
+            named[i] = true;
+        }
+    }
+    let mut images = Vec::with_capacity(count);
+    for image in doc.images() {
+        let i = image.index();
+        images.push(if ktx2[i] {
+            match read[i].take() {
+                Some(Ok(data)) if used[i] => Some(data),
+                _ => None,
+            }
+        } else if named[i] && !used[i] {
+            None
+        } else {
+            let data = gltf::image::Data::from_source(image.source(), base, buffers)
+                .map_err(|e| format!("image {i}: {e}"))?;
+            Some(to_rgba8(&data, false, i))
+        });
+    }
+    Ok((images, chosen))
 }
 
 fn convert(
     doc: &gltf::Document,
     buffers: &[gltf::buffer::Data],
-    images: &[gltf::image::Data],
-) -> ModelAsset {
+    base: Option<&Path>,
+) -> Result<ModelAsset, String> {
     let mut asset = ModelAsset::default();
+    let (loaded, chosen) = load_images(doc, buffers, base)?;
+    let images = loaded.len();
+    let source = |t: &gltf::Texture<'_>| chosen[t.index()];
     // Which images are color data: base color and emissive are sRGB; the rest are linear.
-    let mut srgb = vec![false; images.len()];
+    let mut srgb = vec![false; images];
     for m in doc.materials() {
         let pbr = m.pbr_metallic_roughness();
-        if let Some(t) = pbr.base_color_texture() {
-            srgb[t.texture().source().index()] = true;
+        if let Some(i) = pbr.base_color_texture().and_then(|t| source(&t.texture())) {
+            srgb[i] = true;
         }
-        if let Some(t) = m.emissive_texture() {
-            srgb[t.texture().source().index()] = true;
+        if let Some(i) = m.emissive_texture().and_then(|t| source(&t.texture())) {
+            srgb[i] = true;
         }
     }
     // Which images a texture magnifies with NEAREST (pixel art), and which a texture samples
     // smoothly: a filter belongs to a texture's sampler, and the renderer applies it per image.
-    let mut nearest = vec![false; images.len()];
-    let mut smooth = vec![false; images.len()];
+    let mut nearest = vec![false; images];
+    let mut smooth = vec![false; images];
     for t in doc.textures() {
         let by = if magnifies_nearest(&t) {
             &mut nearest
         } else {
             &mut smooth
         };
-        by[t.source().index()] = true;
+        if let Some(i) = source(&t) {
+            by[i] = true;
+        }
     }
-    for (i, img) in images.iter().enumerate() {
-        let mut image = to_rgba8(img, srgb[i], i);
+    for (i, img) in loaded.into_iter().enumerate() {
+        let mut image = img.unwrap_or_else(|| ImageData {
+            name: format!("image{i}"),
+            ..ImageData::default()
+        });
+        image.srgb = srgb[i];
         image.nearest = nearest[i] && !smooth[i];
         asset.images.push(image);
     }
     // An image sampled both ways is imported twice, the marked copy after the file's images: the
     // file's indices keep their meaning, and each copy gets a texture layer of its own.
-    let mut marked: Vec<usize> = (0..images.len()).collect();
-    for i in 0..images.len() {
+    let mut marked: Vec<usize> = (0..images).collect();
+    for i in 0..images {
         if nearest[i] && smooth[i] {
             marked[i] = asset.images.len();
             asset.images.push(ImageData {
@@ -97,12 +299,12 @@ fn convert(
     }
     // The image a material's texture takes: the one its own sampler asks for.
     let image = |t: gltf::Texture<'_>| {
-        let i = t.source().index();
-        if magnifies_nearest(&t) { marked[i] } else { i }
+        let i = source(&t)?;
+        Some(if magnifies_nearest(&t) { marked[i] } else { i })
     };
     for m in doc.materials() {
         let pbr = m.pbr_metallic_roughness();
-        let tex = |t: Option<gltf::texture::Info<'_>>| t.map(|t| image(t.texture()));
+        let tex = |t: Option<gltf::texture::Info<'_>>| t.and_then(|t| image(t.texture()));
         let strength = m.emissive_strength().unwrap_or(1.0);
         let e = m.emissive_factor();
         asset.materials.push(MaterialData {
@@ -115,9 +317,9 @@ fn convert(
             emissive: [e[0] * strength, e[1] * strength, e[2] * strength],
             base_color_texture: tex(pbr.base_color_texture()),
             metallic_roughness_texture: tex(pbr.metallic_roughness_texture()),
-            normal_texture: m.normal_texture().map(|t| image(t.texture())),
+            normal_texture: m.normal_texture().and_then(|t| image(t.texture())),
             emissive_texture: tex(m.emissive_texture()),
-            occlusion_texture: m.occlusion_texture().map(|t| image(t.texture())),
+            occlusion_texture: m.occlusion_texture().and_then(|t| image(t.texture())),
             transmission_texture: m.transmission().and_then(|t| tex(t.transmission_texture())),
             normal_scale: m.normal_texture().map_or(1.0, |t| t.scale()),
             occlusion_strength: m.occlusion_texture().map_or(1.0, |t| t.strength()),
@@ -285,7 +487,7 @@ fn convert(
             }
         })
         .collect();
-    asset
+    Ok(asset)
 }
 
 /// Whether a texture's sampler magnifies with glTF's `NEAREST`: its image is pixel art whose
@@ -423,6 +625,7 @@ fn to_rgba8(img: &gltf::image::Data, srgb: bool, index: usize) -> ImageData {
         rgba8,
         srgb,
         nearest: false,
+        levels: None,
     }
 }
 
@@ -452,19 +655,31 @@ mod tests {
             bin.extend_from_slice(image);
             bin.resize(bin.len().next_multiple_of(4), 0);
         }
-        let mut text = json!({
+        let mime = |i: &Vec<u8>| {
+            if crate::ktx2::is_ktx2(i) {
+                "image/ktx2"
+            } else {
+                "image/png"
+            }
+        };
+        let mut doc = json!({
             "asset": {"version": "2.0"},
             "buffers": [{"byteLength": bin.len()}],
             "bufferViews": views,
-            "images": (0..images.len())
-                .map(|i| json!({"bufferView": i, "mimeType": "image/png"}))
+            "images": images
+                .iter()
+                .enumerate()
+                .map(|(i, image)| json!({"bufferView": i, "mimeType": mime(image)}))
                 .collect::<Vec<_>>(),
             "samplers": samplers,
             "textures": textures,
             "materials": materials,
-        })
-        .to_string()
-        .into_bytes();
+        });
+        if images.iter().any(|i| crate::ktx2::is_ktx2(i)) {
+            doc["extensionsUsed"] = json!(["KHR_texture_basisu"]);
+            doc["extensionsRequired"] = json!(["KHR_texture_basisu"]);
+        }
+        let mut text = doc.to_string().into_bytes();
         text.resize(text.len().next_multiple_of(4), b' ');
         let mut out = Vec::new();
         out.extend_from_slice(b"glTF");
@@ -615,5 +830,127 @@ mod tests {
         for (i, m) in blocks.materials.iter().enumerate() {
             assert_eq!(m.base_color_texture, Some(i), "{}", m.name);
         }
+    }
+
+    /// An RGBA8 KTX2 file of `width` x `height` pixels, each `color(x, y)`, with its full chain,
+    /// Zstd-supercompressed.
+    fn ktx2_file(width: u32, height: u32, color: impl Fn(u32, u32) -> [u8; 4]) -> Vec<u8> {
+        let px: Vec<u8> = (0..height)
+            .flat_map(|y| (0..width).flat_map(move |x| (0..4).map(move |c| (x, y, c))))
+            .map(|(x, y, c)| color(x, y)[c])
+            .collect();
+        let levels = crate::mesh::TextureLevels {
+            format: crate::mesh::BlockFormat::Rgba8,
+            levels: crate::ktx2::box_chain(width, height, &px),
+        };
+        crate::ktx2::write(width, height, true, &levels, true)
+    }
+
+    /// `file` with its `vkFormat` undefined: what a Basis Universal file says.
+    fn as_basis(mut file: Vec<u8>) -> Vec<u8> {
+        file[12..16].copy_from_slice(&0u32.to_le_bytes());
+        file
+    }
+
+    #[test]
+    fn a_basisu_texture_takes_its_ktx2_image() {
+        let fallback = png(8, 8, |_, _| [9, 9, 9, 255]);
+        let color = ktx2_file(8, 8, art);
+        let normal = ktx2_file(4, 4, |_, _| [128, 128, 255, 255]);
+        let bytes = glb(
+            &[fallback, color, normal],
+            json!([]),
+            json!([
+                {"source": 0, "extensions": {"KHR_texture_basisu": {"source": 1}}},
+                {"extensions": {"KHR_texture_basisu": {"source": 2}}}
+            ]),
+            json!([{"name": "panel",
+                "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+                "normalTexture": {"index": 1}}]),
+        );
+        let asset = import_glb_bytes(&bytes).expect("the model imports");
+        let m = &asset.materials[0];
+        assert_eq!((m.base_color_texture, m.normal_texture), (Some(1), Some(2)));
+        let (fallback, color, normal) = (&asset.images[0], &asset.images[1], &asset.images[2]);
+        assert_eq!(
+            (fallback.width, fallback.rgba8.len()),
+            (0, 0),
+            "the unused PNG is not decoded"
+        );
+        assert!(
+            color.srgb && !normal.srgb,
+            "glTF's use decides the color space"
+        );
+        let drawn: Vec<u8> = (0..8)
+            .flat_map(|y| (0..8).flat_map(move |x| art(x, y)))
+            .collect();
+        assert_eq!(color.rgba8, drawn, "level 0, decoded");
+        let levels = color.levels.as_ref().expect("the file's levels");
+        assert_eq!(levels.format, crate::mesh::BlockFormat::Rgba8);
+        assert_eq!(levels.levels.len(), 4, "8, 4, 2, 1");
+        assert_eq!(levels.levels[0], drawn);
+        assert_eq!(&normal.rgba8[..4], &[128, 128, 255, 255]);
+        // A plain image/ktx2 source reads the same way.
+        let plain = glb(
+            &[ktx2_file(8, 8, art)],
+            json!([]),
+            json!([{"source": 0}]),
+            json!([{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}]),
+        );
+        let asset = import_glb_bytes(&plain).expect("a plain KTX2 source imports");
+        assert_eq!(asset.images[0].rgba8, drawn);
+        assert!(asset.images[0].levels.is_some());
+    }
+
+    #[test]
+    fn a_ktx2_image_that_does_not_read_falls_back_or_fails_the_import() {
+        let fallback = png(4, 4, |x, y| [x as u8 * 50, y as u8 * 50, 3, 255]);
+        let basis = as_basis(ktx2_file(4, 4, art));
+        let material = json!([{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}]);
+        let with = glb(
+            &[fallback.clone(), basis.clone()],
+            json!([]),
+            json!([{"source": 0, "extensions": {"KHR_texture_basisu": {"source": 1}}}]),
+            material.clone(),
+        );
+        let asset = import_glb_bytes(&with).expect("the fallback imports");
+        assert_eq!(asset.materials[0].base_color_texture, Some(0));
+        assert_eq!(
+            (asset.images[0].width, asset.images[0].levels.is_none()),
+            (4, true)
+        );
+        assert_eq!(asset.images[1].width, 0, "the Basis image is left out");
+        let without = glb(
+            &[basis],
+            json!([]),
+            json!([{"extensions": {"KHR_texture_basisu": {"source": 0}}}]),
+            material,
+        );
+        let refused = import_glb_bytes(&without).expect_err("no fallback");
+        assert!(refused.message.contains("Basis"), "{}", refused.message);
+    }
+
+    #[test]
+    fn a_gltf_file_reads_a_ktx2_file_beside_it() {
+        let dir = std::env::temp_dir().join(format!("amoris-ktx2-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a b.ktx2"), ktx2_file(4, 4, art)).unwrap();
+        let doc = json!({
+            "asset": {"version": "2.0"},
+            "extensionsUsed": ["KHR_texture_basisu"],
+            "extensionsRequired": ["KHR_texture_basisu"],
+            "images": [{"uri": "a%20b.ktx2"}],
+            "textures": [{"extensions": {"KHR_texture_basisu": {"source": 0}}}],
+            "materials": [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}],
+        });
+        std::fs::write(dir.join("m.gltf"), doc.to_string()).unwrap();
+        let asset = import_gltf(&dir.join("m.gltf"));
+        let _ = std::fs::remove_dir_all(&dir);
+        let asset = asset.expect("the model imports");
+        assert_eq!(asset.materials[0].base_color_texture, Some(0));
+        let drawn: Vec<u8> = (0..4)
+            .flat_map(|y| (0..4).flat_map(move |x| art(x, y)))
+            .collect();
+        assert_eq!(asset.images[0].rgba8, drawn);
     }
 }

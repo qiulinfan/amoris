@@ -121,6 +121,10 @@ pub struct Capabilities {
     /// Half-precision arithmetic in shaders (neural decoding).
     pub shader_f16: bool,
     pub float32_filterable: bool,
+    /// BC1 to BC7 textures (WebGPU's optional `texture-compression-bc`; desktop GPUs): a KTX2
+    /// image in BC7 is sampled as stored (materials.rs, docs/spec/texture-formats.md 4); without
+    /// it every KTX2 image is decoded to RGBA8 on the CPU.
+    pub texture_compression_bc: bool,
     /// Inline ray queries (`EXPERIMENTAL_RAY_QUERY`), requested only for ray-traced sun shadows
     /// (`AMORIS_RT_SHADOWS=1`, rt_shadows.rs) or water reflections (`AMORIS_RT_REFLECTIONS=1`) on a
     /// native adapter that has them.
@@ -156,23 +160,26 @@ impl std::error::Error for GpuError {}
 /// the viewport page's `?gpu_minimal=`): a comma-separated list of `features` (no optional
 /// features at all), `first-instance` (no `indirect-first-instance` only), `multi-draw` (draw
 /// batch by batch as in the browser even where multi-draw is native), `timestamps` (no GPU
-/// timestamps) and `limits` (WebGPU's default limits).
+/// timestamps), `texture-compression` (no `texture-compression-bc`: KTX2 images decode on the CPU)
+/// and `limits` (WebGPU's default limits).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Minimal {
     pub features: bool,
     pub first_instance: bool,
     pub multi_draw: bool,
     pub timestamps: bool,
+    pub texture_compression: bool,
     pub limits: bool,
 }
 
 impl Minimal {
     pub fn parse(s: &str) -> Minimal {
-        const TOKENS: [&str; 5] = [
+        const TOKENS: [&str; 6] = [
             "features",
             "first-instance",
             "multi-draw",
             "timestamps",
+            "texture-compression",
             "limits",
         ];
         for w in s.split(',').map(str::trim).filter(|w| !w.is_empty()) {
@@ -186,6 +193,7 @@ impl Minimal {
             first_instance: has("first-instance"),
             multi_draw: has("multi-draw"),
             timestamps: has("timestamps"),
+            texture_compression: has("texture-compression"),
             limits: has("limits"),
         }
     }
@@ -345,7 +353,8 @@ impl Gpu {
         let want = wgpu::Features::INDIRECT_FIRST_INSTANCE
             | wgpu::Features::TIMESTAMP_QUERY
             | wgpu::Features::SHADER_F16
-            | wgpu::Features::FLOAT32_FILTERABLE;
+            | wgpu::Features::FLOAT32_FILTERABLE
+            | wgpu::Features::TEXTURE_COMPRESSION_BC;
         let mut required = have & want;
         if !cfg!(target_arch = "wasm32") {
             // Timestamps inside passes and encoders are native-only extras.
@@ -360,6 +369,9 @@ impl Gpu {
         }
         if minimal.first_instance {
             required.remove(wgpu::Features::INDIRECT_FIRST_INSTANCE);
+        }
+        if minimal.texture_compression {
+            required.remove(wgpu::Features::TEXTURE_COMPRESSION_BC);
         }
         if minimal.timestamps {
             required.remove(
@@ -434,6 +446,7 @@ impl Gpu {
             timestamps: required.contains(wgpu::Features::TIMESTAMP_QUERY),
             shader_f16: required.contains(wgpu::Features::SHADER_F16),
             float32_filterable: required.contains(wgpu::Features::FLOAT32_FILTERABLE),
+            texture_compression_bc: required.contains(wgpu::Features::TEXTURE_COMPRESSION_BC),
             ray_query,
             rt: if ray_query {
                 effects

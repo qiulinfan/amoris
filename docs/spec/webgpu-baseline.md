@@ -25,6 +25,7 @@ evidence: `out/bench-runs/webgpu/`.
 | `indirect_first_instance` | WebGPU `indirect-first-instance` | a batch's instance base in its indirect arguments (2) | the base goes through a dynamic-offset uniform (2.3); identical images |
 | `multi_draw_indirect` | wgpu-core on Vulkan, Metal, DX12 (`DownlevelFlags::INDIRECT_EXECUTION`); false in the browser | one `multi_draw_indexed_indirect` per view and variant | one `draw_indexed_indirect` per batch that holds instances |
 | `timestamps` | `timestamp-query` (natively also inside passes and encoders) | per-pass GPU times (`profiler.rs`) | GPU times read 0 |
+| `texture_compression_bc` | `texture-compression-bc` (desktop GPUs, desktop Chrome) | a KTX2 image in BC7 whose levels fit a layer sampled as stored from a BC7 array ([texture-formats.md](texture-formats.md) 4) | every KTX2 image decoded to RGBA8 on the CPU, its levels written where they fit: the same frames within one 8-bit step (none differed in the checks); the two BC7 bindings hold a 1-texel stand-in |
 | `shader_f16`, `float32_filterable` | `shader-f16`, `float32-filterable` | requested when offered; nothing in the raster renderer reads the flags (gi/ checks the adapter itself) | — |
 
 wgpu 30 does not tie `multi_draw_indexed_indirect` to a feature: it needs only indirect execution,
@@ -130,6 +131,7 @@ comma-separated list (`gpu::Minimal`):
 | `first-instance` | no `indirect-first-instance` only (forces the `baseline` path) |
 | `multi-draw` | no native multi-draw (forces the `first-instance` path natively) |
 | `timestamps` | no timestamp queries |
+| `texture-compression` | no `texture-compression-bc` only (KTX2 images decode on the CPU) |
 | `limits` | WebGPU's default limits (keeping the adapter's resolution limits) |
 
 When `indirect-first-instance` is left out, the instance turns on wgpu-core's indirect-call

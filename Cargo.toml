@@ -70,8 +70,12 @@ mime_guess = "=2.0.5"
 ureq = { version = "=3.4.2", default-features = false }
 
 # Presenters and assets (charter 4.1)
-gltf = { version = "=1.4.1", default-features = false, features = ["import", "utils", "names", "KHR_materials_emissive_strength", "KHR_texture_transform", "KHR_lights_punctual", "KHR_materials_transmission", "KHR_materials_ior"] }
+gltf = { version = "=1.4.1", default-features = false, features = ["import", "utils", "names", "KHR_materials_emissive_strength", "KHR_texture_transform", "KHR_lights_punctual", "KHR_materials_transmission", "KHR_materials_ior", "extensions", "allow_empty_texture"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# KTX2 textures (docs/spec/texture-formats.md): the container, its Zstd supercompression and the
+# CPU decoding of block-compressed levels where the GPU samples no block format. Pure Rust, wasm32 too.
+ktx2 = "=0.5.0"
+ruzstd = { version = "=0.9.1", default-features = false, features = ["std"] }
 # Mesh LOD chains, vertex cache and fetch order (charter 4.1, 4.4's Pioneer note of 2026-10-09;
 # docs/spec/lod.md). C++ built by `cc`: clang-cl or MSVC natively, the pinned clang for wasm32.
 meshopt = "=0.6.2"
@@ -89,8 +93,9 @@ bytemuck = { version = "=1.25.2", features = ["derive"] }
 # Lossless resident checkpoint transport; bounded blocks, including wasm32, with checked Rust APIs.
 lz4_flex = { version = "=0.14.0", default-features = false, features = ["safe-encode", "safe-decode", "checked-decode"] }
 pollster = "0.4"
-# The neural texture encoder's BCn baseline (amoris-render's example only; architecture.md 6):
-# Intel's ISPC texture compressor with its prebuilt kernels, and a pure-Rust BCn decoder.
+# The BCn encoder of the neural texture encoder's baseline and of the KTX2 fixtures (amoris-render's
+# examples and tests only; architecture.md 6): Intel's ISPC texture compressor with its prebuilt
+# kernels; and a pure-Rust BCn decoder (KTX2's CPU path in amoris-assets, docs/spec/texture-formats.md).
 intel_tex_2 = "=0.5.0"
 texture2ddecoder = "=0.1.2"
 kira = { version = "0.12", default-features = false, features = ["cpal", "wav", "ogg", "mp3", "flac"] }

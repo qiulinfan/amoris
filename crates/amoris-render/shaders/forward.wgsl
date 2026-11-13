@@ -31,6 +31,35 @@
 @group(2) @binding(0) var tex_srgb: texture_2d_array<f32>;
 @group(2) @binding(1) var tex_linear: texture_2d_array<f32>;
 @group(2) @binding(2) var tex_sampler: sampler;
+// The BC7 arrays (materials.rs; docs/spec/texture-formats.md 4): a layer index with TEX_BLOCKS set
+// names a layer of these, sRGB or linear as the array beside, instead of one of the RGBA8 arrays.
+@group(2) @binding(6) var tex_srgb_blocks: texture_2d_array<f32>;
+@group(2) @binding(7) var tex_linear_blocks: texture_2d_array<f32>;
+const TEX_BLOCKS: u32 = 0x40000000u;
+
+// A color texture's layer (base color, emissive) with explicit gradients.
+fn color_grad(layer: u32, uv: vec2f, du: vec2f, dv: vec2f) -> vec4f {
+    if ((layer & TEX_BLOCKS) != 0u) {
+        return textureSampleGrad(tex_srgb_blocks, tex_sampler, uv, layer & ~TEX_BLOCKS, du, dv);
+    }
+    return textureSampleGrad(tex_srgb, tex_sampler, uv, layer, du, dv);
+}
+
+// A data texture's layer (normals, metallic-roughness, transmission) with explicit gradients.
+fn data_grad(layer: u32, uv: vec2f, du: vec2f, dv: vec2f) -> vec4f {
+    if ((layer & TEX_BLOCKS) != 0u) {
+        return textureSampleGrad(tex_linear_blocks, tex_sampler, uv, layer & ~TEX_BLOCKS, du, dv);
+    }
+    return textureSampleGrad(tex_linear, tex_sampler, uv, layer, du, dv);
+}
+
+// A color texture's layer at mip `lod`.
+fn color_level(layer: u32, uv: vec2f, lod: f32) -> vec4f {
+    if ((layer & TEX_BLOCKS) != 0u) {
+        return textureSampleLevel(tex_srgb_blocks, tex_sampler, uv, layer & ~TEX_BLOCKS, lod);
+    }
+    return textureSampleLevel(tex_srgb, tex_sampler, uv, layer, lod);
+}
 
 // The draw batch's base in the visible lists (batches.rs), added to `instance_index`: 0 when the
 // base is the draw's `first_instance`; the base itself on WebGPU's baseline path, where
@@ -292,27 +321,27 @@ fn surface(in: VsOut, facing: bool) -> Surface {
     var s: Surface;
     var base = m.base_color;
     if (m.base_color_tex != NO_TEXTURE) {
-        base *= textureSampleGrad(tex_srgb, tex_sampler, uv, m.base_color_tex, du, dv);
+        base *= color_grad(m.base_color_tex, uv, du, dv);
     }
     s.albedo = base.rgb;
     s.alpha = base.a;
     s.metallic = m.metallic;
     s.roughness = m.roughness;
     if (m.metal_rough_tex != NO_TEXTURE) {
-        let mr = textureSampleGrad(tex_linear, tex_sampler, uv, m.metal_rough_tex, du, dv);
+        let mr = data_grad(m.metal_rough_tex, uv, du, dv);
         s.roughness *= mr.g;
         s.metallic *= mr.b;
     }
     var tn = vec3f(0.0);
     let mapped = m.normal_tex != NO_TEXTURE;
     if (mapped) {
-        tn = textureSampleGrad(tex_linear, tex_sampler, uv, m.normal_tex, du, dv).xyz * 2.0 - 1.0;
+        tn = data_grad(m.normal_tex, uv, du, dv).xyz * 2.0 - 1.0;
     }
     let n = shading_normal(in, facing, tn, mapped);
     s.n = n;
     s.emissive = m.emissive;
     if (m.emissive_tex != NO_TEXTURE) {
-        s.emissive *= textureSampleGrad(tex_srgb, tex_sampler, uv, m.emissive_tex, du, dv).rgb;
+        s.emissive *= color_grad(m.emissive_tex, uv, du, dv).rgb;
     }
     s.roughness = antialiased_roughness(n, s.roughness);
     s.occlusion = 1.0;
@@ -561,8 +590,8 @@ fn transparent(in: VsOut, s: Surface, du: vec2f, dv: vec2f) -> vec4f {
     }
     var transmission = m.transmission;
     if (m.transmission_tex != NO_TEXTURE) {
-        transmission *= textureSampleGrad(tex_linear, tex_sampler, in.uv * m.uv_scale,
-            m.transmission_tex, du * m.uv_scale, dv * m.uv_scale).r;
+        transmission *= data_grad(m.transmission_tex, in.uv * m.uv_scale, du * m.uv_scale,
+            dv * m.uv_scale).r;
     }
     let dielectric = 1.0 - s.metallic;
     var color = s.albedo + s.emissive;
@@ -697,7 +726,7 @@ fn fs_shadow_masked(in: MaskedShadowOut) {
     let m = materials[in.material];
     var a = m.base_color.a;
     if (m.base_color_tex != NO_TEXTURE) {
-        a *= textureSampleLevel(tex_srgb, tex_sampler, in.uv * m.uv_scale, m.base_color_tex, 0.0).a;
+        a *= color_level(m.base_color_tex, in.uv * m.uv_scale, 0.0).a;
     }
     // A transparent material casts as alpha-masked (materials.rs `variant`): what transmits is
     // not opaque. 0 for every other material.
@@ -748,7 +777,7 @@ fn fs_depth_masked(in: DepthOut) {
     let dv = dpdy(uv) * view.texture_lod.y;
     var a = m.base_color.a;
     if (m.base_color_tex != NO_TEXTURE) {
-        a *= textureSampleGrad(tex_srgb, tex_sampler, uv, m.base_color_tex, du, dv).a;
+        a *= color_grad(m.base_color_tex, uv, du, dv).a;
     }
     if (a < m.alpha_cutoff) {
         discard;

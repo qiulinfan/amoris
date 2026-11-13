@@ -1801,6 +1801,7 @@ mod tests {
     #[test]
     fn color_resize_filters_linear_light_and_preserves_alpha() {
         let src = ImageData {
+            levels: None,
             name: String::new(),
             width: 2,
             height: 1,

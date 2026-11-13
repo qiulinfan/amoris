@@ -22,11 +22,18 @@ glam.workspace = true
 # glTF 2.0 import (charter 4.1): meshes, materials, embedded and external images.
 gltf = { workspace = true, optional = true }
 image = { workspace = true, optional = true }
+# KTX2 textures (ktx2.rs; docs/spec/texture-formats.md): the container, Zstd, the CPU block decoder.
+ktx2 = { workspace = true, optional = true }
+ruzstd = { workspace = true, optional = true }
+texture2ddecoder = { workspace = true, optional = true }
 # Levels of detail and GPU vertex order (lod.rs; docs/spec/lod.md).
 meshopt = { workspace = true, optional = true }
 
 [features]
 default = ["import"]
-import = ["dep:gltf", "dep:image", "lod"]
+import = ["dep:gltf", "dep:image", "lod", "ktx2"]
+# KTX2 textures: reading, writing and decoding block-compressed levels (the importer, and the
+# renderer for the levels it decodes where the GPU samples no block format).
+ktx2 = ["dep:ktx2", "dep:ruzstd", "dep:texture2ddecoder"]
 # Mesh LOD chains (meshoptimizer's C++): the importer, and the renderer for its primitives.
 lod = ["dep:meshopt"]

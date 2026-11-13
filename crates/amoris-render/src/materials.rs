@@ -3,12 +3,15 @@
 //! two texture arrays (sRGB color data, linear data), each layer resized to one size with a full
 //! mip chain (on the GPU by a linear sampler; an image whose glTF sampler magnifies with `NEAREST`
 //! by point sampling first, blit.rs): every material is reachable from one bind group, so batches
-//! are per mesh only and work on WebGPU, which has no bindless textures.
+//! are per mesh only and work on WebGPU, which has no bindless textures. Where the device samples
+//! BC, a KTX2 image in BC7 whose levels fit a layer goes as stored into a third or fourth array,
+//! BC7 sRGB or linear; a layer index with [`TEX_BLOCKS`] set names one of those
+//! (docs/spec/texture-formats.md 4).
 
 use std::collections::HashMap;
 
 use amoris_assets::frame::Look;
-use amoris_assets::mesh::{AlphaMode, ImageData, MaterialData};
+use amoris_assets::mesh::{AlphaMode, BlockFormat, ImageData, MaterialData};
 use amoris_assets::neural::{Channel, NeuralLayout};
 use bytemuck::{Pod, Zeroable};
 
@@ -27,6 +30,48 @@ pub const FLAG_BLEND: u32 = 16;
 pub const FLAG_TERRAIN: u32 = 32;
 /// The size of every texture layer.
 pub const TEX_SIZE: u32 = 1024;
+/// The levels of a layer: TEX_SIZE down to 1 x 1.
+pub const TEX_MIPS: u32 = TEX_SIZE.ilog2() + 1;
+/// Layer bit: the layer is in the BC7 array of its kind (forward.wgsl `TEX_BLOCKS`).
+pub const TEX_BLOCKS: u32 = 0x4000_0000;
+
+/// Where an image's layer comes from (docs/spec/texture-formats.md 4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Placement {
+    /// A BC7 KTX2 image whose levels fit, on a device that samples BC: the file's blocks from
+    /// level `j` on, as stored, in a BC7 array.
+    Blocks(usize),
+    /// Another KTX2 image whose levels fit: its levels from `j` on, decoded to RGBA8 on the CPU,
+    /// each written to its mip of the RGBA8 array.
+    Levels(usize),
+    /// Any other image: level 0 (`rgba8`) resized on the GPU and its mips drawn from it (blit.rs).
+    Resize,
+}
+
+/// The file level that is a layer's mip 0, when an image's levels fit a layer: square, a power of
+/// two at least [`TEX_SIZE`], and every level from that one down to 1 x 1 present. Never for a
+/// marked image (it is resized by point sampling).
+pub fn fitting_level(image: &ImageData) -> Option<usize> {
+    let levels = image.levels.as_ref()?;
+    if image.nearest
+        || image.width != image.height
+        || !image.width.is_power_of_two()
+        || image.width < TEX_SIZE
+    {
+        return None;
+    }
+    let j = (image.width / TEX_SIZE).ilog2() as usize;
+    (levels.levels.len() >= j + TEX_MIPS as usize).then_some(j)
+}
+
+/// Where `image`'s layer comes from on a device that samples BC (`bc`) or not.
+pub fn placement(image: &ImageData, bc: bool) -> Placement {
+    match (fitting_level(image), &image.levels) {
+        (Some(j), Some(l)) if bc && l.format == BlockFormat::Bc7 => Placement::Blocks(j),
+        (Some(j), _) => Placement::Levels(j),
+        _ => Placement::Resize,
+    }
+}
 
 /// One material row (matches `Material` in common.wgsl).
 #[repr(C)]
@@ -193,7 +238,13 @@ impl TextureArray {
         layers: u32,
         label: &str,
     ) -> TextureArray {
-        let mips = TEX_SIZE.ilog2() + 1;
+        let mips = TEX_MIPS;
+        // A block-compressed array is written only by copies; the RGBA8 ones are drawn into.
+        let drawn = if format.is_compressed() {
+            wgpu::TextureUsages::empty()
+        } else {
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+        };
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {
@@ -206,7 +257,7 @@ impl TextureArray {
             dimension: wgpu::TextureDimension::D2,
             format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::RENDER_ATTACHMENT
+                | drawn
                 | wgpu::TextureUsages::COPY_DST
                 | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
@@ -249,11 +300,13 @@ impl TextureArray {
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
+                // A mip smaller than a block is copied whole: its blocks' size.
                 wgpu::Extent3d {
                     width: size,
                     height: size,
                     depth_or_array_layers: self.used,
-                },
+                }
+                .physical_size(self.format),
             );
         }
         queue.submit([enc.finish()]);
@@ -271,12 +324,39 @@ pub struct MaterialPool {
     assets: HashMap<String, MaterialGpu>,
     pub srgb: TextureArray,
     pub linear: TextureArray,
+    /// The BC7 arrays (sRGB, linear), made at the first image that takes one; until then the
+    /// bind group holds `placeholder` in their place.
+    pub srgb_blocks: Option<TextureArray>,
+    pub linear_blocks: Option<TextureArray>,
+    placeholder: wgpu::TextureView,
+    /// The device samples BC ([`crate::gpu::Capabilities::texture_compression_bc`]).
+    bc: bool,
     dirty: bool,
     pub generation: u64,
 }
 
 impl MaterialPool {
-    pub fn new(device: &wgpu::Device) -> MaterialPool {
+    /// `bc`: the device samples BC textures.
+    pub fn new(device: &wgpu::Device, bc: bool) -> MaterialPool {
+        let placeholder = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("textures (no blocks)"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+            .create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
         MaterialPool {
             buffer: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("materials"),
@@ -299,6 +379,10 @@ impl MaterialPool {
                 2,
                 "textures (linear)",
             ),
+            srgb_blocks: None,
+            linear_blocks: None,
+            placeholder,
+            bc,
             dirty: true,
             generation: 0,
         }
@@ -306,6 +390,26 @@ impl MaterialPool {
 
     pub fn len(&self) -> usize {
         self.rows.len()
+    }
+
+    /// What the textures group binds for the BC7 sRGB array.
+    pub fn srgb_blocks_view(&self) -> &wgpu::TextureView {
+        self.srgb_blocks
+            .as_ref()
+            .map_or(&self.placeholder, |a| &a.view)
+    }
+
+    /// What the textures group binds for the BC7 linear array.
+    pub fn linear_blocks_view(&self) -> &wgpu::TextureView {
+        self.linear_blocks
+            .as_ref()
+            .map_or(&self.placeholder, |a| &a.view)
+    }
+
+    /// The layers held block-compressed, both kinds (`FrameStats::texture_blocks`).
+    pub fn block_layers(&self) -> u32 {
+        self.srgb_blocks.as_ref().map_or(0, |a| a.used)
+            + self.linear_blocks.as_ref().map_or(0, |a| a.used)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -397,27 +501,86 @@ impl MaterialPool {
             let Some(data) = images.get(img) else {
                 return NO_TEXTURE;
             };
-            let arr = if srgb {
-                &mut pool.srgb
-            } else {
-                &mut pool.linear
+            let place = placement(data, pool.bc);
+            let (arr, label, bit) = match (place, srgb) {
+                (Placement::Blocks(_), true) => {
+                    let arr = pool.srgb_blocks.get_or_insert_with(|| {
+                        TextureArray::new(
+                            device,
+                            wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+                            2,
+                            "textures (BC7 sRGB)",
+                        )
+                    });
+                    (arr, "textures (BC7 sRGB)", TEX_BLOCKS)
+                }
+                (Placement::Blocks(_), false) => {
+                    let arr = pool.linear_blocks.get_or_insert_with(|| {
+                        TextureArray::new(
+                            device,
+                            wgpu::TextureFormat::Bc7RgbaUnorm,
+                            2,
+                            "textures (BC7 linear)",
+                        )
+                    });
+                    (arr, "textures (BC7 linear)", TEX_BLOCKS)
+                }
+                (_, true) => (&mut pool.srgb, "textures (sRGB)", 0),
+                (_, false) => (&mut pool.linear, "textures (linear)", 0),
             };
-            if arr.reserve(
-                device,
-                queue,
-                if srgb {
-                    "textures (sRGB)"
-                } else {
-                    "textures (linear)"
-                },
-            ) {
+            // A new BC7 array (its first layer) or a grown one is a new view to bind.
+            let made = arr.used == 0 && bit != 0;
+            if arr.reserve(device, queue, label) || made {
                 pool.generation += 1;
             }
             let l = arr.used;
             arr.used += 1;
-            blitter.upload_layer(device, queue, data, &arr.texture, arr.format, l, arr.mips);
-            map.insert(img, l);
-            l
+            match (place, &data.levels) {
+                (Placement::Blocks(j), Some(file)) => {
+                    let levels: Vec<&[u8]> = file.levels[j..j + TEX_MIPS as usize]
+                        .iter()
+                        .map(Vec::as_slice)
+                        .collect();
+                    crate::blit::write_levels(queue, &arr.texture, l, &levels);
+                }
+                (Placement::Levels(j), Some(file)) => {
+                    let decoded: Result<Vec<Vec<u8>>, String> = (j..j + TEX_MIPS as usize)
+                        .map(|k| {
+                            if k == 0 {
+                                return Ok(data.rgba8.clone());
+                            }
+                            let side = (data.width >> k).max(1);
+                            amoris_assets::ktx2::decode(file.format, side, side, &file.levels[k])
+                        })
+                        .collect();
+                    match decoded {
+                        Ok(levels) => {
+                            let levels: Vec<&[u8]> = levels.iter().map(Vec::as_slice).collect();
+                            crate::blit::write_levels(queue, &arr.texture, l, &levels);
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "{}: its levels do not decode ({e}); resizing level 0",
+                                data.name
+                            );
+                            blitter.upload_layer(
+                                device,
+                                queue,
+                                data,
+                                &arr.texture,
+                                arr.format,
+                                l,
+                                arr.mips,
+                            );
+                        }
+                    }
+                }
+                _ => {
+                    blitter.upload_layer(device, queue, data, &arr.texture, arr.format, l, arr.mips)
+                }
+            }
+            map.insert(img, l | bit);
+            l | bit
         };
         for (i, m) in materials.iter().enumerate() {
             let mut row = asset_row(m);
@@ -569,5 +732,72 @@ mod tests {
         };
         let neural = over(neural, 0.5);
         assert!(neural.flags & FLAG_BLEND == 0 && !transparent(&neural) && casts(&neural));
+    }
+
+    #[test]
+    fn each_image_finds_its_placement() {
+        use amoris_assets::mesh::TextureLevels;
+        // An image of `side` x `height` with `count` levels of `format` (their bytes do not
+        // matter here), or a PNG's (no levels).
+        let image = |side: u32, height: u32, levels: Option<(BlockFormat, usize)>| ImageData {
+            width: side,
+            height,
+            levels: levels.map(|(format, count)| TextureLevels {
+                format,
+                levels: vec![Vec::new(); count],
+            }),
+            ..ImageData::default()
+        };
+        let bc7 = BlockFormat::Bc7;
+        let full = TEX_MIPS as usize;
+        for bc in [true, false] {
+            let fits = |j| {
+                if bc {
+                    Placement::Blocks(j)
+                } else {
+                    Placement::Levels(j)
+                }
+            };
+            assert_eq!(
+                placement(&image(1024, 1024, Some((bc7, full))), bc),
+                fits(0)
+            );
+            // A 2048 image's chain starts at its level 1; a 4096's at its level 2.
+            assert_eq!(
+                placement(&image(2048, 2048, Some((bc7, full + 1))), bc),
+                fits(1)
+            );
+            assert_eq!(
+                placement(&image(4096, 4096, Some((bc7, full + 2))), bc),
+                fits(2)
+            );
+            // Other formats that fit are decoded, level by level.
+            for format in [BlockFormat::Rgba8, BlockFormat::Bc1, BlockFormat::Bc5] {
+                let i = image(1024, 1024, Some((format, full)));
+                assert_eq!(placement(&i, bc), Placement::Levels(0), "{format:?}");
+            }
+            // What does not fit is resized as a PNG is: a short chain, a smaller, a non-square or
+            // a non-power-of-two image, a marked image, and every PNG.
+            for i in [
+                image(1024, 1024, Some((bc7, full - 1))),
+                image(1024, 1024, Some((bc7, 1))),
+                image(512, 512, Some((bc7, 10))),
+                image(1024, 512, Some((bc7, full))),
+                image(1536, 1536, Some((bc7, full))),
+                ImageData {
+                    nearest: true,
+                    ..image(1024, 1024, Some((bc7, full)))
+                },
+                image(1024, 1024, None),
+            ] {
+                assert_eq!(
+                    placement(&i, bc),
+                    Placement::Resize,
+                    "{} x {}",
+                    i.width,
+                    i.height
+                );
+            }
+        }
     }
 }

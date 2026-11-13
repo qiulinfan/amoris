@@ -214,6 +214,9 @@ pub struct FrameStats {
     /// Spot and point lights with `shadows` set in view that got no shadow map this frame: those
     /// whose views no longer fit in `LOCAL_VIEWS`, the smallest on screen.
     pub local_shadows_dropped: u32,
+    /// Texture layers held as BC7 blocks (KTX2 images sampled as stored; 0 on a device without
+    /// BC or with no such image; docs/spec/texture-formats.md 4).
+    pub texture_blocks: u32,
 }
 
 /// A drawn node: (mesh index, local TRS, skin).
@@ -466,6 +469,9 @@ pub struct Renderer {
     blitter: Blitter,
     targets: Targets,
     post: Post,
+    /// The environment's color-grading table (docs/spec/color-grading.md): the path asked for,
+    /// whether it is loading, and why it failed.
+    grade: GradeAsset,
     sky: Sky,
     gi: crate::gi::ProbeVolume,
     /// The sun's caustics under the water nearest the camera (water_caustics.rs).
@@ -1098,6 +1104,15 @@ fn sky_pipeline(
     })
 }
 
+/// The environment's color-grading table as an asset: the path last asked for (empty: none),
+/// whether its load is in flight, and why it failed.
+#[derive(Default)]
+struct GradeAsset {
+    asset: String,
+    loading: bool,
+    error: Option<String>,
+}
+
 impl Renderer {
     /// A renderer drawing into textures of `output` format at `width` x `height`.
     pub fn new(gpu: &Gpu, output: wgpu::TextureFormat, width: u32, height: u32) -> Renderer {
@@ -1209,6 +1224,10 @@ impl Renderer {
                 ),
                 entry(4, frag, uni_ty()),
                 entry(5, frag, uni_ty()),
+                // The BC7 arrays (sRGB, linear; a 1-texel stand-in until the first BC7 image),
+                // which a layer index with TEX_BLOCKS names (docs/spec/texture-formats.md 4).
+                tex_entry(6),
+                tex_entry(7),
             ],
         });
         let fwd_module = shaders::module(device, "forward");
@@ -1299,7 +1318,7 @@ impl Renderer {
                 cache: None,
             })
         };
-        let materials = MaterialPool::new(device);
+        let materials = MaterialPool::new(device, gpu.caps.texture_compression_bc);
         let view_buf = Uniform::new(device, "view", std::mem::size_of::<ViewUniform>() as u64);
         let view_stable = Uniform::new(
             device,
@@ -1460,6 +1479,7 @@ impl Renderer {
                 format,
             ),
             post: built.post,
+            grade: GradeAsset::default(),
             sky: built.sky,
             gi: crate::gi::ProbeVolume::new(device, &gpu.queue),
             caustics: crate::water_caustics::Caustics::new(device),
@@ -2570,6 +2590,49 @@ impl Renderer {
         }
     }
 
+    /// Follows the environment's color-grading table: asks the loader for a new path, uploads what
+    /// arrives for the current one, and drops the table when the path is cleared. A table that
+    /// fails to load is logged and leaves the frame ungraded.
+    fn poll_grade(&mut self) {
+        let path = self
+            .scene
+            .environment
+            .as_ref()
+            .map_or("", |e| e.color_lut.as_str());
+        if path != self.grade.asset {
+            self.grade.asset = path.to_owned();
+            self.grade.error = None;
+            self.grade.loading = !path.is_empty();
+            self.post
+                .set_color_lut(&self.gpu.device, &self.gpu.queue, None);
+            if !path.is_empty() {
+                self.loader.request_color_lut(path);
+            }
+        }
+        for (loaded, result) in self.loader.poll_color_luts() {
+            if loaded != self.grade.asset {
+                continue;
+            }
+            self.grade.loading = false;
+            match result {
+                Ok(lut) => {
+                    log::info!("loaded color table {loaded}: {} entries a side", lut.size);
+                    self.post
+                        .set_color_lut(&self.gpu.device, &self.gpu.queue, Some(&lut));
+                }
+                Err(error) => {
+                    log::error!("color table {loaded}: {error}; the frame is drawn ungraded");
+                    self.grade.error = Some(error);
+                }
+            }
+        }
+    }
+
+    /// Why the environment's color-grading table failed to load, if it did.
+    pub fn color_lut_error(&self) -> Option<&str> {
+        self.grade.error.as_deref()
+    }
+
     /// Loads a validated GI field explicitly (capture tools and GPU experiments).
     pub fn set_baked_gi(&mut self, data: amoris_assets::gi::BakedGi) -> Result<(), String> {
         self.gi.upload(&self.gpu.device, &self.gpu.queue, data)
@@ -2960,6 +3023,16 @@ impl Renderer {
                 },
                 b(4, &self.neural.data),
                 b(5, &self.neural.data),
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(self.materials.srgb_blocks_view()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(
+                        self.materials.linear_blocks_view(),
+                    ),
+                },
             ],
         });
         let sky = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -3011,6 +3084,7 @@ impl Renderer {
         self.collect_pick();
         self.poll_assets();
         self.poll_gi();
+        self.poll_grade();
         trace::span(&mut self.trace, "assets", ts);
         let ts = trace::mark(&self.trace);
         self.sync();
@@ -3917,6 +3991,7 @@ impl Renderer {
         trace::span(&mut self.trace, "encode splats", ts);
         let ts = trace::mark(&self.trace);
         let bloom = env.as_ref().map_or(0.15, |e| e.bloom);
+        let grade = env.as_ref().map_or(0.0, |e| e.color_lut_intensity);
         self.post.run(
             &device,
             &queue,
@@ -3928,6 +4003,7 @@ impl Renderer {
             exposure,
             bloom,
             if taa_on { self.sharpen } else { 0.0 },
+            grade,
         );
         trace::span(&mut self.trace, "encode post", ts);
         let ts = trace::mark(&self.trace);
@@ -3990,7 +4066,10 @@ impl Renderer {
             meshes: self.meshes.len(),
             materials: self.materials.len(),
             lights: self.light_count as usize,
-            pending_assets: self.scene.pending() + usize::from(self.gi.loading) + self.ui.pending(),
+            pending_assets: self.scene.pending()
+                + usize::from(self.gi.loading)
+                + usize::from(self.grade.loading)
+                + self.ui.pending(),
             tick: self.scene.tick,
             backend: self.gpu.backend_name(),
             draw_path: self.batches.path.name(),
@@ -4011,6 +4090,7 @@ impl Renderer {
             render_scale: self.render_scale,
             local_shadows: local.lights,
             local_shadows_dropped: local.dropped,
+            texture_blocks: self.materials.block_layers(),
         };
         trace::span(&mut self.trace, "render", rendering);
         // A host that does not bracket its frames does not finish the trace either: the last

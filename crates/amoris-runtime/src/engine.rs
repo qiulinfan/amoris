@@ -2207,26 +2207,42 @@ fn environment_schema() -> Result<ComponentSchema, Problem> {
                 FieldValue::F64(d.bloom),
                 "Bloom strength, 0 to 1.",
             ),
+            (
+                "color_lut",
+                FieldType::Str,
+                FieldValue::Str(d.color_lut.into()),
+                "A project-relative .cube color table graded after tone mapping; empty for none.",
+            ),
+            (
+                "color_lut_intensity",
+                FieldType::F64,
+                FieldValue::F64(d.color_lut_intensity),
+                "How much of the graded color replaces the ungraded one, 0 to 1.",
+            ),
         ],
     )
 }
 
 fn environment_fns() -> EngineFns<Environment> {
     fn read(e: &Environment) -> ProjectValues {
-        nums(&[
-            if e.sky == SkyKind::Color { 1.0 } else { 0.0 },
-            e.sky_color[0],
-            e.sky_color[1],
-            e.sky_color[2],
-            e.ambient,
-            e.gi_intensity,
-            e.fog_density,
-            e.fog_color[0],
-            e.fog_color[1],
-            e.fog_color[2],
-            e.exposure_ev,
-            e.bloom,
-        ])
+        ProjectValues {
+            strs: Box::new([e.color_lut.as_str().into()]),
+            ..nums(&[
+                if e.sky == SkyKind::Color { 1.0 } else { 0.0 },
+                e.sky_color[0],
+                e.sky_color[1],
+                e.sky_color[2],
+                e.ambient,
+                e.gi_intensity,
+                e.fog_density,
+                e.fog_color[0],
+                e.fog_color[1],
+                e.fog_color[2],
+                e.exposure_ev,
+                e.bloom,
+                e.color_lut_intensity,
+            ])
+        }
     }
     fn write(e: &mut Environment, v: &ProjectValues) {
         let n = &v.nums;
@@ -2242,6 +2258,10 @@ fn environment_fns() -> EngineFns<Environment> {
         e.fog_color = v3(n, 7);
         e.exposure_ev = n[10];
         e.bloom = n[11];
+        e.color_lut_intensity = n[12];
+        if let Some(s) = v.strs.first() {
+            e.color_lut = s.to_string();
+        }
     }
     EngineFns {
         read,
@@ -2704,7 +2724,7 @@ mod tests {
     }
 
     #[test]
-    fn an_environment_slots_round_trip_keeps_its_sky_fog_and_look() {
+    fn an_environment_slots_round_trip_keeps_its_sky_fog_look_and_grade() {
         let e = Environment {
             sky: SkyKind::Color,
             sky_color: [0.5, 0.3, 0.2],
@@ -2714,6 +2734,8 @@ mod tests {
             fog_color: [0.4, 0.3, 0.2],
             exposure_ev: 0.25,
             bloom: 0.3,
+            color_lut: "grade/dusk.cube".into(),
+            color_lut_intensity: 0.6,
             ..Environment::default()
         };
         let fns = environment_fns();

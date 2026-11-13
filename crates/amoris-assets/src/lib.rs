@@ -12,8 +12,11 @@ pub mod gi;
 #[cfg(feature = "import")]
 pub mod import;
 pub mod input;
+#[cfg(feature = "ktx2")]
+pub mod ktx2;
 #[cfg(feature = "lod")]
 pub mod lod;
+pub mod lut;
 pub mod mesh;
 pub mod neural;
 pub mod primitives;
@@ -81,7 +84,7 @@ impl Persisted for Camera {
 
 impl Persisted for Environment {
     const NAME: &'static str = "Environment";
-    const VERSION: u32 = 3;
+    const VERSION: u32 = 4;
 
     fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
         t.trace_type::<SkyKind>(s)?;

@@ -1413,6 +1413,7 @@ mod tests {
             meshes: vec![amoris_assets::primitives::cube()],
             materials: vec![MaterialData::default()],
             images: vec![ImageData {
+                levels: None,
                 name: "sky \"雪\"".into(),
                 width: 1,
                 height: 64,
@@ -1617,6 +1618,7 @@ mod tests {
             let mut material = surface(Vec3::splat(0.8), Vec3::ZERO, true);
             material.material.normal_texture = Some(0);
             material.images = Arc::new(vec![ImageData {
+                levels: None,
                 name: "normal-direction-regression".into(),
                 width: 1,
                 height: 1,

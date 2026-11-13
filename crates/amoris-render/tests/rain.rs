@@ -47,6 +47,8 @@ fn scene(rain: bool, tick: u64) -> RenderFrame {
             fog_color: [0.5, 0.53, 0.58],
             exposure_ev: 0.0,
             bloom: 0.0,
+            color_lut: String::new(),
+            color_lut_intensity: 1.0,
         }),
         instances: if first {
             vec![InstanceUpdate {

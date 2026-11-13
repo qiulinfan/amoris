@@ -61,6 +61,12 @@ impl AssetSource for TrackedSource {
     fn poll_neural_gi(&mut self) -> Vec<(String, Result<amoris_assets::gi::NeuralGi, String>)> {
         self.source.poll_neural_gi()
     }
+    fn request_color_lut(&mut self, path: &str) {
+        self.source.request_color_lut(path);
+    }
+    fn poll_color_luts(&mut self) -> Vec<(String, Result<amoris_assets::lut::ColorLut, String>)> {
+        self.source.poll_color_luts()
+    }
 
     fn poll(&mut self) -> Vec<(String, Result<ModelAsset, String>)> {
         let ready = self.source.poll();
@@ -242,6 +248,8 @@ fn load_frame(root: &Path) -> Result<(RenderFrame, Vec<String>), String> {
                 fog_color: environment.fog_color.map(|value| value as f32),
                 exposure_ev: environment.exposure_ev as f32,
                 bloom: environment.bloom as f32,
+                color_lut: environment.color_lut,
+                color_lut_intensity: environment.color_lut_intensity as f32,
             });
         }
         for unsupported in [

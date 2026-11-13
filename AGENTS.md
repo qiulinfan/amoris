@@ -45,7 +45,7 @@ it are charter 5.4.
   `river-falls`, `surf-beach`, `water-pool`, `water-storm`, `water-valley`).
   `tests/fixtures/`: projects only tests and checks read: the checks' negative controls, the SDK's
   type test, `intents/errand` (a TypeScript intent and executor under the four checks), and `scenes/`, the scenes that tests, checks and measurement tools read (eight
-  `water-*` scenes, `gi-room`, `pt-lab`, `hierarchy`, `ui-hud`). xtask runs every `samples/*/check.toml` and `tests/fixtures/**/check.toml`.
+  `water-*` scenes, `gi-room`, `pt-lab`, `hierarchy`, `ui-hud`, `color-grade`, `ktx2`). xtask runs every `samples/*/check.toml` and `tests/fixtures/**/check.toml`.
 - `bench/`: benchmark workloads and comparison harnesses (`agent-dev/`, `physics/`, `rules/`,
   `web/threejs_cubes.html`).
 - `tools/`: Python, shell and Node scripts by purpose ([tools/README.md](tools/README.md)):
@@ -312,6 +312,12 @@ credential cleanup. File-verification records remain local, including in that ar
   `AMORIS_AA=msaa+taa` (only the prepass's ties may differ: many_cubes' sphere, and walls touching
   a floor or ceiling); `aa_eval --only upscale` measures quality and `tools/render/aa_bench.py --scales`
   cost ([docs/bench/taau.md](docs/bench/taau.md)).
+- KTX2 textures ([docs/spec/texture-formats.md](docs/spec/texture-formats.md)): a change to
+  `amoris-assets/src/ktx2.rs`, the importer's images, the texture arrays (materials.rs, blit.rs) or
+  the forward shader's `color_grad`/`data_grad`/`color_level` runs `cargo test -p amoris-assets
+  ktx2 import`, `cargo test -p amoris-render --lib materials` and `cargo test --release -p
+  amoris-render --test ktx2` on D3D12, Vulkan and `AMORIS_GPU_MINIMAL`, and `tools/render/build_compare.py`
+  against a build without it. `cargo run --release -p amoris-render --example ktx2` makes files.
 - Moving instances ([docs/bench/dynamic-scenes.md](docs/bench/dynamic-scenes.md)): `Scene::apply`
   must stay linear in the slots a tick moves (`cargo test -p amoris-render --lib scene::` pins it
   by structure and what each slot holds; `-- --ignored` times it); more than 8 runs of dirty slots
@@ -333,6 +339,11 @@ credential cleanup. File-verification records remain local, including in that ar
   runs the `ui_frames` example in a build without it, and their PNGs must not change. A change to
   the UI's components, extraction or `ui.press` runs `cargo test -p amoris-runtime --features
   transpile --test ui` and `amoris check tests/fixtures/scenes/ui-hud`.
+- Color grading ([docs/spec/color-grading.md](docs/spec/color-grading.md)): `Environment.color_lut`
+  names a `.cube` table that the display transform reads after AgX (`fs_tonemap_graded`); without
+  one, or at share 0, the frame is `fs_tonemap`'s, to the bit. A change to post.wgsl's display
+  transform or to the table runs `cargo test --release -p amoris-render --test color_grade` and
+  `tools/render/build_compare.py`.
 - The browser: `tools/build_viewport.sh` builds the WebGPU viewport into `web/viewport/pkg`
   (committed; the editor's `/wasm/` serves it), `tools/build_web.sh` also builds the game module
   into `web/pkg` and packs samples into `web/projects/` (both ignored). Serve `web/`

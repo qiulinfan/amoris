@@ -120,6 +120,8 @@ impl App {
                     fog_color: [0.6, 0.7, 0.8],
                     exposure_ev: 0.0,
                     bloom: 0.0,
+                    color_lut: String::new(),
+                    color_lut_intensity: 1.0,
                 }),
                 ..RenderFrame::default()
             },
