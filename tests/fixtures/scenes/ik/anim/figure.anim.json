@@ -1,0 +1,15 @@
+{
+  "format": "amoris-animgraph", "version": 1,
+  "skeleton": "models/figure.gltf",
+  "params": {"speed": 0, "look": 1},
+  "sockets": ["pelvis", "foot_l", "foot_r", "hand_r", "head"],
+  "layers": [
+    {"name": "base", "start": "move", "states": {
+      "move": {"blend1d": {"param": "speed", "points": [[0, "idle"], [1.2, "walk"]]}}}}
+  ],
+  "ik": [
+    {"name": "feet", "feet": {"pelvis": "pelvis", "legs": ["foot_l", "foot_r"]}},
+    {"name": "look", "look_at": {"joints": ["chest", "neck", "head"], "limit_deg": 70}, "weight": "look"},
+    {"name": "reach", "two_bone": {"tip": "hand_r", "pole": [0, 0, -1]}}
+  ]
+}

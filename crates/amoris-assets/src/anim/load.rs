@@ -1,6 +1,8 @@
 //! Skeletons and clips from a glTF file (`.glb` or `.gltf` with its buffers), without decoding its
 //! images: what the host reads for a project's animation when it loads the project (animation.md
-//! 2). Cubic channels keep their values at the keys (their tangents are dropped).
+//! 2). Cubic channels keep their values at the keys (their tangents are dropped). A node with a
+//! mesh with morph targets keeps their names and default weights, and a `weights` channel becomes
+//! its track's weight keys (animation.md 5a).
 
 // Import, not a tick: what it reads enters the world only as the library's data.
 #![allow(clippy::disallowed_methods)]
@@ -46,6 +48,11 @@ fn convert(doc: &gltf::Document, buffers: &[gltf::buffer::Data]) -> ClipSet {
                     .map_or_else(|| format!("node{}", n.index()), str::to_owned),
                 parent: parent[n.index()],
                 rest: Xform { t, r, s },
+                targets: n
+                    .mesh()
+                    .map(|m| crate::import::target_names(&m))
+                    .unwrap_or_default(),
+                weights: crate::import::node_weights(&n),
             }
         })
         .collect();
@@ -84,6 +91,7 @@ fn convert(doc: &gltf::Document, buffers: &[gltf::buffer::Data]) -> ClipSet {
                             t: Keys::default(),
                             r: Keys::default(),
                             s: Keys::default(),
+                            w: Keys::default(),
                         });
                         tracks.len() - 1
                     }
@@ -102,6 +110,18 @@ fn convert(doc: &gltf::Document, buffers: &[gltf::buffer::Data]) -> ClipSet {
                     }
                     Some(gltf::animation::util::ReadOutputs::Rotations(v)) => {
                         tracks[track].r = keys(pick(n, 4, v.into_f32().flatten().collect()));
+                    }
+                    Some(gltf::animation::util::ReadOutputs::MorphTargetWeights(v)) => {
+                        let width = ch
+                            .target()
+                            .node()
+                            .mesh()
+                            .map_or(0, |m| crate::import::target_count(&m));
+                        let all: Vec<f32> = v.into_f32().collect();
+                        let per = if cubic { 3 * width } else { width };
+                        if width > 0 && all.len() == n * per {
+                            tracks[track].w = keys(pick(n, width, all));
+                        }
                     }
                     _ => {}
                 }

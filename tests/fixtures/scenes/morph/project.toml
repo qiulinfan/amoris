@@ -1,0 +1,9 @@
+# Morph targets (docs/spec/animation.md 5a): a figure whose graph plays clips that key its plate's
+# and body's target weights, under a masked slot's montage and a script's override, through the
+# charter's checks.
+name = "morph"
+rate = 60
+seed = 1
+
+[animation]
+graphs = ["anim/morph.anim.json"]

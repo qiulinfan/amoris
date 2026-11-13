@@ -220,7 +220,11 @@ pub struct FrameStats {
 }
 
 /// A drawn node: (mesh index, local TRS, skin).
-type DrawnNode = (usize, (Vec3, Quat, Vec3), Option<usize>);
+/// (mesh index, local TRS, skin, the file's node).
+type DrawnNode = (usize, (Vec3, Quat, Vec3), Option<usize>, Option<usize>);
+
+/// A part of a named node: (mesh index, skin, the file's node).
+type NodePart = (usize, Option<usize>, Option<usize>);
 
 /// A loaded model: its meshes by name and index, and its scene's nodes.
 struct Model {
@@ -229,11 +233,12 @@ struct Model {
     names: HashMap<String, usize>,
     /// The primitives of each named node, so `file.glb#Name` draws a multi-material mesh as all
     /// of its parts, not only the one a mesh-name lookup happens to find.
-    by_node: HashMap<String, Vec<(usize, Option<usize>)>>,
-    /// (mesh index, local TRS, skin) per drawn node.
+    by_node: HashMap<String, Vec<NodePart>>,
+    /// (mesh index, local TRS, skin, node) per drawn node.
     nodes: Vec<DrawnNode>,
-    /// The asset itself when it has skins (poses are evaluated from it every frame).
-    skinned: Option<std::sync::Arc<ModelAsset>>,
+    /// The asset itself when it has skins or morph targets (poses and weights are evaluated from
+    /// it every frame).
+    animated: Option<std::sync::Arc<ModelAsset>>,
 }
 
 struct Pools<'a> {
@@ -250,7 +255,7 @@ struct Pools<'a> {
 
 /// The parts a `file.glb#Name` or `file.glb#3` requests: every primitive of a multi-material node
 /// by its node name, one mesh by its mesh name or index. A part's skin comes from its node.
-fn named_node_parts(model: &Model, sub: &str) -> Option<Vec<(usize, Option<usize>)>> {
+fn named_node_parts(model: &Model, sub: &str) -> Option<Vec<NodePart>> {
     if let Some(parts) = model.by_node.get(sub) {
         return Some(parts.clone());
     }
@@ -260,15 +265,14 @@ fn named_node_parts(model: &Model, sub: &str) -> Option<Vec<(usize, Option<usize
         .copied()
         .or_else(|| sub.parse::<usize>().ok())
         .filter(|&i| i < model.meshes.len())?;
-    Some(vec![(
-        i,
-        model.nodes.iter().find(|n| n.0 == i).and_then(|n| n.2),
-    )])
+    let node = model.nodes.iter().find(|n| n.0 == i);
+    Some(vec![(i, node.and_then(|n| n.2), node.and_then(|n| n.3))])
 }
 
 impl Pools<'_> {
-    /// The mesh an entity draws for node `mi` of `path`: the shared mesh, or for a skinned mesh
-    /// the entity's own skinned copy.
+    /// The mesh an entity draws for mesh `mi` of `path` (at the file's `node`): the shared mesh,
+    /// or for a skinned or morphed mesh the entity's own copy (animation.md 5a).
+    #[allow(clippy::too_many_arguments)]
     fn mesh_for(
         &mut self,
         entity: u64,
@@ -276,19 +280,36 @@ impl Pools<'_> {
         model: &Model,
         mi: usize,
         skin: Option<usize>,
+        node: Option<usize>,
         local: (Vec3, Quat, Vec3),
     ) -> u32 {
         let (mesh, _) = model.meshes[mi];
-        let (Some(skin), Some(asset)) = (skin, &model.skinned) else {
+        let Some(asset) = &model.animated else {
             return mesh;
         };
-        let Some(count) = self.skinning.add_source(path, mi, asset) else {
+        let Some(source) = asset.meshes.get(mi) else {
             return mesh;
+        };
+        let morph = source.morph.as_ref().filter(|m| !m.is_empty());
+        if skin.is_none() && morph.is_none() {
+            return mesh;
+        }
+        let Some(count) = self.skinning.add_source(path, mi, asset, skin.is_some()) else {
+            return mesh;
+        };
+        // A morphed copy reaches as far as its targets' offsets add up to (5a).
+        let grow = match morph {
+            None => SKINNED_GROW,
+            Some(m) => {
+                let r = source.bounds.radius.max(1e-6);
+                let base = if skin.is_some() { SKINNED_GROW } else { 1.0 };
+                (r * base + m.reach(source.vertices.len())) / r
+            }
         };
         let key = format!("{path}#{mi}@{entity}");
         let Some(dynamic) =
             self.meshes
-                .add_dynamic(self.device, self.queue, &key, mesh, count, SKINNED_GROW)
+                .add_dynamic(self.device, self.queue, &key, mesh, count, grow)
         else {
             return mesh;
         };
@@ -298,6 +319,7 @@ impl Pools<'_> {
             asset: asset.clone(),
             source: (path.to_owned(), mi),
             skin,
+            node,
             node_global: Mat4::from_scale_rotation_translation(local.2, local.1, local.0),
             dst,
             mesh: dynamic,
@@ -377,10 +399,10 @@ impl Resolve for Pools<'_> {
         match sub {
             None => {
                 let mut parts = Vec::with_capacity(model.nodes.len());
-                for (mi, local, skin) in &model.nodes {
+                for (mi, local, skin, node) in &model.nodes {
                     let (_, key) = &model.meshes[*mi];
                     let material = material_for(self.materials, key)?;
-                    let mesh = self.mesh_for(entity, path, model, *mi, *skin, *local);
+                    let mesh = self.mesh_for(entity, path, model, *mi, *skin, *node, *local);
                     parts.push(Part {
                         mesh,
                         material,
@@ -404,7 +426,7 @@ impl Resolve for Pools<'_> {
                 // one mesh by index.
                 let parts = named_node_parts(model, s)?;
                 let mut out = Vec::with_capacity(parts.len());
-                for (i, skin) in parts {
+                for (i, skin, node) in parts {
                     let (_, key) = &model.meshes[i];
                     let material = material_for(self.materials, key)?;
                     let mesh = self.mesh_for(
@@ -413,6 +435,7 @@ impl Resolve for Pools<'_> {
                         model,
                         i,
                         skin,
+                        node,
                         (Vec3::ZERO, Quat::IDENTITY, Vec3::ONE),
                     );
                     out.push(Part {
@@ -2461,19 +2484,26 @@ impl Renderer {
                     n.mesh,
                     (t, r, s),
                     n.skin.filter(|_| !asset.skins.is_empty()),
+                    n.node,
                 )
             })
             .collect();
-        let skinned = (!asset.skins.is_empty()).then(|| std::sync::Arc::new(asset.clone()));
-        let mut by_node: HashMap<String, Vec<(usize, Option<usize>)>> = HashMap::new();
+        let morphed = asset
+            .meshes
+            .iter()
+            .any(|m| m.morph.as_ref().is_some_and(|t| !t.is_empty()));
+        let animated =
+            (!asset.skins.is_empty() || morphed).then(|| std::sync::Arc::new(asset.clone()));
+        let mut by_node: HashMap<String, Vec<NodePart>> = HashMap::new();
         for n in &asset.nodes {
             if n.name.is_empty() {
                 continue;
             }
-            by_node
-                .entry(n.name.clone())
-                .or_default()
-                .push((n.mesh, n.skin.filter(|_| !asset.skins.is_empty())));
+            by_node.entry(n.name.clone()).or_default().push((
+                n.mesh,
+                n.skin.filter(|_| !asset.skins.is_empty()),
+                n.node,
+            ));
         }
         self.models.insert(
             path.to_owned(),
@@ -2482,7 +2512,7 @@ impl Renderer {
                 names,
                 by_node,
                 nodes,
-                skinned,
+                animated,
             },
         );
     }
@@ -4858,9 +4888,15 @@ mod named_mesh_tests {
         Model {
             meshes: vec![(0, String::new()), (1, "material".into())],
             names: HashMap::from([("Solo".to_owned(), 0)]),
-            by_node: HashMap::from([("Group".to_owned(), vec![(0, None), (1, Some(2))])]),
-            nodes: vec![(0, identity, None), (1, identity, Some(2))],
-            skinned: None,
+            by_node: HashMap::from([(
+                "Group".to_owned(),
+                vec![(0, None, Some(4)), (1, Some(2), Some(5))],
+            )]),
+            nodes: vec![
+                (0, identity, None, Some(4)),
+                (1, identity, Some(2), Some(5)),
+            ],
+            animated: None,
         }
     }
 
@@ -4869,10 +4905,10 @@ mod named_mesh_tests {
         let m = model();
         assert_eq!(
             named_node_parts(&m, "Group"),
-            Some(vec![(0, None), (1, Some(2))])
+            Some(vec![(0, None, Some(4)), (1, Some(2), Some(5))])
         );
-        assert_eq!(named_node_parts(&m, "Solo"), Some(vec![(0, None)]));
-        assert_eq!(named_node_parts(&m, "1"), Some(vec![(1, Some(2))]));
+        assert_eq!(named_node_parts(&m, "Solo"), Some(vec![(0, None, Some(4))]));
+        assert_eq!(named_node_parts(&m, "1"), Some(vec![(1, Some(2), Some(5))]));
         assert_eq!(named_node_parts(&m, "3"), None);
         assert_eq!(named_node_parts(&m, "Nope"), None);
     }

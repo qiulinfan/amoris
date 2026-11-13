@@ -51,7 +51,8 @@ impl Default for LodOptions {
 }
 
 /// Orders `mesh` for the GPU and fills `mesh.lods` with its coarser levels (any previous ones are
-/// replaced). Vertices no index refers to are dropped; skin weights follow their vertices.
+/// replaced). Vertices no index refers to are dropped; skin weights and morph offsets follow their
+/// vertices.
 pub fn build(mesh: &mut MeshData, options: &LodOptions) {
     mesh.lods.clear();
     let n = mesh.vertices.len();
@@ -147,6 +148,22 @@ fn reorder_vertices(mesh: &mut MeshData) {
         }
         skin.joints = joints;
         skin.weights = weights;
+    }
+    // Morph offsets follow their vertices, target by target.
+    const S: usize = crate::mesh::MorphTargets::STRIDE;
+    if let Some(morph) = &mut mesh.morph
+        && morph.deltas.len() == morph.len() * n * S
+    {
+        let mut deltas = vec![0.0f32; morph.len() * keep * S];
+        for t in 0..morph.len() {
+            for (old, &new) in remap.iter().enumerate() {
+                if new != u32::MAX {
+                    let (from, to) = ((t * n + old) * S, (t * keep + new as usize) * S);
+                    deltas[to..to + S].copy_from_slice(&morph.deltas[from..from + S]);
+                }
+            }
+        }
+        morph.deltas = deltas;
     }
     for i in mesh.indices.iter_mut() {
         *i = remap[*i as usize];

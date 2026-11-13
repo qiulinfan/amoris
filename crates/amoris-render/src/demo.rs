@@ -241,6 +241,7 @@ pub fn mixed_model() -> ModelAsset {
             mesh: i,
             transform: glam::Mat4::IDENTITY.to_cols_array(),
             skin: None,
+            node: None,
         });
     }
     asset
@@ -869,6 +870,7 @@ pub fn bent_model() -> ModelAsset {
         translation: [0.0, y, 0.0],
         rotation: [0.0, 0.0, 0.0, 1.0],
         scale: [1.0; 3],
+        weights: Vec::new(),
     };
     ModelAsset {
         meshes: vec![m],
@@ -877,6 +879,7 @@ pub fn bent_model() -> ModelAsset {
             mesh: 0,
             transform: glam::Mat4::IDENTITY.to_cols_array(),
             skin: Some(0),
+            node: None,
         }],
         skeleton: vec![joint("root", None, 0.0), joint("bend", Some(0), 2.0)],
         skins: vec![SkinAsset {
@@ -896,6 +899,7 @@ pub fn bent_model() -> ModelAsset {
                 times: vec![0.0],
                 values: vec![Quat::from_rotation_z(std::f32::consts::FRAC_PI_2).to_array()],
             }],
+            morph: Vec::new(),
         }],
         ..ModelAsset::default()
     }
@@ -963,6 +967,7 @@ pub fn neural_ground_model(side: f32, tiles: f32) -> ModelAsset {
             mesh: 0,
             transform: glam::Mat4::IDENTITY.to_cols_array(),
             skin: None,
+            node: None,
         }],
         skeleton: vec![],
         skins: vec![],
@@ -1045,6 +1050,7 @@ pub fn aa_model() -> ModelAsset {
         mesh,
         transform: glam::Mat4::IDENTITY.to_cols_array(),
         skin: None,
+        node: None,
     };
     ModelAsset {
         images: vec![

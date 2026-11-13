@@ -16,7 +16,8 @@ use serde_json::json;
 
 use crate::mesh::{
     AlphaMode, AnimationClip, Channel, ChannelPath, ImageData, Interpolation, MaterialData,
-    MeshData, ModelAsset, NodeData, SkeletonNode, SkinAsset, SkinWeights, Vertex,
+    MeshData, ModelAsset, MorphChannel, MorphTargets, NodeData, SkeletonNode, SkinAsset,
+    SkinWeights, Vertex,
 };
 
 fn failed(path: &Path, why: impl std::fmt::Display) -> Problem {
@@ -368,9 +369,11 @@ fn convert(
                     tangent: tangents.as_ref().map_or([1.0, 0.0, 0.0, 1.0], |t| t[i]),
                 })
                 .collect();
-            // Flat normals duplicate vertices; skinned meshes keep their vertices (and weights).
+            let morph = read_targets(&mesh, &r, positions.len());
+            // Flat normals duplicate vertices; skinned and morphed meshes keep their vertices (and
+            // their weights and offsets).
             let skinned = joints.is_some() && weights.is_some();
-            let (vertices, indices) = if normals.is_none() && !skinned {
+            let (vertices, indices) = if normals.is_none() && !skinned && morph.is_none() {
                 flat_normals(&vertices, &indices)
             } else {
                 (std::mem::take(&mut vertices), indices)
@@ -382,6 +385,7 @@ fn convert(
             };
             let mut m = MeshData::new(&name, vertices, indices);
             m.material = prim.material().index();
+            m.morph = morph;
             if let (Some(j), Some(w)) = (joints, weights)
                 && j.len() == m.vertices.len()
                 && w.len() == m.vertices.len()
@@ -424,6 +428,7 @@ fn convert(
                 translation: t,
                 rotation: r,
                 scale: s,
+                weights: node_weights(&n),
             }
         })
         .collect();
@@ -447,6 +452,7 @@ fn convert(
         .enumerate()
         .map(|(i, a)| {
             let mut duration = 0.0f32;
+            let mut morph = Vec::new();
             let channels = a
                 .channels()
                 .filter_map(|ch| {
@@ -465,16 +471,20 @@ fn convert(
                         gltf::animation::util::ReadOutputs::Rotations(v) => {
                             (ChannelPath::Rotation, v.into_f32().collect())
                         }
-                        gltf::animation::util::ReadOutputs::MorphTargetWeights(_) => return None,
+                        gltf::animation::util::ReadOutputs::MorphTargetWeights(w) => {
+                            morph.push(MorphChannel {
+                                node: ch.target().node().index(),
+                                interpolation: interpolation(ch.sampler().interpolation()),
+                                times,
+                                values: w.into_f32().collect(),
+                            });
+                            return None;
+                        }
                     };
                     Some(Channel {
                         node: ch.target().node().index(),
                         path,
-                        interpolation: match ch.sampler().interpolation() {
-                            gltf::animation::Interpolation::Step => Interpolation::Step,
-                            gltf::animation::Interpolation::Linear => Interpolation::Linear,
-                            gltf::animation::Interpolation::CubicSpline => Interpolation::Cubic,
-                        },
+                        interpolation: interpolation(ch.sampler().interpolation()),
                         times,
                         values,
                     })
@@ -484,10 +494,92 @@ fn convert(
                 name: a.name().map_or_else(|| format!("{i}"), str::to_owned),
                 duration,
                 channels,
+                morph,
             }
         })
         .collect();
     Ok(asset)
+}
+
+fn interpolation(i: gltf::animation::Interpolation) -> Interpolation {
+    match i {
+        gltf::animation::Interpolation::Step => Interpolation::Step,
+        gltf::animation::Interpolation::Linear => Interpolation::Linear,
+        gltf::animation::Interpolation::CubicSpline => Interpolation::Cubic,
+    }
+}
+
+/// How many morph targets a glTF mesh has: its first primitive's (glTF requires every primitive to
+/// have as many).
+pub(crate) fn target_count(mesh: &gltf::Mesh<'_>) -> usize {
+    mesh.primitives()
+        .next()
+        .map_or(0, |p| p.morph_targets().count())
+}
+
+/// The names of a glTF mesh's morph targets (animation.md 5a): its `extras.targetNames` when that
+/// lists as many strings, else their indices.
+pub(crate) fn target_names(mesh: &gltf::Mesh<'_>) -> Vec<String> {
+    let count = target_count(mesh);
+    let named = mesh.extras().as_ref().and_then(|raw| {
+        let v: serde_json::Value = serde_json::from_str(raw.get()).ok()?;
+        let list = v.get("targetNames")?.as_array()?;
+        if list.len() != count {
+            return None;
+        }
+        list.iter()
+            .map(|x| x.as_str().map(str::to_owned))
+            .collect::<Option<Vec<String>>>()
+    });
+    named.unwrap_or_else(|| (0..count).map(|i| i.to_string()).collect())
+}
+
+/// A node's default morph weights: the node's `weights`, else its mesh's, else zeros, one per
+/// target of its mesh; empty for a node without a mesh with targets.
+pub(crate) fn node_weights(node: &gltf::Node<'_>) -> Vec<f32> {
+    let Some(mesh) = node.mesh() else {
+        return Vec::new();
+    };
+    let n = target_count(&mesh);
+    let given = node.weights().or_else(|| mesh.weights()).unwrap_or(&[]);
+    (0..n)
+        .map(|i| given.get(i).copied().unwrap_or(0.0))
+        .collect()
+}
+
+/// A primitive's morph targets, `count` vertices each, or none.
+fn read_targets<'a, 's, F>(
+    mesh: &gltf::Mesh<'_>,
+    r: &gltf::mesh::Reader<'a, 's, F>,
+    count: usize,
+) -> Option<MorphTargets>
+where
+    F: Clone + Fn(gltf::Buffer<'a>) -> Option<&'s [u8]>,
+{
+    const S: usize = MorphTargets::STRIDE;
+    let names = target_names(mesh);
+    let mut deltas = Vec::new();
+    let mut targets = 0;
+    for (p, n, t) in r.read_morph_targets() {
+        let mut d = vec![0.0f32; count * S];
+        let mut put = |at: usize, values: &mut dyn Iterator<Item = [f32; 3]>| {
+            for (i, v) in values.take(count).enumerate() {
+                d[i * S + at..i * S + at + 3].copy_from_slice(&v);
+            }
+        };
+        if let Some(mut p) = p {
+            put(0, &mut p);
+        }
+        if let Some(mut n) = n {
+            put(3, &mut n);
+        }
+        if let Some(mut t) = t {
+            put(6, &mut t);
+        }
+        deltas.extend_from_slice(&d);
+        targets += 1;
+    }
+    (targets > 0 && targets == names.len()).then_some(MorphTargets { names, deltas })
 }
 
 /// Whether a texture's sampler magnifies with glTF's `NEAREST`: its image is pixel art whose
@@ -521,6 +613,7 @@ fn walk(node: &gltf::Node<'_>, parent: [f32; 16], parts: &[Vec<usize>], out: &mu
                 mesh: m,
                 transform: world,
                 skin: node.skin().map(|s| s.index()),
+                node: Some(node.index()),
             });
         }
     }

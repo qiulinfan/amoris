@@ -1,0 +1,12 @@
+# Determinism, fork, replay and reload of feet placed on a slope, a step and stairs, a two-bone
+# reach and a look-at under scripts' goals (docs/spec/animation.md 6a).
+[run]
+ticks = 360
+seeds = [1, 2]
+
+[fork]
+at = [90, 210]
+ticks = 40
+
+[reload]
+at = [90, 210]

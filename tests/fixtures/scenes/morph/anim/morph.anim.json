@@ -1,0 +1,19 @@
+{
+  "format": "amoris-animgraph", "version": 1,
+  "skeleton": "models/morph.gltf",
+  "retarget": {"translate": []},
+  "params": {"still": false},
+  "masks": {"face": [{"joint": "plate", "weight": 0.5}]},
+  "layers": [
+    {"name": "base", "start": "wave", "states": {
+      "wave": {"clip": "wave"},
+      "still": {"clip": "still"}},
+     "transitions": [
+      {"from": "wave", "to": "still", "when": [["still", "==", true]], "fade": 0.5},
+      {"from": "still", "to": "wave", "when": [["still", "==", false]], "fade": 0.5}]},
+    {"name": "face", "mask": "face", "slot": "face"}
+  ],
+  "montages": {
+    "blink": {"slot": "face", "fade_in": 0.1, "fade_out": 0.1, "sections": [{"name": "a", "clip": "blink"}]}
+  }
+}

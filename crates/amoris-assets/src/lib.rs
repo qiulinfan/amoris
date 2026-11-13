@@ -57,6 +57,26 @@ impl Persisted for anim::AnimState {
     }
 }
 
+impl Persisted for anim::MorphWeights {
+    const NAME: &'static str = "MorphWeights";
+    const VERSION: u32 = 1;
+
+    fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
+        t.trace_type::<anim::MorphWeight>(s)?;
+        t.trace_type::<Self>(s).map(|_| ())
+    }
+}
+
+impl Persisted for anim::AnimIk {
+    const NAME: &'static str = "AnimIk";
+    const VERSION: u32 = 1;
+
+    fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
+        t.trace_type::<anim::IkGoal>(s)?;
+        t.trace_type::<Self>(s).map(|_| ())
+    }
+}
+
 impl Persisted for anim::Attach {
     const NAME: &'static str = "Attach";
     const VERSION: u32 = 1;
@@ -189,6 +209,8 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     ComponentRegistry::register::<anim::AnimGraph>(w, None)?;
     ComponentRegistry::register::<anim::AnimState>(w, None)?;
     ComponentRegistry::register::<anim::Attach>(w, None)?;
+    ComponentRegistry::register::<anim::MorphWeights>(w, None)?;
+    ComponentRegistry::register::<anim::AnimIk>(w, None)?;
     ComponentRegistry::register::<UiText>(w, None)?;
     ComponentRegistry::register::<UiBar>(w, None)?;
     ComponentRegistry::register::<UiImage>(w, None)?;
@@ -216,6 +238,8 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
         .component::<anim::AnimGraph>()
         .component::<anim::AnimState>()
         .component::<anim::Attach>()
+        .component::<anim::MorphWeights>()
+        .component::<anim::AnimIk>()
         .derived::<anim::AnimPose>(
             "each animated entity's pose, evaluated again by anim.graph every tick",
         )

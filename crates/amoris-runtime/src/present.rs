@@ -477,7 +477,8 @@ fn pose(t: &Transform, scale: [f64; 3]) -> Pose {
     }
 }
 
-/// The pose a graph evaluated this tick (animation.md 5), ten numbers a joint.
+/// The pose a graph evaluated this tick (animation.md 5), ten numbers a joint, and its morph
+/// weights (5a).
 fn posed(p: &amoris_assets::anim::AnimPose, tick_s: f64) -> AnimView {
     AnimView {
         pose: p
@@ -490,6 +491,7 @@ fn posed(p: &amoris_assets::anim::AnimPose, tick_s: f64) -> AnimView {
             })
             .collect(),
         tick_s: f(tick_s),
+        morph: p.morph.clone(),
         ..AnimView::default()
     }
 }

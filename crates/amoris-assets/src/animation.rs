@@ -195,6 +195,86 @@ pub fn global_pose_from(
     )
 }
 
+/// Where each node's morph weights start in a pose's flat weights (animation.md 5a), the total as
+/// the last entry.
+pub fn morph_offsets(asset: &ModelAsset) -> Vec<usize> {
+    let mut at = Vec::with_capacity(asset.skeleton.len() + 1);
+    let mut n = 0;
+    for s in &asset.skeleton {
+        at.push(n);
+        n += s.weights.len();
+    }
+    at.push(n);
+    at
+}
+
+/// The morph weights of `node` with `clip` at `time`: its weight channel's, else the node's
+/// defaults.
+pub fn morph_weights(
+    asset: &ModelAsset,
+    clip: Option<&AnimationClip>,
+    time: f32,
+    node: usize,
+) -> Vec<f32> {
+    let Some(defaults) = asset.skeleton.get(node).map(|s| &s.weights) else {
+        return Vec::new();
+    };
+    let n = defaults.len();
+    let Some(ch) = clip.and_then(|c| c.morph.iter().find(|m| m.node == node)) else {
+        return defaults.clone();
+    };
+    let keys = ch.times.len();
+    let per = if ch.interpolation == Interpolation::Cubic {
+        3 * n
+    } else {
+        n
+    };
+    if n == 0 || keys == 0 || ch.values.len() != keys * per {
+        return defaults.clone();
+    }
+    // Key `k`'s value (the middle third of a cubic key), tangents for a cubic one.
+    let value = |k: usize, i: usize| {
+        if ch.interpolation == Interpolation::Cubic {
+            ch.values[k * per + n + i]
+        } else {
+            ch.values[k * per + i]
+        }
+    };
+    if time <= ch.times[0] {
+        return (0..n).map(|i| value(0, i)).collect();
+    }
+    if time >= ch.times[keys - 1] {
+        return (0..n).map(|i| value(keys - 1, i)).collect();
+    }
+    let k = ch
+        .times
+        .partition_point(|&x| x <= time)
+        .saturating_sub(1)
+        .min(keys - 2);
+    let (t0, t1) = (ch.times[k], ch.times[k + 1]);
+    let u = if t1 > t0 {
+        (time - t0) / (t1 - t0)
+    } else {
+        0.0
+    };
+    (0..n)
+        .map(|i| match ch.interpolation {
+            Interpolation::Step => value(k, i),
+            Interpolation::Linear => value(k, i) + (value(k + 1, i) - value(k, i)) * u,
+            Interpolation::Cubic => {
+                let d = t1 - t0;
+                let m0 = ch.values[k * per + 2 * n + i] * d;
+                let m1 = ch.values[(k + 1) * per + i] * d;
+                let (u2, u3) = (u * u, u * u * u);
+                value(k, i) * (2.0 * u3 - 3.0 * u2 + 1.0)
+                    + m0 * (u3 - 2.0 * u2 + u)
+                    + value(k + 1, i) * (-2.0 * u3 + 3.0 * u2)
+                    + m1 * (u3 - u2)
+            }
+        })
+        .collect()
+}
+
 /// The joint matrices of skin `skin` for a pose (`global_pose`), relative to the mesh's node
 /// (`mesh_global`, the node the skinned mesh hangs from: its inverse cancels the node's own
 /// transform, as glTF requires).

@@ -16,6 +16,7 @@ Physics physics.walk always
 Physics physics.separate always
 Physics physics.mount always
 Physics physics.avatar always
+Physics anim.ik always
 Finish interface.perception always
 Finish interface.turns always
 Finish anim.attach always

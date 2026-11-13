@@ -202,6 +202,18 @@ pub(crate) enum Command {
     Act(serde_json::Value),
     /// An executor's command on one of its instances (script-host.md 5.5).
     Intent(crate::natives::intents::IntentCommand),
+    /// A morph target's weight override by name, or its release (animation.md 5a).
+    Morph {
+        id: EntityId,
+        name: String,
+        weight: Option<f64>,
+    },
+    /// An IK node's goal by the node's name, or its release (animation.md 6a).
+    Ik {
+        id: EntityId,
+        goal: amoris_assets::anim::IkGoal,
+        release: bool,
+    },
 }
 
 /// A column handed to the script, kept to compare after the call.
@@ -409,6 +421,12 @@ pub(crate) fn apply(
             }
             Command::Act(_) => {}
             Command::Intent(cmd) => crate::natives::intents::apply(world, catalog.as_ref(), cmd),
+            Command::Morph { id, name, weight } => {
+                crate::natives::anim::apply_weight(world, id, name, weight);
+            }
+            Command::Ik { id, goal, release } => {
+                crate::natives::anim::apply_ik(world, id, goal, release);
+            }
             Command::Water { id, column, m3 } => {
                 if let Some(e) = entity::entity(world, id)
                     && let Some(mut r) = world.get_mut::<amoris_physics::WaterRegion>(e)

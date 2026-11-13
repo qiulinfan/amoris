@@ -61,6 +61,7 @@ fn hero() -> ModelAsset {
         name: "raise".into(),
         duration: 1.0,
         channels,
+        morph: Vec::new(),
     });
     hero
 }

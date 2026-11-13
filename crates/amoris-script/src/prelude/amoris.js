@@ -115,7 +115,16 @@ const anim = Object.freeze({
 		host.animCommand(e, "stop", "", "", 0, fade ?? .2);
 	},
 	state: (e) => host.animState(e),
-	socket: (e, joint) => host.animSocket(e, joint)
+	socket: (e, joint) => host.animSocket(e, joint),
+	weight: (e, target) => host.animWeight(e, target),
+	setWeight: (e, target, weight) => {
+		host.animSetWeight(e, target, weight);
+	},
+	ik: (e, node) => host.animIk(e, node),
+	setIk: (e, node, goal) => {
+		if (goal === null) host.animSetIk(e, node, true, null, null, 1);
+		else host.animSetIk(e, node, false, goal.target ?? null, goal.pole ?? null, goal.weight ?? 1);
+	}
 });
 const water = Object.freeze({
 	observe: (probe) => host.waterObserve(probe),
@@ -342,4 +351,4 @@ export const field = Object.freeze({
 
 import { harden as __amoris_harden } from "amoris:host";
 import * as __amoris_self from "amoris";
-__amoris_harden("amoris", __amoris_self, { ["Query"]: Query, ["annotate"]: annotate, ["world"]: world, ["voxels"]: voxels, ["physics"]: physics, ["scene"]: scene, ["nav"]: nav, ["anim"]: anim, ["water"]: water, ["part"]: part, ["makeRng"]: makeRng, ["__context"]: __context, ["RESTRICTED"]: RESTRICTED, ["__executorContext"]: __executorContext, ["__query"]: __query, ["component"]: component, ["system"]: system, ["executor"]: executor, ["intent"]: intent, ["paramOf"]: paramOf, ["param"]: param, ["game"]: game, ["freeze"]: freeze, ["fieldOf"]: fieldOf, ["field"]: field }, { ["Query"]: 295, ["annotate"]: 670, ["world"]: 679, ["voxels"]: 690, ["physics"]: 708, ["scene"]: 717, ["nav"]: 723, ["anim"]: 728, ["water"]: 749, ["part"]: 762, ["makeRng"]: 767, ["__context"]: 789, ["RESTRICTED"]: 818, ["__executorContext"]: 824, ["__query"]: 874, ["component"]: 1076, ["system"]: 1089, ["executor"]: 1099, ["intent"]: 1108, ["paramOf"]: 1136, ["param"]: 1140, ["game"]: 1149, ["freeze"]: 1154, ["fieldOf"]: 1196, ["field"]: 1200 });
+__amoris_harden("amoris", __amoris_self, { ["Query"]: Query, ["annotate"]: annotate, ["world"]: world, ["voxels"]: voxels, ["physics"]: physics, ["scene"]: scene, ["nav"]: nav, ["anim"]: anim, ["water"]: water, ["part"]: part, ["makeRng"]: makeRng, ["__context"]: __context, ["RESTRICTED"]: RESTRICTED, ["__executorContext"]: __executorContext, ["__query"]: __query, ["component"]: component, ["system"]: system, ["executor"]: executor, ["intent"]: intent, ["paramOf"]: paramOf, ["param"]: param, ["game"]: game, ["freeze"]: freeze, ["fieldOf"]: fieldOf, ["field"]: field }, { ["Query"]: 295, ["annotate"]: 690, ["world"]: 699, ["voxels"]: 710, ["physics"]: 728, ["scene"]: 737, ["nav"]: 743, ["anim"]: 748, ["water"]: 778, ["part"]: 791, ["makeRng"]: 796, ["__context"]: 818, ["RESTRICTED"]: 847, ["__executorContext"]: 853, ["__query"]: 903, ["component"]: 1105, ["system"]: 1118, ["executor"]: 1128, ["intent"]: 1137, ["paramOf"]: 1165, ["param"]: 1169, ["game"]: 1178, ["freeze"]: 1183, ["fieldOf"]: 1225, ["field"]: 1229 });

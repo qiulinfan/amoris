@@ -12,6 +12,12 @@ pub struct Joint {
     pub name: String,
     pub parent: Option<u32>,
     pub rest: Xform,
+    /// The names of its mesh's morph targets (animation.md 5a); empty without one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub targets: Vec<String>,
+    /// Their default weights, one per target.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub weights: Vec<f32>,
 }
 
 /// Every node of a file (bones are nodes), in the file's order: the order the renderer draws the
@@ -57,6 +63,27 @@ impl Skeleton {
 
     pub fn rest(&self) -> Vec<Xform> {
         self.joints.iter().map(|j| j.rest).collect()
+    }
+
+    /// Where each joint's morph weights start in a pose's flat weights, and their total as the
+    /// last entry (animation.md 5a).
+    pub fn morph_offsets(&self) -> Vec<usize> {
+        let mut at = Vec::with_capacity(self.joints.len() + 1);
+        let mut n = 0;
+        for j in &self.joints {
+            at.push(n);
+            n += j.weights.len();
+        }
+        at.push(n);
+        at
+    }
+
+    /// Every joint's default morph weights, flat in the joints' order.
+    pub fn rest_weights(&self) -> Vec<f32> {
+        self.joints
+            .iter()
+            .flat_map(|j| j.weights.iter().copied())
+            .collect()
     }
 
     /// Every joint's transform in the file's space, from local ones.
@@ -153,6 +180,19 @@ impl Keys {
         let (a, b, u) = self.at(t);
         math::nlerp(self.q(a), self.q(b), u)
     }
+
+    /// `n` values a key (morph weights) at `t`, each interpolated linearly.
+    pub fn sample_n(&self, t: f32, n: usize, out: &mut Vec<f32>) {
+        out.clear();
+        let (a, b, u) = self.at(t);
+        if self.values.len() < (a.max(b) + 1) * n {
+            return;
+        }
+        for i in 0..n {
+            let (x, y) = (self.values[a * n + i], self.values[b * n + i]);
+            out.push(x + (y - x) * u);
+        }
+    }
 }
 
 /// One joint's keys in a clip.
@@ -162,6 +202,9 @@ pub struct Track {
     pub t: Keys,
     pub r: Keys,
     pub s: Keys,
+    /// Its node's morph weights, one per target a key (animation.md 5a).
+    #[serde(default, skip_serializing_if = "Keys::is_empty")]
+    pub w: Keys,
 }
 
 /// A clip as made on its source skeleton.
@@ -188,12 +231,23 @@ enum Translate {
     Scaled(f32),
 }
 
+/// A weight track bound to a target skeleton: the track, the source's target count and per shared
+/// target name (the source's target, the target's index in a pose's flat weights).
+#[derive(Clone, Debug)]
+struct MorphTrack {
+    track: usize,
+    width: usize,
+    pairs: Vec<(usize, usize)>,
+}
+
 /// A clip bound to a target skeleton: per track the target joint and how it translates.
 #[derive(Clone, Debug)]
 pub struct Bound {
     pub name: String,
     pub duration: f32,
     tracks: Vec<(usize, usize, Translate)>,
+    /// Weight tracks, bound by node and target name.
+    morph: Vec<MorphTrack>,
     /// The clip's index in its set.
     clip: usize,
     set: usize,
@@ -236,12 +290,60 @@ impl Bound {
                 Some((j, k, mode))
             })
             .collect();
+        // Weights bind by node name, then by target name.
+        let offsets = target.morph_offsets();
+        let morph = c
+            .tracks
+            .iter()
+            .enumerate()
+            .filter_map(|(k, tr)| {
+                if tr.w.is_empty() {
+                    return None;
+                }
+                let j = target.find(&tr.joint)?;
+                let src = set.skeleton.find(&tr.joint)?;
+                let from = &set.skeleton.joints[src].targets;
+                let to = &target.joints[j].targets;
+                let pairs: Vec<(usize, usize)> = from
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(a, name)| {
+                        let b = to.iter().position(|x| x == name)?;
+                        Some((a, offsets[j] + b))
+                    })
+                    .collect();
+                (!pairs.is_empty()).then_some(MorphTrack {
+                    track: k,
+                    width: from.len(),
+                    pairs,
+                })
+            })
+            .collect();
         Bound {
             name: c.name.clone(),
             duration: c.duration,
             tracks,
+            morph,
             clip,
             set: set_index,
+        }
+    }
+
+    /// The clip's morph weights at `t` written over `weights` (the pose's flat weights; those it
+    /// does not key keep what they hold).
+    pub fn sample_weights(&self, sets: &[ClipSet], t: f32, weights: &mut [f32]) {
+        let clip = &sets[self.set].clips[self.clip];
+        let mut buf = Vec::new();
+        for m in &self.morph {
+            clip.tracks[m.track].w.sample_n(t, m.width, &mut buf);
+            if buf.len() != m.width {
+                continue;
+            }
+            for &(a, b) in &m.pairs {
+                if let Some(w) = weights.get_mut(b) {
+                    *w = buf[a];
+                }
+            }
         }
     }
 
@@ -298,6 +400,8 @@ mod tests {
                 t,
                 ..Xform::IDENTITY
             },
+            targets: Vec::new(),
+            weights: Vec::new(),
         }
     }
 
@@ -333,12 +437,14 @@ mod tests {
                         t: keys(&[0.0, 1.0], &[0.0, 1.0, 0.0, 0.0, 0.5, 0.0]),
                         r: Keys::default(),
                         s: Keys::default(),
+                        w: Keys::default(),
                     },
                     Track {
                         joint: "arm".into(),
                         t: keys(&[0.0], &[9.0, 9.0, 9.0]),
                         r: keys(&[0.0], &[0.0, 0.0, 0.0, 1.0]),
                         s: Keys::default(),
+                        w: Keys::default(),
                     },
                 ],
             }],

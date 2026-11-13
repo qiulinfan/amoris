@@ -1,0 +1,12 @@
+# Determinism, fork, replay and reload of morph weights a graph evaluates from clips, a fade, a
+# masked montage and a script's override (docs/spec/animation.md 5a).
+[run]
+ticks = 200
+seeds = [1, 2]
+
+[fork]
+at = [50, 120]
+ticks = 30
+
+[reload]
+at = [50, 120]

@@ -6,7 +6,10 @@
 use std::collections::BTreeMap;
 
 use amoris_assets::Model;
-use amoris_assets::anim::{self, AnimGraph, AnimPose, AnimRigs, AnimState, Attach, Socket, Xform};
+use amoris_assets::anim::{
+    self, AnimGraph, AnimPose, AnimRigs, AnimState, Attach, MorphWeight, MorphWeights, Rig, Socket,
+    Xform,
+};
 use amoris_sim::math;
 use amoris_sim::order::{by_id, by_id_mut};
 use amoris_sim::{Emit, EntityId, EntityIndex, SimClock};
@@ -137,11 +140,11 @@ fn body_rotation(yaw: f64) -> [f64; 4] {
     yaw_q(yaw + std::f64::consts::PI)
 }
 
-fn f32x3(v: [f64; 3]) -> [f32; 3] {
+pub(crate) fn f32x3(v: [f64; 3]) -> [f32; 3] {
     [geom::f32_of(v[0]), geom::f32_of(v[1]), geom::f32_of(v[2])]
 }
 
-fn f32x4(v: [f64; 4]) -> [f32; 4] {
+pub(crate) fn f32x4(v: [f64; 4]) -> [f32; 4] {
     [
         geom::f32_of(v[0]),
         geom::f32_of(v[1]),
@@ -151,7 +154,7 @@ fn f32x4(v: [f64; 4]) -> [f32; 4] {
 }
 
 /// The entity's frame: its transform and its model's scale.
-fn frame(tf: &Transform, scale: [f64; 3]) -> Xform {
+pub(crate) fn frame(tf: &Transform, scale: [f64; 3]) -> Xform {
     Xform {
         t: f32x3(tf.position),
         r: f32x4(tf.rotation),
@@ -184,10 +187,12 @@ type AnimRow<'a> = (
     Option<&'a mut AnimPose>,
     Option<&'a Transform>,
     Option<&'a Model>,
+    Option<&'a mut MorphWeights>,
 );
 
 /// `anim.graph` (Forces, first): every graph advanced by the tick; its pose kept for drawing, its
-/// sockets and root motion in the world, its notifies emitted as `anim.notify`.
+/// sockets and root motion in the world, its notifies emitted as `anim.notify`, its morph weights
+/// under the scripts' overrides kept in `MorphWeights` (animation.md 5a).
 pub(crate) fn animate(
     clock: Res<SimClock>,
     rigs: Option<Res<AnimRigs>>,
@@ -197,7 +202,7 @@ pub(crate) fn animate(
 ) {
     let Some(rigs) = rigs else { return };
     let dt = clock.dt();
-    for (entity, id, graph, state, pose, tf, model) in by_id_mut(&mut q) {
+    for (entity, id, graph, state, pose, tf, model, morph) in by_id_mut(&mut q) {
         let Some(rig) = rigs.rig(&graph.graph) else {
             continue;
         };
@@ -222,7 +227,23 @@ pub(crate) fn animate(
             None => fresh.insert(rig.initial(&graph.graph)),
         };
         let step = if graph.playing { dt * graph.speed } else { 0.0 };
-        let out = anim::graph::step(rig, &rigs.sets, st, step);
+        let mut out = anim::graph::step(rig, &rigs.sets, st, step);
+        match morph {
+            Some(mut m) => {
+                let named = morphed(rig, &m.overrides, &mut out.morph);
+                if m.weights != named {
+                    m.weights = named;
+                }
+            }
+            None if rig.morph_len() > 0 => {
+                let weights = morphed(rig, &[], &mut out.morph);
+                commands.entity(entity).insert(MorphWeights {
+                    overrides: Vec::new(),
+                    weights,
+                });
+            }
+            None => {}
+        }
         let world = tf.map(|t| frame(t, model.map_or([1.0; 3], |m| m.scale)));
         st.sockets = rig
             .sockets(&out.pose)
@@ -264,17 +285,43 @@ pub(crate) fn animate(
             }
         }
         match pose {
-            Some(mut p) => p.joints = out.pose,
+            Some(mut p) => {
+                p.joints = out.pose;
+                p.morph = out.morph;
+            }
             None => {
-                commands
-                    .entity(entity)
-                    .insert(AnimPose { joints: out.pose });
+                commands.entity(entity).insert(AnimPose {
+                    joints: out.pose,
+                    morph: out.morph,
+                });
             }
         }
         if let Some(s) = fresh {
             commands.entity(entity).insert(s);
         }
     }
+}
+
+/// Applies `overrides` to a pose's flat morph weights (every target of an override's name takes
+/// it) and returns each named target's weight, its first node's, in the pose's order.
+fn morphed(rig: &Rig, overrides: &[MorphWeight], weights: &mut [f32]) -> Vec<MorphWeight> {
+    let mut named: Vec<MorphWeight> = Vec::new();
+    for (i, (name, _)) in rig.morph_targets().enumerate() {
+        let Some(w) = weights.get_mut(i) else { break };
+        if let Some(o) = overrides.iter().rev().find(|o| o.name == name) {
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                *w = o.weight as f32;
+            }
+        }
+        if !named.iter().any(|n| n.name == name) {
+            named.push(MorphWeight {
+                name: name.to_owned(),
+                weight: f64::from(*w),
+            });
+        }
+    }
+    named
 }
 
 /// Things an avatar may face that are neither walkers nor avatars.

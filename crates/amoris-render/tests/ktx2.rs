@@ -386,6 +386,7 @@ fn model(images: Vec<ImageData>) -> ModelAsset {
             mesh: i,
             transform: glam::Mat4::IDENTITY.to_cols_array(),
             skin: None,
+            node: None,
         });
     }
     asset

@@ -349,6 +349,7 @@ fn coplanar_model(
             mesh,
             transform: glam::Mat4::IDENTITY.to_cols_array(),
             skin: None,
+            node: None,
         })
         .collect();
     ModelAsset {

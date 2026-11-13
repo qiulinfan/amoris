@@ -5,6 +5,7 @@
 
 pub mod clip;
 pub mod graph;
+pub mod ik;
 #[cfg(feature = "import")]
 pub mod load;
 pub mod math;
@@ -20,7 +21,8 @@ pub use clip::{Clip, ClipSet, Skeleton};
 pub use graph::{GraphDef, Notice, Output, Rig};
 pub use math::Xform;
 pub use state::{
-    AnimCommand, AnimGraph, AnimParam, AnimPose, AnimState, Attach, LayerState, SlotState, Socket,
+    AnimCommand, AnimGraph, AnimIk, AnimParam, AnimPose, AnimState, Attach, IkGoal, LayerState,
+    MorphWeight, MorphWeights, SlotState, Socket,
 };
 
 /// A project's animation: its graphs and the files they name (skeletons and clip libraries), by
