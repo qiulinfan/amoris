@@ -312,6 +312,12 @@ credential cleanup. File-verification records remain local, including in that ar
   `AMORIS_AA=msaa+taa` (only the prepass's ties may differ: many_cubes' sphere, and walls touching
   a floor or ceiling); `aa_eval --only upscale` measures quality and `tools/render/aa_bench.py --scales`
   cost ([docs/bench/taau.md](docs/bench/taau.md)).
+- KTX2 textures ([docs/spec/texture-formats.md](docs/spec/texture-formats.md)): a change to
+  `amoris-assets/src/ktx2.rs`, the importer's images, the texture arrays (materials.rs, blit.rs) or
+  the forward shader's `color_grad`/`data_grad`/`color_level` runs `cargo test -p amoris-assets
+  ktx2 import`, `cargo test -p amoris-render --lib materials` and `cargo test --release -p
+  amoris-render --test ktx2` on D3D12, Vulkan and `AMORIS_GPU_MINIMAL`, and `tools/render/build_compare.py`
+  against a build without it. `cargo run --release -p amoris-render --example ktx2` makes files.
 - Moving instances ([docs/bench/dynamic-scenes.md](docs/bench/dynamic-scenes.md)): `Scene::apply`
   must stay linear in the slots a tick moves (`cargo test -p amoris-render --lib scene::` pins it
   by structure and what each slot holds; `-- --ignored` times it); more than 8 runs of dirty slots

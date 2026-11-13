@@ -183,6 +183,43 @@ impl Blitter {
     }
 }
 
+/// Writes `levels[m]` to mip `m` of layer `layer` of `array` as they are: texels, or for a
+/// block-compressed array its blocks, rows of blocks (a mip smaller than a block takes one whole
+/// block). A KTX2 image whose levels fit a layer goes this way (docs/spec/texture-formats.md 4).
+pub fn write_levels(queue: &wgpu::Queue, array: &wgpu::Texture, layer: u32, levels: &[&[u8]]) {
+    let format = array.format();
+    let (bw, bh) = format.block_dimensions();
+    let block = format.block_copy_size(None).unwrap_or(4);
+    for (mip, data) in levels.iter().enumerate() {
+        let mip = mip as u32;
+        let size = (array.width() >> mip).max(1);
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: array,
+                mip_level: mip,
+                origin: wgpu::Origin3d {
+                    x: 0,
+                    y: 0,
+                    z: layer,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(size.div_ceil(bw) * block),
+                rows_per_image: Some(size.div_ceil(bh)),
+            },
+            wgpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: 1,
+            }
+            .physical_size(format),
+        );
+    }
+}
+
 /// A marked image ([`ImageData::nearest`]: its glTF sampler magnifies with `NEAREST`) resized to
 /// `width` x `height` by point sampling: each texel of the result takes the image's texel under its
 /// centre, `floor((2x + 1) * w / (2 * width))` across and the same down. The arithmetic is integer,
@@ -238,6 +275,7 @@ mod tests {
             }
         }
         ImageData {
+            levels: None,
             name: "art".into(),
             width,
             height,

@@ -42,6 +42,7 @@ fn textured_model(m: &procedural::Material) -> ModelAsset {
     let c = m.channels.len();
     let at = |ch: Channel| m.channels.iter().position(|&x| x == ch);
     let image = |name: &str, srgb: bool, picks: [Option<usize>; 4], fill: [u8; 4]| ImageData {
+        levels: None,
         name: name.into(),
         width: m.size,
         height: m.size,

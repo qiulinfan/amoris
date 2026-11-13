@@ -214,6 +214,8 @@ pub struct ImageData {
     pub name: String,
     pub width: u32,
     pub height: u32,
+    /// Level 0 as RGBA8, whatever the file held (a KTX2 image's level 0 decoded): what the CPU's
+    /// readers (the path tracer, the GI bakers) and the renderer's resizing path take.
     pub rgba8: Vec<u8>,
     /// Color data (sRGB-encoded) rather than linear data (normals, roughness).
     pub srgb: bool,
@@ -222,6 +224,75 @@ pub struct ImageData {
     /// (docs/spec/voxels.md 7.2).
     #[serde(default)]
     pub nearest: bool,
+    /// A KTX2 image's levels as its file stores them (docs/spec/texture-formats.md); `None` for
+    /// an image decoded from PNG or JPEG.
+    #[serde(default)]
+    pub levels: Option<TextureLevels>,
+}
+
+/// How a KTX2 image's levels are stored: RGBA8 texels or 4x4 blocks of a BCn format
+/// (docs/spec/texture-formats.md 2). Color space is not part of it: glTF's use of the image says
+/// whether its values are sRGB-encoded (base color and emissive) or linear.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockFormat {
+    /// Uncompressed RGBA8 texels.
+    Rgba8,
+    /// BC1: RGB with 1-bit alpha, 8 bytes a block.
+    Bc1,
+    /// BC3: BC1's color with BC4 alpha, 16 bytes a block.
+    Bc3,
+    /// BC4: one channel, 8 bytes a block.
+    Bc4,
+    /// BC5: two channels, 16 bytes a block.
+    Bc5,
+    /// BC7: RGBA, 16 bytes a block.
+    Bc7,
+}
+
+impl BlockFormat {
+    /// Texels a block spans along each side (1 for RGBA8).
+    pub fn block_side(self) -> u32 {
+        match self {
+            BlockFormat::Rgba8 => 1,
+            _ => 4,
+        }
+    }
+
+    /// Bytes a block (a texel for RGBA8) takes.
+    pub fn block_bytes(self) -> usize {
+        match self {
+            BlockFormat::Rgba8 => 4,
+            BlockFormat::Bc1 | BlockFormat::Bc4 => 8,
+            BlockFormat::Bc3 | BlockFormat::Bc5 | BlockFormat::Bc7 => 16,
+        }
+    }
+
+    /// Bytes a `width` x `height` level takes: whole blocks, rows of blocks.
+    pub fn level_bytes(self, width: u32, height: u32) -> usize {
+        let side = self.block_side();
+        width.div_ceil(side) as usize * height.div_ceil(side) as usize * self.block_bytes()
+    }
+
+    /// The name tools and logs use (`bc7`).
+    pub fn name(self) -> &'static str {
+        match self {
+            BlockFormat::Rgba8 => "rgba8",
+            BlockFormat::Bc1 => "bc1",
+            BlockFormat::Bc3 => "bc3",
+            BlockFormat::Bc4 => "bc4",
+            BlockFormat::Bc5 => "bc5",
+            BlockFormat::Bc7 => "bc7",
+        }
+    }
+}
+
+/// A KTX2 image's levels: level `k` is `max(1, width >> k)` by `max(1, height >> k)` texels of
+/// `format`, supercompression already undone. Level 0 is the image's full size.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TextureLevels {
+    pub format: BlockFormat,
+    pub levels: Vec<Vec<u8>>,
 }
 
 /// A PBR metallic-roughness material (glTF 2.0's core model).

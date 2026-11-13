@@ -54,11 +54,11 @@ fn rt_reflect(origin: vec3f, direction: vec3f) -> RtHit {
     }
     var albedo = m.base_color.rgb;
     if (m.base_color_tex != NO_TEXTURE) {
-        albedo *= textureSampleLevel(tex_srgb, tex_sampler, uv * m.uv_scale, m.base_color_tex, 0.0).rgb;
+        albedo *= color_level(m.base_color_tex, uv * m.uv_scale, 0.0).rgb;
     }
     var emissive = m.emissive;
     if (m.emissive_tex != NO_TEXTURE) {
-        emissive *= textureSampleLevel(tex_srgb, tex_sampler, uv * m.uv_scale, m.emissive_tex, 0.0).rgb;
+        emissive *= color_level(m.emissive_tex, uv * m.uv_scale, 0.0).rgb;
     }
     let p = origin + direction * hit.t;
     var color = emissive;

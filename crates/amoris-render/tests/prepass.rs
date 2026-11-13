@@ -376,6 +376,7 @@ fn coplanar_model(
             },
         ],
         images: vec![ImageData {
+            levels: None,
             name: "cutout".into(),
             width: 1,
             height: 1,

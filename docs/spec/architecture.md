@@ -701,7 +701,8 @@ spec-persist adds `serde-reflection =0.6.0`, `xxhash-rust =0.8.19` and `blake3 =
 | `typeid` | physics | Pioneer, 2026-10-15: `typeid =1.0.3` (dtolnay's, `no_std`, already locked through `erased-serde`): layout 2 of the physics cache hands a shape built elsewhere to Rapier's derived `Deserialize`, where the field's type is a generic parameter, and `typeid::of` shows it is `SharedShape` before the value is moved in (persistence.md 8) |
 | `rquickjs` | script, debug | QuickJS-ng; `std`/`os` modules never loaded (spec-script); `parallel` never enabled (it implements `Send` for the runtime by pulling `tokio/rt-multi-thread`) |
 | `oxc_*` | script | feature `transpile` only (`oxc_isolated_declarations`: the prelude test's `amoris.d.ts`, a dev-dependency) |
-| `gltf`, `meshopt`, `image` | assets (and `image` in render natively, and in app) | `gltf` and `image`: feature `import`; `meshopt`: feature `lod`, which `import` and `amoris-render` (its primitives' levels) enable, natively and on wasm32 (Pioneer 2026-10-09, docs/spec/lod.md) |
+| `ktx2`, `ruzstd`, `texture2ddecoder` | assets | 2026-11-12 (docs/spec/texture-formats.md): feature `ktx2`, which `import` and `amoris-render` enable, natively and on wasm32: `ktx2 =0.5.0` reads and writes the KTX2 container (no dependencies), `ruzstd =0.9.1` (default features off, `std` on) undoes and makes its Zstd supercompression, `texture2ddecoder =0.1.2` decodes BC1 to BC7 levels to RGBA8 where the GPU samples no block format; all pure Rust |
+| `gltf`, `meshopt`, `image` | assets (and `image` in render natively, and in app) | `gltf` with its `extensions` and `allow_empty_texture` features (a texture named only by `KHR_texture_basisu`; texture-formats.md 3); `gltf` and `image`: feature `import`; `meshopt`: feature `lod`, which `import` and `amoris-render` (its primitives' levels) enable, natively and on wasm32 (Pioneer 2026-10-09, docs/spec/lod.md) |
 | `glam`, `bytemuck` | assets, render (and `glam` in audio, viewport and app) | the visual components' math and the GPU layouts of the render feed and the renderer; `glam` with `bytemuck` |
 | `bincode2` (`bincode` 2) | assets | the render feed's wire form (`RenderFrame::encode`, bincode 2's standard configuration; host-protocol.md 5) and the resident water's checkpoints |
 | `lz4_flex` | assets | `=0.14.0`, safe encoding and checked decoding: the bounded lossless blocks of resident water checkpoints in the feed (water.md 39), on `wasm32` too |
@@ -718,7 +719,7 @@ spec-persist adds `serde-reflection =0.6.0`, `xxhash-rust =0.8.19` and `blake3 =
 | `wasm-bindgen`, `wasm-bindgen-futures`, `web-sys`, `js-sys` | viewport (on `wasm32`), web (`wasm-bindgen`, and `wasm-bindgen-futures` on `wasm32`) | `web` alone supplies the injected clock, through a `wasm-bindgen` import of `performance.now()` (threads.md 3.1) |
 | `arc-swap` | link | the snapshot slot (`threads.md`, 4.3) |
 | `foldhash` | render | Pioneer 2026-10-14, approved by the owner on 2026-10-16 (charter 5.1): `foldhash =0.2.0` hashes the renderer's entity map (scene.rs): `Scene::apply` looks the entities of a chunk of updates up before applying them, which overlaps the lookups' cache misses only with a hasher cheaper than the standard library's SipHash (docs/bench/dynamic-scenes.md). hashbrown's own default hasher, already in the dependency graph through it; no dependencies, Zlib, builds for `wasm32` |
-| `intel_tex_2`, `texture2ddecoder` | render, dev-dependencies only | Pioneer 2026-10-09: the neural texture encoder's BCn baseline (`examples/neural_encode`, docs/spec/neural-textures.md). `intel_tex_2 =0.5.0` is Intel's ISPC texture compressor with its prebuilt kernels (BC1, BC4, BC5, BC7); `texture2ddecoder =0.1.2` a pure-Rust BCn decoder. Never in a library |
+| `intel_tex_2`, `texture2ddecoder` | render, dev-dependencies only | Pioneer 2026-10-09: the neural texture encoder's BCn baseline (`examples/neural_encode`, docs/spec/neural-textures.md), and from 2026-11-12 the KTX2 fixture tool and tests (`examples/ktx2`, `tests/ktx2.rs`). `intel_tex_2 =0.5.0` is Intel's ISPC texture compressor with its prebuilt kernels (BC1, BC3, BC4, BC5, BC7); never in a library. `texture2ddecoder =0.1.2`, a pure-Rust BCn decoder, is also in assets (above) |
 
 No crate uses `tracing`, Tracy or `egui`: the profiler is built in (the game thread's `profile`, the
 renderer's GPU timestamps and `AMORIS_TRACE`'s Chrome traces), and the editor is the React
@@ -809,6 +810,7 @@ compiler, and master found that an arm64 build fused `a * b + c` where WebAssemb
 |---|---|---|---|
 | assets | `import` (default) | render's `import`; `amoris-viewport` | glTF import, image decoding, meshoptimizer (natively; the browser viewport too, Pioneer 2026-10-09) |
 | assets | `lod` | `import`, `amoris-render` | meshoptimizer: LOD chains and GPU vertex order (docs/spec/lod.md) |
+| assets | `ktx2` | `import`, `amoris-render` | KTX2 reading, writing and CPU block decoding (docs/spec/texture-formats.md) |
 | render | `window` (default) | `amoris-app` | the native window's winit runner (`amoris_render::app`) |
 | render | `import` (default) | `amoris-app`, `amoris-viewport` | assets' `import` |
 | audio | `playback` | `amoris-app` | kira playback (`Audio`); without it the synthesis alone |

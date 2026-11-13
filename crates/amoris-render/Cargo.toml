@@ -7,8 +7,9 @@ publish.workspace = true
 description = "The wgpu renderer: GPU-driven, clustered PBR, shadows, sky, ocean, post; Metal, Vulkan and WebGPU"
 
 [dependencies]
-# `lod`: the primitives' levels of detail (docs/spec/lod.md).
-amoris-assets = { workspace = true, features = ["lod"] }
+# `lod`: the primitives' levels of detail (docs/spec/lod.md); `ktx2`: decoding a KTX2 image's levels
+# where the device samples no block format (docs/spec/texture-formats.md).
+amoris-assets = { workspace = true, features = ["lod", "ktx2"] }
 wgpu.workspace = true
 glam.workspace = true
 bytemuck.workspace = true

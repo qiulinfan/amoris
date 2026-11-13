@@ -890,6 +890,7 @@ fn skinned_board(px: f32) -> ModelAsset {
             ..MaterialData::default()
         }],
         images: vec![ImageData {
+            levels: None,
             name: "checker".into(),
             width: tw,
             height: th,

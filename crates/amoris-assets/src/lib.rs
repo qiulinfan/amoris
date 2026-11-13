@@ -11,6 +11,8 @@ pub mod frame;
 pub mod gi;
 #[cfg(feature = "import")]
 pub mod import;
+#[cfg(feature = "ktx2")]
+pub mod ktx2;
 #[cfg(feature = "lod")]
 pub mod lod;
 pub mod lut;

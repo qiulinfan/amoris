@@ -214,6 +214,9 @@ pub struct FrameStats {
     /// Spot and point lights with `shadows` set in view that got no shadow map this frame: those
     /// whose views no longer fit in `LOCAL_VIEWS`, the smallest on screen.
     pub local_shadows_dropped: u32,
+    /// Texture layers held as BC7 blocks (KTX2 images sampled as stored; 0 on a device without
+    /// BC or with no such image; docs/spec/texture-formats.md 4).
+    pub texture_blocks: u32,
 }
 
 /// A drawn node: (mesh index, local TRS, skin).
@@ -1200,6 +1203,10 @@ impl Renderer {
                 ),
                 entry(4, frag, uni_ty()),
                 entry(5, frag, uni_ty()),
+                // The BC7 arrays (sRGB, linear; a 1-texel stand-in until the first BC7 image),
+                // which a layer index with TEX_BLOCKS names (docs/spec/texture-formats.md 4).
+                tex_entry(6),
+                tex_entry(7),
             ],
         });
         let fwd_module = shaders::module(device, "forward");
@@ -1290,7 +1297,7 @@ impl Renderer {
                 cache: None,
             })
         };
-        let materials = MaterialPool::new(device);
+        let materials = MaterialPool::new(device, gpu.caps.texture_compression_bc);
         let view_buf = Uniform::new(device, "view", std::mem::size_of::<ViewUniform>() as u64);
         let view_stable = Uniform::new(
             device,
@@ -2928,6 +2935,16 @@ impl Renderer {
                 },
                 b(4, &self.neural.data),
                 b(5, &self.neural.data),
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(self.materials.srgb_blocks_view()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(
+                        self.materials.linear_blocks_view(),
+                    ),
+                },
             ],
         });
         let sky = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -3985,6 +4002,7 @@ impl Renderer {
             render_scale: self.render_scale,
             local_shadows: local.lights,
             local_shadows_dropped: local.dropped,
+            texture_blocks: self.materials.block_layers(),
         };
         trace::span(&mut self.trace, "render", rendering);
         // A host that does not bracket its frames does not finish the trace either: the last

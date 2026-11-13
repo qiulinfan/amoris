@@ -47,6 +47,7 @@ fn image(scale: u32, nearest: bool) -> ImageData {
         }
     }
     ImageData {
+        levels: None,
         name: "art".into(),
         width: size,
         height: size,

@@ -190,6 +190,7 @@ pub fn mixed_model() -> ModelAsset {
         }
     }
     let image = ImageData {
+        levels: None,
         name: "checker".into(),
         width: size,
         height: size,
@@ -1048,6 +1049,7 @@ pub fn aa_model() -> ModelAsset {
     ModelAsset {
         images: vec![
             ImageData {
+                levels: None,
                 name: "fine checker".into(),
                 width: size,
                 height: size,
@@ -1056,6 +1058,7 @@ pub fn aa_model() -> ModelAsset {
                 nearest: false,
             },
             ImageData {
+                levels: None,
                 name: "chain link".into(),
                 width: link,
                 height: link,

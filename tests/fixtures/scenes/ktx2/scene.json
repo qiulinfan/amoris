@@ -1,0 +1,165 @@
+{
+  "format": "amoris-scene",
+  "version": 1,
+  "entities": [
+    {
+      "name": "Ground",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            -0.05,
+            0
+          ]
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            12,
+            0.1,
+            6
+          ],
+          "color": [
+            0.55,
+            0.55,
+            0.53,
+            1
+          ],
+          "roughness": 0.9
+        }
+      }
+    },
+    {
+      "name": "Panel bc7",
+      "components": {
+        "Transform": {
+          "position": [
+            -3.3,
+            1.1,
+            0
+          ]
+        },
+        "Model": {
+          "mesh": "models/panels.glb#bc7",
+          "scale": [
+            2,
+            2,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "Panel bc1",
+      "components": {
+        "Transform": {
+          "position": [
+            -1.0999999999999996,
+            1.1,
+            0
+          ]
+        },
+        "Model": {
+          "mesh": "models/panels.glb#bc1",
+          "scale": [
+            2,
+            2,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "Panel small",
+      "components": {
+        "Transform": {
+          "position": [
+            1.1000000000000005,
+            1.1,
+            0
+          ]
+        },
+        "Model": {
+          "mesh": "models/panels.glb#small",
+          "scale": [
+            2,
+            2,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "Panel png",
+      "components": {
+        "Transform": {
+          "position": [
+            3.3000000000000007,
+            1.1,
+            0
+          ]
+        },
+        "Model": {
+          "mesh": "models/panels.glb#png",
+          "scale": [
+            2,
+            2,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "Sun",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            10,
+            0
+          ],
+          "rotation": [
+            -0.3535534,
+            0.3535534,
+            0.1464466,
+            0.8535534
+          ]
+        },
+        "Light": {
+          "kind": "directional",
+          "intensity": 5.0,
+          "shadows": true
+        }
+      }
+    },
+    {
+      "name": "Environment",
+      "components": {
+        "Environment": {
+          "bloom": 0.05
+        }
+      }
+    },
+    {
+      "name": "Camera",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            1.4,
+            6.5
+          ],
+          "rotation": [
+            -0.0261769,
+            0,
+            0,
+            0.9996573
+          ]
+        },
+        "Camera": {
+          "fov_deg": 50
+        }
+      }
+    }
+  ]
+}

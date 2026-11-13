@@ -59,6 +59,7 @@ fn model() -> ModelAsset {
     mesh.material = Some(0);
     ModelAsset {
         images: vec![ImageData {
+            levels: None,
             name: "holes".into(),
             width: size,
             height: size,

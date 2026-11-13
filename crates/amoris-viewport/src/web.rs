@@ -475,7 +475,7 @@ impl Viewport {
             .map(|(l, ms)| format!("{{\"pass\":\"{l}\",\"ms\":{ms:.3}}}"))
             .collect();
         self.last_stats = format!(
-            "{{\"gpu_ms\":{:.3},\"instances\":{},\"entities\":{},\"meshes\":{},\"pending_assets\":{},\"tick\":{},\"backend\":\"{}\",\"draw_path\":\"{}\",\"draw_calls\":{},\"occlusion\":\"{}\",\"occluded\":{},\"prepass\":\"{}\",\"lod\":\"{}\",\"antialiasing\":\"{}\",\"gtao\":\"{}\",\"render_scale\":{},\"local_shadows\":{},\"local_shadows_dropped\":{},\"passes\":[{}]}}",
+            "{{\"gpu_ms\":{:.3},\"instances\":{},\"entities\":{},\"meshes\":{},\"pending_assets\":{},\"tick\":{},\"backend\":\"{}\",\"draw_path\":\"{}\",\"draw_calls\":{},\"occlusion\":\"{}\",\"occluded\":{},\"prepass\":\"{}\",\"lod\":\"{}\",\"antialiasing\":\"{}\",\"gtao\":\"{}\",\"render_scale\":{},\"local_shadows\":{},\"local_shadows_dropped\":{},\"texture_blocks\":{},\"passes\":[{}]}}",
             s.gpu_ms,
             s.instances,
             s.entities,
@@ -494,6 +494,7 @@ impl Viewport {
             s.render_scale,
             s.local_shadows,
             s.local_shadows_dropped,
+            s.texture_blocks,
             passes.join(",")
         );
         self.last_stats.clone()

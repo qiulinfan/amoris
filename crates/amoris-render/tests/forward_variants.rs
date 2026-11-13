@@ -38,6 +38,7 @@ fn model() -> ModelAsset {
     }
     let mut asset = ModelAsset {
         images: vec![ImageData {
+            levels: None,
             name: "holes".into(),
             width: size,
             height: size,
