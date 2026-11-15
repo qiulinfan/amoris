@@ -1,6 +1,6 @@
-//! `test`: `cargo test --workspace --release --locked --no-fail-fast`, read from libtest's stable
-//! text output (docs/spec/checks.md 6.2). The exit status of `cargo test` is authoritative: a
-//! failure the parser does not recognize is still a failure.
+//! `test`: `cargo test --workspace --release --locked --tests --no-fail-fast`, then the same with
+//! `--doc`, read from libtest's stable text output (docs/spec/checks.md 6.2). The exit status of
+//! `cargo test` is authoritative: a failure the parser does not recognize is still a failure.
 
 use super::diag;
 use crate::report::{Problem, StepResult};
@@ -128,54 +128,66 @@ pub fn run(env: &Env, quick: bool) -> StepResult {
     let mut step = StepResult::new("test");
     let log = env.new_log("test");
     step.log = Some(env.rel(&log));
-    let mut args: Vec<&str> = vec![
-        "test",
-        "--workspace",
-        "--release",
-        "--locked",
-        "--no-fail-fast",
-        "--message-format=json",
-    ];
-    if !quick {
-        args.extend(["--", "--include-ignored"]);
-    }
-    let cmd = env.cargo(args);
-    let line = run::describe(&cmd);
-    let out = match run::run_merged(cmd, &log, &mut |_| {}) {
-        Ok(o) => o,
-        Err(e) => {
-            step.problem(run::start_failed(&line, &e));
-            return step;
+    // Two commands, since cargo takes `--doc` with no other target selection (checks.md 6.2): the
+    // libraries, binaries and integration tests, not the examples, which `cargo test` would
+    // otherwise build without running (clippy's `--all-targets` already compiles them); then the
+    // doc tests.
+    let mut r = Results::default();
+    for targets in ["--tests", "--doc"] {
+        let mut args: Vec<&str> = vec![
+            "test",
+            "--workspace",
+            "--release",
+            "--locked",
+            targets,
+            "--no-fail-fast",
+            "--message-format=json",
+        ];
+        if !quick {
+            args.extend(["--", "--include-ignored"]);
         }
-    };
-    let compile: Vec<_> = diag::all(&out.text)
-        .into_iter()
-        .filter(|d| d.level == "error")
-        .collect();
-    for d in &compile {
-        step.error(Problem::new(
-            "test.failed",
-            format!("{} does not compile its tests: {}: {}", d.package, d.at(), d.message),
-            json!({"crate": d.package, "test": "(compile)", "message": format!("{}: {}", d.at(), d.message)}),
-        ));
-    }
-    let r = parse(&out.text);
-    for f in &r.failed {
-        step.error(Problem::new(
-            "test.failed",
-            format!("{} {} failed", f.krate, f.test),
-            json!({"crate": f.krate, "test": f.test, "message": f.message}),
-        ));
-    }
-    if !out.ok() && r.failed.is_empty() && compile.is_empty() {
-        step.error(Problem::new(
-            "check.command_failed",
-            format!(
-                "{line} failed (exit {:?}) without a failure the step reads",
-                out.code
-            ),
-            json!({"command": line, "status": out.code, "tail": diag::plain_tail(&out.text, 20)}),
-        ));
+        let cmd = env.cargo(args);
+        let line = run::describe(&cmd);
+        let out = match run::run_merged(cmd, &log, &mut |_| {}) {
+            Ok(o) => o,
+            Err(e) => {
+                step.problem(run::start_failed(&line, &e));
+                return step;
+            }
+        };
+        let compile: Vec<_> = diag::all(&out.text)
+            .into_iter()
+            .filter(|d| d.level == "error")
+            .collect();
+        for d in &compile {
+            step.error(Problem::new(
+                "test.failed",
+                format!("{} does not compile its tests: {}: {}", d.package, d.at(), d.message),
+                json!({"crate": d.package, "test": "(compile)", "message": format!("{}: {}", d.at(), d.message)}),
+            ));
+        }
+        let part = parse(&out.text);
+        for f in &part.failed {
+            step.error(Problem::new(
+                "test.failed",
+                format!("{} {} failed", f.krate, f.test),
+                json!({"crate": f.krate, "test": f.test, "message": f.message}),
+            ));
+        }
+        if !out.ok() && part.failed.is_empty() && compile.is_empty() {
+            step.error(Problem::new(
+                "check.command_failed",
+                format!(
+                    "{line} failed (exit {:?}) without a failure the step reads",
+                    out.code
+                ),
+                json!({"command": line, "status": out.code, "tail": diag::plain_tail(&out.text, 20)}),
+            ));
+        }
+        r.passed += part.passed;
+        r.ignored += part.ignored;
+        r.suites += part.suites;
+        r.failed.extend(part.failed);
     }
     step.measure("test.passed", r.passed as f64, "count");
     step.measure("test.failed", r.failed.len() as f64, "count");

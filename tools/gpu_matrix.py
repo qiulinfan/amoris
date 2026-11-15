@@ -28,7 +28,7 @@ machine` builds the configurations from this machine's adapters (`machine_config
 backend of every adapter but software ones, `auto` on every adapter but the default one (`cargo
 xtask check`'s `test` step runs that configuration; `--default-auto` adds it as `default-auto`, for
 a check whose `test` did not run it), and the minimal device on the default adapter with the
-platform's default backend. `--workspace` builds the binaries as `cargo test --workspace`
+platform's default backend. `--workspace` builds the binaries as `cargo test --workspace --tests`
 does, so the run reuses the binaries of `cargo xtask check`'s `test` step (the workspace's other
 crates add features to the renderer's dependencies, and `-p amoris-render` alone builds them again
 without). `--bins lib,water` limits the binaries, `--filter` passes a test-name filter to
@@ -126,10 +126,10 @@ def parse_config(name):
 
 
 def build(debug, workspace=False):
-    """Builds the test binaries (with `workspace`, every crate's, as `cargo test --workspace` does);
-    returns {binary name: executable} for amoris-render's."""
+    """Builds the test binaries (with `workspace`, every crate's, with the `--tests` of `cargo xtask
+    check`'s `test` step, so no examples); returns {binary name: executable} for amoris-render's."""
     cmd = ["cargo", "test", *(["--workspace"] if workspace else ["-p", "amoris-render"]), "--locked",
-           "--no-run", "--message-format=json"]
+           "--tests", "--no-run", "--message-format=json"]
     if not debug:
         cmd.insert(2, "--release")
     p = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, encoding="utf-8",

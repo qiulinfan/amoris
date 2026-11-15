@@ -252,19 +252,26 @@ also enable through a dev-dependency.
 
 ### 6.2 `test`
 
-`cargo test --workspace --release --locked --no-fail-fast`, plus `-- --include-ignored` in the full
-check, which runs the long variants tests mark `#[ignore]` (threads.md 11: 20 producer timings
-instead of 5); `--quick` leaves them out. So an ignored test that needs what a machine may lack (a
-GPU feature, a platform, an asset outside the repository) skips itself at run time with a line
-saying why, or is compiled only where it can run (`#[cfg(target_os = "macos")]` for Metal), never
-assumes it (2026-10-09, Pioneer: the Windows run found two that did). The step parses libtest's
-stable text output (`test <name> ... FAILED` and the failures section) into
-`test.failed {crate, test, message}` with the message cut to 20 lines. The exit status of
-`cargo test` is authoritative; the step never reads its result through a pipe (master once committed
-with a failing assertion because `| tail` hid the exit status, `docs/development.md`, Tests). The
-tests include those the other specifications list (simulation.md 12, rng.md 10, persistence.md 12,
-versions.md 10, script-host.md 12), the threads' tests (`threads.md`, 11) and the controls that need
-a Rust-side defect (8.6).
+`cargo test --workspace --release --locked --tests --no-fail-fast`, plus `-- --include-ignored` in
+the full check, which runs the long variants tests mark `#[ignore]` (threads.md 11: 20 producer
+timings instead of 5); `--quick` leaves them out. So an ignored test that needs what a machine may
+lack (a GPU feature, a platform, an asset outside the repository) skips itself at run time with a
+line saying why, or is compiled only where it can run (`#[cfg(target_os = "macos")]` for Metal),
+never assumes it (2026-10-09, Pioneer: the Windows run found two that did). The step parses
+libtest's stable text output (`test <name> ... FAILED` and the failures section) into
+`test.failed {crate, test, message}` with the message cut to 20 lines. `--tests` builds the
+libraries, binaries and integration tests but not the examples, which `cargo test` would otherwise
+build without running them (2026-11-13: 72 release links, about 300 CPU seconds on the M5);
+`clippy --all-targets` (5.3) still compiles every example. `--tests` leaves the doc tests out too,
+and cargo takes `--doc` with no other target selection, so the step runs `cargo test --workspace
+--release --locked --doc --no-fail-fast` after it (amoris-assets' `compile_fail` test that a
+`CheckedCheckpoint` cannot be built outside its module; amoris-debug's ignored example).
+
+The exit status of `cargo test` is authoritative; the step never reads its result through a pipe
+(master once committed with a failing assertion because `| tail` hid the exit status,
+`docs/development.md`, Tests). The tests include those the other specifications list (simulation.md
+12, rng.md 10, persistence.md 12, versions.md 10, script-host.md 12), the threads' tests
+(`threads.md`, 11) and the controls that need a Rust-side defect (8.6).
 
 ### 6.3 `wasm`
 
