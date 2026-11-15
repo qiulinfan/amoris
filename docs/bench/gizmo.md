@@ -143,10 +143,10 @@ amoris-benchmarks-results: the superseded dev-server check in
   recording holds every edit without `group` and replays identically; `history.undo {group}` is
   refused with `history.group`, changing nothing, when the drag was split or another edit came
   after it, and undoes a whole drag).
-- `cargo test --release -p amoris-app --test history_host`: through `Host::call`, the catalog
-  advertises `group`; an MCP session's and the HTTP API's entries carry `session` `mcp-1` and
-  `api`; an undo of the split drag's group is refused with the list unchanged; four undos restore
-  the Sloop; the redo stack lists the next to redo last.
+- `cargo test --release -p amoris-app --test app_tests history_host::`: through `Host::call`, the
+  catalog advertises `group`; an MCP session's and the HTTP API's entries carry `session` `mcp-1`
+  and `api`; an undo of the split drag's group is refused with the list unchanged; four undos
+  restore the Sloop; the redo stack lists the next to redo last.
 - `cd editor && bun test test/` (`history.test.ts`): the store's entries, badges and redo order;
   a streamed `LiveEdit` against the mock's world is one entry and Escape undoes it; an agent's edit
   during a drag, or after its last step, makes Escape write the start back and keeps the agent's

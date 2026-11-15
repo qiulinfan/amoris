@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 description = "In-process checks: determinism, fork consistency, replay and reload equivalence"
+autotests = false
 
 [features]
 # Projects read and compiled from disk (amoris-runtime's transpile), as `amoris check` runs them;
@@ -25,3 +26,8 @@ toml.workspace = true
 
 [dev-dependencies]
 amoris-runtime = { workspace = true, features = ["transpile"] }
+
+# The integration tests, one binary (docs/spec/checks.md 6.2).
+[[test]]
+name = "check_tests"
+path = "tests/main.rs"

@@ -3,7 +3,7 @@
 //! its checks of the target before anything changes, and a cache whose state is a resource of its
 //! own.
 
-mod common;
+use crate::common;
 
 use amoris_contract::{Problem, detail};
 use amoris_persist::{

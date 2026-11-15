@@ -4,7 +4,7 @@
 //! (every field and intent parameter misspelled one edit at a time is refused with
 //! `request.unknown_field` whose suggestions name it, and nothing is applied).
 
-mod common;
+use crate::common;
 
 use amoris_contract::Problem;
 use amoris_interface::action::{Caller, IntentTable};

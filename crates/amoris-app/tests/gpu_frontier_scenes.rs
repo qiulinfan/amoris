@@ -1,7 +1,6 @@
 //! The frontier water samples played through the real player action catalog on resident GPU
 //! water: what a player does decides each outcome, and scripts never move the player.
-#[path = "../src/water_compute.rs"]
-mod water_compute;
+use crate::water_compute;
 use amoris_link::Source;
 use amoris_runtime::{Command, Game, Project};
 use serde_json::{Value, json};

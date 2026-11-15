@@ -1,7 +1,7 @@
 //! The tick (docs/spec/simulation.md 12): time, run conditions, phases and hooks, the schedule
 //! golden, events and their delivery, transactions, reports, decisions and boundary writes.
 
-mod common;
+use crate::common;
 
 use amoris_sim::event::emit;
 use amoris_sim::sim::{begin_invocation, commit_invocation, rollback_invocation, system_failed};

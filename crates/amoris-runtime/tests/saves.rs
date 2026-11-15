@@ -5,7 +5,7 @@
 //! of a project component waits for its migration steps.
 #![cfg(all(feature = "thread", feature = "transpile"))]
 #![allow(clippy::disallowed_methods)]
-mod common;
+use crate::common;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

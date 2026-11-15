@@ -3,7 +3,7 @@
 //! world; project components are added, or refused when they change without a migration; a hot
 //! update fixes a failing system; an unchanged bundle is a no-op unless forced.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use amoris_script::scripts::SchemaChange;
 use amoris_script::{ScriptLimits, ScriptSource, SwapOutcome, compile};

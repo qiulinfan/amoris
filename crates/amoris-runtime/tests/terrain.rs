@@ -1,7 +1,7 @@
 //! Terrain and water declared by their features (water.md 65): before any tick, as the paused edit
 //! world holds them, the feed carries the terrain's heights and each resident region shown from the
 //! terrain's beds and its pours; an edit of the terrain sends both again.
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 
@@ -68,7 +68,7 @@ fn the_edit_world_shows_the_terrain_and_its_poured_water_before_a_tick() {
 
 /// What the valley's terrain costs to work out (liquids.md 17): its heights, its collider, its
 /// regions' beds and pours, release builds. `cargo test --release -p amoris-runtime --features
-/// transpile --test terrain time_terrain -- --ignored --nocapture`.
+/// transpile --test runtime_tests terrain::time_terrain -- --ignored --nocapture`.
 #[test]
 #[ignore]
 #[allow(clippy::disallowed_methods)] // the test's own clock stands outside every tick

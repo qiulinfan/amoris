@@ -1,8 +1,7 @@
 //! The wind and the rain on the water (water.md 67): a steady wind piles a closed pool's water
 //! downwind as far as its stress over the water's weight says, and drifts what floats at a few
 //! percent of its speed; rain adds its depth a millimetre at a time, every drop in the ledger.
-#[path = "../src/water_compute.rs"]
-mod water_compute;
+use crate::water_compute;
 use amoris_link::Source;
 use amoris_runtime::{Command, Game, Project};
 use serde_json::{Value, json};
@@ -253,8 +252,8 @@ fn the_wind_drifts_what_floats_downwind() {
 /// What the weather costs a tick (liquids.md 19): the wall time of a tick, its GPU work and
 /// readbacks waited for, over ticks 61 to 360 of a pool of 512 x 256 half-metre columns whose
 /// surface starts tilted by 5 cm, so it sloshes whatever the weather: calm, under a gusting gale,
-/// in rain. `cargo test --release -p amoris-app --test gpu_weather time_weather -- --ignored
-/// --nocapture`.
+/// in rain. `cargo test --release -p amoris-app --test app_tests gpu_weather::time_weather --
+/// --ignored --nocapture`.
 #[test]
 #[ignore]
 #[allow(clippy::disallowed_methods)] // the test's own clock stands outside every tick

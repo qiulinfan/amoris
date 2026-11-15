@@ -2,7 +2,7 @@
 //! isolation between systems, the same streams in a copy of the world and different ones after a
 //! reseed, and the distribution of draws.
 
-mod common;
+use crate::common;
 
 use amoris_sim::rng::{KeyPart, Pcg32};
 use amoris_sim::{EntityId, NoHooks, RngTable, RunCondition, SimClock, TickPhase};

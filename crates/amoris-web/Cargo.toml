@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 description = "The browser entry points: the game in a Web Worker and the page's presenter"
+autotests = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -36,3 +37,8 @@ amoris-check = { workspace = true, features = ["native"] }
 # The engine source hash of crates/engine_version.rs, shared with amoris-app (versions.md 3.1, V9).
 [build-dependencies]
 blake3.workspace = true
+
+# The integration tests, one binary (docs/spec/checks.md 6.2).
+[[test]]
+name = "web_tests"
+path = "tests/main.rs"

@@ -4,7 +4,7 @@
 //! foot hanging, a hand reaches a script's target and a head turns toward one no further than its
 //! limit; the poses have the recorded digest, and a restore runs on to the same poses.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

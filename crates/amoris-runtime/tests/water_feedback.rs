@@ -1,5 +1,5 @@
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 use amoris_link::Source;
 use amoris_runtime::{Command, GameBuilder, Project};
 use serde_json::json;

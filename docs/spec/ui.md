@@ -186,10 +186,11 @@ sent whole when any UI component, a UI entity's `Transform` or its `Parent` chan
   beside bars, at scales 1 and 2, from JSON that both forms of `UiView` read; built in this tree and
   in an export of `321bb008` (before this file), its PNGs are byte for byte the same (2026-11-12,
   Metal on the M5).
-- Runtime (`cargo test -p amoris-runtime --features transpile --test ui`): the extraction of every
-  element, a hidden stack's children left out; `ui.press` refusals changing nothing; presses, the
-  toggle and the counter, the event in the rule's next tick; `ui.list` and a press as the seat of
-  a game with players, which sends no developer command; the run's recording replays identical.
+- Runtime (`cargo test -p amoris-runtime --features transpile --test runtime_tests ui::`): the
+  extraction of every element, a hidden stack's children left out; `ui.press` refusals changing
+  nothing; presses, the toggle and the counter, the event in the rule's next tick; `ui.list` and a
+  press as the seat of a game with players, which sends no developer command; the run's recording
+  replays identical.
 - `amoris check tests/fixtures/scenes/ui-hud`: its inputs press as the local player at ticks 10, 40
   and 60, through determinism, a fork, a replay and a reload.
 - The captures (2026-11-12, M5, Metal and Chrome 156): `amoris serve tests/fixtures/scenes/ui-hud`

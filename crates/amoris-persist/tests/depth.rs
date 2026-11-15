@@ -3,7 +3,7 @@
 //! nor bytes from a file can recurse until the stack overflows; the JSON conversion and the field
 //! diff hold to the same bound. Run in debug and in release.
 
-mod common;
+use crate::common;
 
 use amoris_persist::format::json::{from_json, to_json};
 use amoris_persist::hash::{digest_prefix, section_digest};

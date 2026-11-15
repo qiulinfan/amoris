@@ -1,7 +1,6 @@
 //! Water at scale (water.md 64): a steady river bakes and stops stepping, keeping its flow, until
 //! something disturbs it; a region beyond every focus holds still.
-#[path = "../src/water_compute.rs"]
-mod water_compute;
+use crate::water_compute;
 use amoris_link::Source;
 use amoris_runtime::{Command, Game, Project};
 use serde_json::{Value, json};
@@ -431,8 +430,8 @@ fn a_river_split_in_two_bakes_as_one_and_wakes_as_one() {
 }
 
 /// The cost of a tick (liquids.md 16): the river stepping and baked, and the joined pools against
-/// the one pool. `cargo test --release -p amoris-app --test gpu_scale time_scale -- --ignored
-/// --nocapture`.
+/// the one pool. `cargo test --release -p amoris-app --test app_tests gpu_scale::time_scale --
+/// --ignored --nocapture`.
 #[test]
 #[ignore]
 fn time_scale() {

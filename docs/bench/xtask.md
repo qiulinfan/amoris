@@ -23,7 +23,7 @@ or running competing builds during the gate.
 ```sh
 cargo xtask check
 cargo xtask check --only types
-cargo test --release -p amoris-script --features transpile --test depth
+cargo test --release -p amoris-script --features transpile --test script_tests depth::
 ```
 
 Use a worktree-local cargo target for parallel development. Windows builds require the native

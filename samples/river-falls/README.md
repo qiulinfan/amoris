@@ -48,5 +48,5 @@ ledges) and the pines' crowns, which are drawn only and have no colliders. The g
 rides the whole run through the player's controls:
 
 ```sh
-cargo test --release -p amoris-app --test gpu_frontier_scenes river_falls
+cargo test --release -p amoris-app --test app_tests gpu_frontier_scenes::river_falls
 ```

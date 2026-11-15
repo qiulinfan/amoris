@@ -2,7 +2,7 @@
 //! with one input moved one tick, segments (R1), section digests (R2), faults and taints (R5),
 //! refused writes (R6), truncation, and lockstep.
 
-mod common;
+use crate::common;
 
 use amoris_persist::replay::{
     BundleRecord, DigestLevel, MemorySink, RebaseCause, Record, RecordOptions, Recorder, Replay,

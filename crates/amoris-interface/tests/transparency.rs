@@ -8,7 +8,7 @@
 //! `intent.*` events are left out. The five-minute run of the check is `#[ignore]`d for debug
 //! builds; a one-minute run is not.
 
-mod common;
+use crate::common;
 
 use amoris_physics::Boat;
 use amoris_sim::{EntityId, NoHooks, Sim};

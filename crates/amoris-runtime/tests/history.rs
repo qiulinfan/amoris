@@ -6,7 +6,7 @@
 //! the names back.
 #![cfg(feature = "transpile")]
 #![allow(clippy::disallowed_methods)]
-mod common;
+use crate::common;
 
 use amoris_link::Source;
 use amoris_persist::replay::{

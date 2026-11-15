@@ -426,7 +426,7 @@ fn a_shape_its_components_do_not_build_stays_in_its_world() {
 /// sailing scene, forked or not, and for a level scene whose terrain is by reference, forked or
 /// not (`probe::layout`). About 50 s in a debug build, so `#[ignore]`d there; the local check's
 /// test step runs it (`cargo test --release --workspace -- --include-ignored`), as does `cargo test
-/// --release -p amoris-physics --test determinism -- --include-ignored`.
+/// --release -p amoris-physics --test physics_tests determinism:: -- --include-ignored`.
 #[test]
 #[ignore = "about 50 s in a debug build; the check's test step runs it in release"]
 fn the_trajectories_are_layout_1s() {

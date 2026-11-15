@@ -56,5 +56,5 @@ It uses only Python's standard library and no downloaded assets. The gameplay ch
 waves, stands up and rides through the player's controls:
 
 ```sh
-cargo test --release -p amoris-app --test gpu_frontier_scenes surf_beach
+cargo test --release -p amoris-app --test app_tests gpu_frontier_scenes::surf_beach
 ```

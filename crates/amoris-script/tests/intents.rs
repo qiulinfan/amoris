@@ -4,7 +4,7 @@
 //! events and not at all when the call fails, its restricted context, and `ctx.intent`.
 #![cfg(feature = "transpile")]
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

@@ -2,7 +2,7 @@
 //! 7; checks.md 8.3): at each boundary F of a reference run, B = fork(A) is identical to A, and B
 //! run on with the same inputs gives the reference's hash at every later tick.
 
-mod common;
+use crate::common;
 
 use amoris_persist::{fork, snapshot, world_hash};
 use amoris_sim::{NoHooks, WorldSeed};

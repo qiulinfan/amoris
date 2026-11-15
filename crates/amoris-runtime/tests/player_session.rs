@@ -6,7 +6,7 @@
 #![cfg(all(feature = "thread", feature = "transpile"))]
 // The tests' own clock stands outside every tick, as a presenter's does.
 #![allow(clippy::disallowed_methods)]
-mod common;
+use crate::common;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};

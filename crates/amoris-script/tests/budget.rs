@@ -4,7 +4,7 @@
 //! steps; a failed system leaves the world, the inbox, the RNG and the allocator as they were, and
 //! no job behind it (P8).
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use amoris_script::{ScriptLimits, SystemOutcome};
 use amoris_sim::{EntityAllocator, Sim};

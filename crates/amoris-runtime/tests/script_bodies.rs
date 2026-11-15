@@ -7,7 +7,7 @@
 //! rule is reported by `physics.step` until a write mends it; and a write trace of the JSON form's
 //! `shape` and `mass` names the script that changed them.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

@@ -48,5 +48,5 @@ only Python's standard library and no downloaded assets. The gameplay check play
 party through the player's controls:
 
 ```sh
-cargo test --release -p amoris-app --test gpu_frontier_scenes pool_party
+cargo test --release -p amoris-app --test app_tests gpu_frontier_scenes::pool_party
 ```

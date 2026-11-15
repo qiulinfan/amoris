@@ -5,7 +5,7 @@
 //! the same call and after the commit, as the rule settled it; a write that changes nothing
 //! passes; the rule runs after its component's own field checks.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use amoris_script::{
     EngineFns, ErrorPhase, ScriptError, ScriptLimits, SlotRefusal, SystemOutcome, register_engine,

@@ -5,7 +5,7 @@
 //! the recording's replay go on to the same hashes; a restore that derives the player layer again
 //! brings the script's intents back into the catalog.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use std::sync::{Arc, OnceLock};
 

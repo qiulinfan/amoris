@@ -3,7 +3,7 @@
 //! transition of the diagram, a deadline in the same tick as success, a control set on a holding
 //! intent's channel, pulses that act one tick each, and the 32 finished intents kept.
 
-mod common;
+use crate::common;
 
 use amoris_interface::action::IntentStatus::*;
 use amoris_interface::action::IntentTable;

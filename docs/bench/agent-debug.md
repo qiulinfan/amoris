@@ -76,9 +76,9 @@ connection per call 15 times, 39 were refused at once and 6 answered `debug.paus
 starts a process per call and almost always loses. The refusal now says how to act between ticks:
 clear the breakpoint first, or Stop; the queued Pause is the third way.
 
-Checked by: `cargo test -p amoris-app --test paused_host` (4 tests, 15 repeated runs without a
-failure), amoris-runtime's and amoris-server's tests, the editor's end-to-end driver on the real
-host, and the review tool above.
+Checked by: `cargo test -p amoris-app --test app_tests paused_host::` (4 tests, 15 repeated runs
+without a failure), amoris-runtime's and amoris-server's tests, the editor's end-to-end driver on
+the real host, and the review tool above.
 
 ## How it works
 

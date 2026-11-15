@@ -2,7 +2,7 @@
 //! `ProjectValues` described by the world's component registry are snapshotted, hashed, restored,
 //! forked and diffed without the script host.
 
-mod common;
+use crate::common;
 
 use std::alloc::Layout;
 use std::sync::Arc;

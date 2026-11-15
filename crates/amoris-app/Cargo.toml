@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 description = "The native binary `amoris`"
+autotests = false
 
 [[bin]]
 name = "amoris"
@@ -41,3 +42,13 @@ blake3.workspace = true
 blake3.workspace = true
 # A `/render` client for the render feed's pacing test (serve.rs; host-protocol.md 5).
 tungstenite.workspace = true
+
+# The integration tests, one binary (docs/spec/checks.md 6.2).
+[[test]]
+name = "app_tests"
+path = "tests/main.rs"
+
+# Installs another engine's version, which a process holds once, so it runs in a process of its own.
+[[test]]
+name = "engine_version"
+path = "tests/engine_version.rs"

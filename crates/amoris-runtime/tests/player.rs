@@ -4,7 +4,7 @@
 //! (observe, act, wait, describe), and the recording of that run replays to the same world hash at
 //! every tick.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use std::sync::{Arc, OnceLock};
 

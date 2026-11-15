@@ -505,9 +505,9 @@ wrap (hashes, PCG32) says so with `wrapping_*`. In scripts, integers are doubles
    from PCG32 seeded by the sweep's name, built by integer bit construction and exact arithmetic;
    each result's bits are folded into FNV-1a 64. The hashes are committed as
    `crates/amoris-sim/src/math/golden.txt` (rewritten only by
-   `AMORIS_BLESS=1 cargo test -p amoris-sim --test math golden_sweep`, with a `libm` change); native
-   debug, native release and the `wasm32-unknown-unknown` build reproduce them (the web tests
-   below).
+   `AMORIS_BLESS=1 cargo test -p amoris-sim --test sim_tests math::golden_sweep`, with a `libm`
+   change); native debug, native release and the `wasm32-unknown-unknown` build reproduce them (the
+   web tests below).
 7. **Slice 1: the accuracy table holds 120 inputs per function**, not 3,000: 3,000 lines over the 25
    functions and ranges of 6.2 (`crates/amoris-sim/tests/golden/accuracy.txt`, 120 KB, written by
    `accuracy.py` beside it with mpmath 1.3.0 at 200 bits), enough to catch an update that makes

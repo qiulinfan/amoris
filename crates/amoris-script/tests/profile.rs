@@ -4,7 +4,7 @@
 //! are, the jumps of a loop without calls included (P13). The WebAssembly build's profile is the
 //! native one: the web report holds one (tests/web.rs).
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use std::cell::Cell;
 use std::ptr::NonNull;

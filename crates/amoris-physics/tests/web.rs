@@ -2,9 +2,9 @@
 //! WebAssembly build prints must equal this one. The report is written to
 //! `<target>/tmp/amoris-physics-web-report.txt` for `tests/web/run.mjs` to compare against.
 //!
-//! `AMORIS_BLESS=1 cargo test -p amoris-physics --test web` rewrites `src/probe/golden.txt`, the
-//! sailing scene's committed hash chain, after a deliberate change of results (a Rapier, libm or
-//! force-model change), whose reason goes in the commit message.
+//! `AMORIS_BLESS=1 cargo test -p amoris-physics --test physics_tests web::` rewrites
+//! `src/probe/golden.txt`, the sailing scene's committed hash chain, after a deliberate change of
+//! results (a Rapier, libm or force-model change), whose reason goes in the commit message.
 
 use amoris_physics::probe::{CHAIN_TICKS, GOLDEN, chain, golden_line};
 

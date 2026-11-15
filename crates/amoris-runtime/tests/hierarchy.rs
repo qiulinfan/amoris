@@ -5,7 +5,7 @@
 //! where the world is in view and harmless elsewhere; and the same hash chains through a replay, a
 //! fork, a restore and a shuffled storage.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

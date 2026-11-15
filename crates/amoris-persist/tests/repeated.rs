@@ -1,7 +1,7 @@
 //! A snapshot cache gives the same snapshot as `snapshot` after every tick and every write
 //! (persistence.md 4.3): sections no row of which changed are taken over, the others encoded again.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

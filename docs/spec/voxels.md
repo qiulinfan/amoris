@@ -371,10 +371,10 @@ draw paths are checked under the WebGPU baseline with the existing draw-path too
 | Ray casts: axis-aligned, diagonal, from inside a cell, negative cells, max distance | `amoris-sim` unit tests |
 | PCE round trip; `SnapshotCache` reuses the section without edits; hash changes with one cell | `amoris-persist` tests |
 | The cells file: write, read, refusals | `amoris-runtime` tests |
-| Natives: a call's reads see its edits, a throw discards them, ray casts, a cells file | `amoris-runtime --features transpile --test voxels` |
+| Natives: a call's reads see its edits, a throw discards them, ray casts, a cells file | `amoris-runtime --features transpile --test runtime_tests voxels::` |
 | Walker: walks, stops at walls, cannot step up a cell, jumps onto one, falls, hits its head, determinism across a fork | `amoris-physics` tests |
-| Rapier bodies land on a volume and sleep, a dig wakes one and it falls through; `cast_ray` meets the volume; chunk shapes by reference, inline only after a boundary write; forks at every tick and a cold restore keep the hashes (also in WebAssembly, `physics.volume_fork`); the walker's sweep against fixed colliders leaves the chunk colliders out | `amoris-physics --test volumes`, the `volumes` and `walker` unit tests |
-| The same through the engine's snapshots: boxes on a cells-file volume, a fork and a cold restore through a script's dig | `amoris-runtime --features transpile --test voxels` |
+| Rapier bodies land on a volume and sleep, a dig wakes one and it falls through; `cast_ray` meets the volume; chunk shapes by reference, inline only after a boundary write; forks at every tick and a cold restore keep the hashes (also in WebAssembly, `physics.volume_fork`); the walker's sweep against fixed colliders leaves the chunk colliders out | `amoris-physics --test physics_tests volumes::`, the `volumes` and `walker` unit tests |
+| The same through the engine's snapshots: boxes on a cells-file volume, a fork and a cold restore through a script's dig | `amoris-runtime --features transpile --test runtime_tests voxels::` |
 | `first_person`: controls write `Walker`, pulses act one tick, replay of a break and a place | `amoris-runtime --features transpile` tests |
 | Mesher: culling, chunk borders, cross, liquid, material groups | `amoris-assets` tests |
 | Parts and remeshing of neighbours; after breaks and placements across chunk borders the kept renderer draws as a fresh one, also with ray-traced shadows | `amoris-render --lib voxels`, `--test voxels` (GPU) |

@@ -5,7 +5,7 @@
 //! with players lists the screen and presses through the same write, and the run's recording
 //! replays identical.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

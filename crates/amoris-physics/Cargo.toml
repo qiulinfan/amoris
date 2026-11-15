@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 description = "Rigid bodies on Rapier, buoyancy on waves, wind on a sail, keel, rudder and hull drag"
+autotests = false
 
 [dependencies]
 amoris-contract.workspace = true
@@ -47,3 +48,8 @@ crate-type = ["cdylib"]
 [[example]]
 name = "shallow_web"
 crate-type = ["cdylib"]
+
+# The integration tests, one binary (docs/spec/checks.md 6.2).
+[[test]]
+name = "physics_tests"
+path = "tests/main.rs"

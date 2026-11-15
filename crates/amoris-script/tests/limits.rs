@@ -4,7 +4,7 @@
 //! checked before the host allocates for it; a console line stops after a bounded walk; plain data
 //! too large is refused while it is read.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use amoris_script::{ScriptLimits, SystemOutcome};
 use amoris_sim::Sim;

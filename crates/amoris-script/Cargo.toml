@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 description = "The script host: TypeScript rules on QuickJS-ng, sandboxed, budgeted and hot-updated"
+autotests = false
 
 [features]
 # oxc in process: TypeScript to JavaScript with source maps, and the lint (architecture.md 4.6
@@ -82,3 +83,8 @@ required-features = ["transpile"]
 [[example]]
 name = "rules_web"
 crate-type = ["cdylib"]
+
+# The integration tests, one binary (docs/spec/checks.md 6.2).
+[[test]]
+name = "script_tests"
+path = "tests/main.rs"

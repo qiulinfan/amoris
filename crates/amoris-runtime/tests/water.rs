@@ -2,7 +2,7 @@
 //! at load and keeps them through a snapshot, a misaligned region is refused at load, and the flow
 //! continues the same through a fork and a restore.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use std::path::PathBuf;
 use std::sync::Arc;

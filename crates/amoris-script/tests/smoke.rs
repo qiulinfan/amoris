@@ -1,5 +1,5 @@
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 const COMPONENTS: &str = r#"
 import { component, field } from "amoris";

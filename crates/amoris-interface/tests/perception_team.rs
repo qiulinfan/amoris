@@ -3,7 +3,7 @@
 //! with the teammate's detail; the sighting reaches the watcher's own ring; a watcher of another
 //! team, or of none, does not see it; and each keeps its own memory, so when the teammate looks
 //! away the thing is remembered, then forgotten on the watcher's own memory rule.
-mod perception_support;
+use crate::perception_support;
 
 use amoris_interface::perception::Observer;
 use amoris_interface::perception::state::Detail;

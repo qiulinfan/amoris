@@ -2,7 +2,7 @@
 //! the hierarchy a despawn takes with it, iteration in id order, the storage shuffle
 //! (`sim.shuffle`) with its negative control, and the component registry.
 
-mod common;
+use crate::common;
 
 use amoris_sim::order::{by_id, by_id_mut, shuffle_storage};
 use amoris_sim::registry::{ComponentOrigin, ComponentSchema, FieldType, FieldValue};

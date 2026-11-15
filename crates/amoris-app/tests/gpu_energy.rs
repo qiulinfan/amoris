@@ -3,8 +3,7 @@
 //! energy of the floats and the water together only ever leaves. While a float felt its own push
 //! on the water a tick late, that late spring pumped the lake: the energy left from the drop rose
 //! from a quarter at 20 s to half at 150 s.
-#[path = "../src/water_compute.rs"]
-mod water_compute;
+use crate::water_compute;
 use amoris_link::Source;
 use amoris_runtime::{Command, Game, GameSetup, Project};
 use serde_json::{Value, json};

@@ -4,7 +4,7 @@
 //! each pulse once, the seat perceives its own heading, look and lock, and the recorded run
 //! replays to the same world hash at every tick.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -3,7 +3,7 @@
 //! ball a script makes, their events read by the script a tick later, `SensorOverlaps` on the
 //! walker through `world.get`, and the same hash chains through a recording, a fork and a restore.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

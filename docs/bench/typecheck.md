@@ -89,7 +89,7 @@ the 2,000-token budget.
 ## Reproduce
 
 ```sh
-cargo test --release -p amoris-runtime --features thread,transpile --test host script_types_cost \
+cargo test --release -p amoris-runtime --features thread,transpile --test runtime_tests host::script_types_cost \
   -- --ignored --nocapture        # the game-thread table; prints the generated project's path
 amoris serve samples/sailing --port 7911   # then, in samples/sailing, time the CLI rows
 ```

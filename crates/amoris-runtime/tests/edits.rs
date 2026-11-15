@@ -4,7 +4,7 @@
 //! 3.1): a `set` of `Name` from a string renames, a `remove` leaves the entity unnamed, and the
 //! later edits of a call find entities by the names the earlier ones leave.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

@@ -3,7 +3,7 @@
 //! replay is `replay.out_of_range`, a recording without its bundles verifies where the stepper finds
 //! them, and `Rerun` migrates an older schema and rebuilds a cache whose identity changed (V5).
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

@@ -4,7 +4,7 @@
 //! a memory fault, whether memory runs out on a large allocation or a small one inside `try`, and a
 //! panicking native poison the world and leave the process running.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use amoris_script::{EngineFns, ScriptLimits, SystemOutcome};
 use amoris_sim::registry::{

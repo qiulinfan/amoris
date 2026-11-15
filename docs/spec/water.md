@@ -3629,7 +3629,7 @@ the same; the wind sea's texture runs on across the seam (its green spreads by 5
 test passes on MoltenVK and as the WebGPU baseline too, and the renderer's other tests are
 unchanged.
 
-`cargo test -p amoris-runtime --features transpile --test water a_seas_wind_sea_and_look_persist_and_reach_the_feed`:
+`cargo test -p amoris-runtime --features transpile --test runtime_tests water::a_seas_wind_sea_and_look_persist_and_reach_the_feed`:
 the wind sea and the look reach the feed, persist through a snapshot and a restore, with and without
 them, and the wind's removal sends the sea again with no wind sea.
 
@@ -3900,7 +3900,7 @@ centre at the surface feels rho g 4 m^3 through the centroid of the wedge under 
 m; 1.2 m^3 in a 2 x 2 m hull stands 0.3 m deep; a hole and a rim pass Torricelli's and the weir's
 flows.
 
-`cargo test -p amoris-physics --test vessel`, on a CPU region of still water:
+`cargo test -p amoris-physics --test physics_tests vessel::`, on a CPU region of still water:
 
 - A 2 x 1 x 4 m box half as dense as water floats with its centre 0.7 mm over the surface, 0.4993
   under (over the last 3 s of 20); a 0.5 m ball a quarter as dense floats with its centre at 0.1742
@@ -3915,7 +3915,7 @@ flows.
   outside stands that much over the water inside however deep it is. Then it heels, fills over its
   rim at 65.6 s and rests on the floor; the same boat without the hole floats 5 cm deep.
 
-`cargo test -p amoris-app --test gpu_floaters vessel_crates_float_at_their_draft_on_all_three_backends_with_no_points`:
+`cargo test -p amoris-app --test app_tests gpu_floaters::vessel_crates_float_at_their_draft_on_all_three_backends_with_no_points`:
 the floaters' four 0.6 m crates as vessels float 0.35 under at 2.09 m on cpu, gpu and gpu_resident,
 the same to the bit on all three; with `WaterDisplacement` the resident lake takes their 4 x 0.0756
 m^3.
@@ -4127,7 +4127,7 @@ one body of water.
 
 ### 64.4 Checks, cost and limits
 
-`cargo test -p amoris-app --test gpu_scale`:
+`cargo test -p amoris-app --test app_tests gpu_scale::`:
 
 - the river (`tests/fixtures/scenes/water-river`, `bake_after_s` 1) holds steady and bakes at tick
   2081 with its fastest water at 1.478 m/s; for 120 ticks its state digest and its ledger stand;
@@ -4256,11 +4256,11 @@ step of the history (editor.md 6.1).
   grass, and near their edges the layers share triangles; at every corner the layers' intervals
   cover [0, 1) once, with no gap or overlap; the layers' instances map back to the terrain; a click
   from above or at a slant finds the floor or the shelf it reaches, not the box's top.
-- `cargo test -p amoris-runtime --features transpile --test terrain`: before any tick the valley's
-  feed carries its terrain and both regions previewed (5726 wet columns over the lake's, 2325 over
-  the falls'), and the ground lowered by half a metre sends both again, wetter.
-- `cargo test --release -p amoris-app --test gpu_authoring`: the valley runs 20 s; the lake's
-  region takes 29 m^3 along its west edge and gives 84 m^3 across the seam, which the falls'
+- `cargo test -p amoris-runtime --features transpile --test runtime_tests terrain::`: before any
+  tick the valley's feed carries its terrain and both regions previewed (5726 wet columns over the
+  lake's, 2325 over the falls'), and the ground lowered by half a metre sends both again, wetter.
+- `cargo test --release -p amoris-app --test app_tests gpu_authoring::`: the valley runs 20 s; the
+  lake's region takes 29 m^3 along its west edge and gives 84 m^3 across the seam, which the falls'
   region receives; the walker set down 2 m over the ground stands at 7.73 m from the second second
   on.
 - `bun test test/water.test.ts` (in `editor/`) and `bun tools/water-authoring.ts` against `amoris
@@ -4348,13 +4348,14 @@ f32 state words, checkpoints, programs and every earlier section's behaviour.
   all 18 of its results, on Metal, Vulkan and the WebGPU baseline device; on R1 (2026-10-23) on the
   RTX 5060 and the 780M, each under Direct3D 12 (DXC) and Vulkan and on the baseline device under
   Direct3D 12.
-- `cargo test --release -p amoris-app --test gpu_determinism`: nine samples' GPU water (the pool,
-  the party with its boats, the river and its fall, 600 ticks of the surf with its sea, dispersion
-  and plunging crests, the shore, the floaters, the feedback, the valley's joined regions and the
-  storm's wind and rain, 67), each region's field digest after every tick, 3000 ticks, equals
-  `golden/water-digests.txt` on Metal, on Vulkan (MoltenVK) and on the WebGPU baseline device; on
-  R1 (2026-10-23, unblessed) on the RTX 5060 and the 780M under Direct3D 12 and Vulkan and on both
-  GPUs' baseline devices. FXC cannot compile the kernels' `boundary_predict` (gpu-matrix.md 14).
+- `cargo test --release -p amoris-app --test app_tests gpu_determinism::`: nine samples' GPU water
+  (the pool, the party with its boats, the river and its fall, 600 ticks of the surf with its sea,
+  dispersion and plunging crests, the shore, the floaters, the feedback, the valley's joined regions
+  and the storm's wind and rain, 67), each region's field digest after every tick, 3000 ticks,
+  equals `golden/water-digests.txt` on Metal, on Vulkan (MoltenVK) and on the WebGPU baseline
+  device; on R1 (2026-10-23, unblessed) on the RTX 5060 and the 780M under Direct3D 12 and Vulkan
+  and on both GPUs' baseline devices. FXC cannot compile the kernels' `boundary_predict`
+  (gpu-matrix.md 14).
 - `node tools/water/water_determinism_check.mjs`: the same samples in Chrome's game worker (Dawn and
   Tint compiling the WGSL, not wgpu and naga) give the record's digests on the M5 and, in Windows
   Chrome (Dawn over Direct3D 12), on R1's RTX 5060 and 780M; with `--adapter swiftshader`, on
@@ -4501,7 +4502,8 @@ traces the water's reflected rays:
   included; 36 mm an hour over 150 s brings one whole millimetre and owes the rest, nothing lost;
   rain past 500 mm an hour is refused; the drift is 3% of the wind at the surface and none 0.5 m
   down.
-- `cargo test --release -p amoris-app --test gpu_weather`, a walled pool 32 x 8 m and a metre deep:
+- `cargo test --release -p amoris-app --test app_tests gpu_weather::`, a walled pool 32 x 8 m and a
+  metre deep:
   - 15 m/s toward +x for 40 s, then averaged over 10 s: the surface slopes by 5.011e-5 against the
     stress over the water's weight, 4.987e-5 (1.55 mm over the pool); without wind it lies level
     within 10 micrometres.
@@ -4510,10 +4512,10 @@ traces the water's reflected rays:
     rounding), and a probe's depth rose by it.
   - a crate as light as pine drifts downwind at 0.237 m/s under 10 m/s (3% at the surface, less at
     its bottom), at 0.000 m/s in still air.
-- `cargo test -p amoris-runtime --features transpile --test water the_weather`: the weather reaches
-  the feed (the wind sea toward 90 degrees over the region's 32 m, the rain); a change to the rain
-  sends it again; `Rain` persists through a snapshot and a restore with the world's hash; a region
-  the wind does not blow on raises no wind sea.
+- `cargo test -p amoris-runtime --features transpile --test runtime_tests water::the_weather`: the
+  weather reaches the feed (the wind sea toward 90 degrees over the region's 32 m, the rain); a
+  change to the rain sends it again; `Rain` persists through a snapshot and a restore with the
+  world's hash; a region the wind does not blow on raises no wind sea.
 - `cargo test -p amoris-render --test rt_reflections`, on Metal (MoltenVK has no ray queries) and on
   R1 (2026-10-23) on the RTX 5060 and the 780M under Direct3D 12 and Vulkan:
   - a red block above the view: the march's image holds no red pixel, the traced one 676, all in
@@ -4524,9 +4526,9 @@ traces the water's reflected rays:
     is whole.
 - `cargo test -p amoris-render --lib rt_shadows`: each forward variant (shadows, reflections, both)
   validates and replaces only what it traces.
-- `cargo test --release -p amoris-app --test gpu_determinism`: the storm's 300 ticks join the
-  record, with the same digests on Metal, Vulkan (MoltenVK) and the WebGPU baseline device, in
-  Chrome on the M5 (`tools/water/water_determinism_check.mjs`) and, over its first 120 ticks, on
+- `cargo test --release -p amoris-app --test app_tests gpu_determinism::`: the storm's 300 ticks
+  join the record, with the same digests on Metal, Vulkan (MoltenVK) and the WebGPU baseline device,
+  in Chrome on the M5 (`tools/water/water_determinism_check.mjs`) and, over its first 120 ticks, on
   SwiftShader; the other samples' digests are unchanged, in Chrome too.
 - `samples/water-storm` served headless (`amoris serve`, `amoris call capture`): the crates drift
   downwind, one 6.7 m in 25 s.

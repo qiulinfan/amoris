@@ -3,7 +3,7 @@
 //! globals are absent, the setters are the reviewed list, code generation is refused, and override
 //! taming keeps `this.name = ...` in an Error subclass working.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use amoris_script::{ScriptHost, ScriptLimits};
 use serde_json::json;

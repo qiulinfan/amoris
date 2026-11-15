@@ -4,7 +4,7 @@
 //! `memory_s`, the capacity's eviction order (a visible set beyond it kept and sighted once), the
 //! view inside a tick, fog, every event scope with its causes, and where a global event is told.
 
-mod perception_support;
+use crate::perception_support;
 
 use std::sync::{Arc, Mutex};
 

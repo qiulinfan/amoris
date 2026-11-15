@@ -4,7 +4,7 @@
 //! included), one test per rejection of 3.6, the skipped-field check, NaN refused in a component
 //! while a cache holds an infinity; and schema fingerprints (versions.md 3.5).
 
-mod common;
+use crate::common;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;

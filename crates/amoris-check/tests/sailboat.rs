@@ -4,7 +4,7 @@
 //! the wind, 300 ticks (five seconds) carry it at least 5 units along +x, and it is afloat. Run for
 //! every seed of the sample's `check.toml`, through commands as an agent would read the world.
 #![cfg(feature = "native")]
-mod common;
+use crate::common;
 
 use amoris_link::Source;
 use amoris_runtime::{Command, Game};

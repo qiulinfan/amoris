@@ -9,7 +9,7 @@
 //! --workspace -- --include-ignored`), as does `cargo test --release -p amoris-interface --test
 //! sailing -- --include-ignored`.
 
-mod common;
+use crate::common;
 
 use amoris_interface::action::IntentStatus::{self, *};
 use amoris_sim::Sim;

@@ -2,7 +2,7 @@
 //! world would run next on a fork, so the world does not move; each system's steps are those the
 //! world then takes; the same state answers the same bytes; bad parameters are refused.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use std::collections::BTreeMap;
 

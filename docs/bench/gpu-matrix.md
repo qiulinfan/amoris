@@ -1228,7 +1228,7 @@ solver's `splashes` passes under FXC in 2 s. `water_summary` and `water_det` pas
 AMORIS_DXC=fxc python tools/gpu_matrix.py --configs 5060-dx12,780m-dx12 --workspace --no-ignored \
   --bins water_spray,water_ripples,fluid_surface,water_boundaries,water_summary,water_det
 AMORIS_DXC=fxc python tools/gpu_matrix.py --configs 5060-dx12 --workspace --bins lib --filter splat --no-ignored
-AMORIS_DXC=fxc AMORIS_ADAPTER=5060 AMORIS_BACKEND=dx12 cargo test --release -p amoris-app --test gpu_determinism
+AMORIS_DXC=fxc AMORIS_ADAPTER=5060 AMORIS_BACKEND=dx12 cargo test --release -p amoris-app --test app_tests gpu_determinism::
 ```
 
 ## 15. NVIDIA's MSAA blend and Vulkan 621.01's draw order (2026-10-25, R1)

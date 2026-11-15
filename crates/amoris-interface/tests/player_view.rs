@@ -3,7 +3,7 @@
 //! perceive is refused exactly as one that does not exist, listings leave it out, a player cannot
 //! act, list or read for another seat, and nothing a player is answered is marked omniscient.
 
-mod common;
+use crate::common;
 
 use amoris_interface::action::{self, Caller};
 use amoris_interface::perception::Observer;

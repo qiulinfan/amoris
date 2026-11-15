@@ -162,7 +162,8 @@ fn fold(hashes: &[u64]) -> u64 {
 }
 
 /// The committed chain: `chain <hex> ticks <n>`, rewritten by
-/// `AMORIS_BLESS=1 cargo test -p amoris-physics --test web` with a deliberate change of results.
+/// `AMORIS_BLESS=1 cargo test -p amoris-physics --test physics_tests web::` with a deliberate
+/// change of results.
 pub const GOLDEN: &str = include_str!("golden.txt");
 
 /// The golden line for a chain.

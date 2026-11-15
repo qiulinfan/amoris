@@ -2,7 +2,7 @@
 //! persistence.md 4.3): after every tick and every edit, the cache's snapshot is the game's, byte
 //! for byte: physics, scripts, project components, spawns, destroys, components added and removed,
 //! a restore and a fork.
-mod common;
+use crate::common;
 
 use amoris_link::Source;
 use amoris_persist::{Snapshot, SnapshotCache};

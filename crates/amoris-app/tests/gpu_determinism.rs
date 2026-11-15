@@ -4,8 +4,7 @@
 //! `AMORIS_GPU_MINIMAL=features,limits,timestamps` run it on another backend or the WebGPU baseline,
 //! `tools/water/water_determinism_check.mjs` in Chrome (with `--adapter swiftshader`, on the CPU), and
 //! `AMORIS_BLESS=1` rewrites the record after a kernel changes.
-#[path = "../src/water_compute.rs"]
-mod water_compute;
+use crate::water_compute;
 use amoris_link::Source;
 use amoris_runtime::{Command, Game, Project};
 use serde_json::json;

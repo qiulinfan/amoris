@@ -4,7 +4,7 @@
 //! `world.get` copies list keys in declaration order; `console.log` runs no project code; a
 //! despawn takes the entities under the despawned one, in the call's view as at its commit.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use amoris_script::{ScriptLimits, SystemOutcome};
 use amoris_sim::Sim;

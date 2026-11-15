@@ -2,7 +2,7 @@
 //! hinge and a script's pendulum, a script's refused `with` of none, and the same hash chains
 //! through a recording, a fork and a restore, the solver's joints riding in the physics cache.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

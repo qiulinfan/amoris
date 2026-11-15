@@ -4,7 +4,7 @@
 //! the branches keep to the benchmark's limits; the model reaches a branch as its seat alone; a
 //! game is forked into only when it is a branch of main; with forks off the model never forks.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 #[path = "../examples/lookahead_bench/course.rs"]
 mod course;
 

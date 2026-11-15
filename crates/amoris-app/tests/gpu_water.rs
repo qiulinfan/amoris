@@ -1,6 +1,5 @@
 //! The actual game tick on GPU versus CPU, including persistence and explicit host errors.
-#[path = "../src/water_compute.rs"]
-mod water_compute;
+use crate::water_compute;
 
 use amoris_link::Source;
 use amoris_runtime::{Command, Game, GameSetup, Project};

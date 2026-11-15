@@ -224,9 +224,9 @@ Methods:
 ```sh
 cargo test -p amoris-render --test water_compute --test water_resident --test water_summary
 cargo test -p amoris-render --test water_samples --test water_reactions --test water_boundaries
-cargo test -p amoris-physics --test field_buoyancy --test field_hull --test resident_swimming
-cargo test -p amoris-app --test gpu_water --test gpu_floaters --test gpu_feedback --test gpu_swimming
-cargo test -p amoris-runtime --features transpile --test water_resident_async --test water_feedback
+cargo test -p amoris-physics --test physics_tests -- field_buoyancy:: field_hull:: resident_swimming::
+cargo test -p amoris-app --test app_tests -- gpu_water:: gpu_floaters:: gpu_feedback:: gpu_swimming::
+cargo test -p amoris-runtime --features transpile --test runtime_tests -- water_resident_async:: water_feedback::
 cargo run --release -p amoris-app --example resident_water -- --frames 180
 ```
 
@@ -317,14 +317,14 @@ dispersive split (`SURF_DISPERSION=1`) the bay's energy grows after about two mi
 **Caustics** cost about 1 ms of GPU time a frame for the pool sample's 512² map at 2 x 2 photons
 a texel. `AMORIS_CAUSTICS=off` removes the pass.
 
-**The samples** (`cargo test --release -p amoris-app --test gpu_frontier_scenes`, under a minute in
-all): the pool party collects all eight ducks and raises a 3 to 4 cm wave at the corner gauges; the
-river run passes two gates, its tube drops about 7 m over the falls and lands at 12 to 13 m/s, and
-the run reaches the beach in 17 to 19 s with the river's volume ledger exact; the surfer rides 30.5
-m at up to 7.0 m/s before the next crest throws them. Exported with `cargo xtask export-web`, each
-loads and plays in headless Chrome on the WebGPU baseline device (`tools/host/web_play_check.mjs`;
-its block-placing checks do not apply to these samples) with no validation errors or script
-exceptions.
+**The samples** (`cargo test --release -p amoris-app --test app_tests gpu_frontier_scenes::`, under
+a minute in all): the pool party collects all eight ducks and raises a 3 to 4 cm wave at the corner
+gauges; the river run passes two gates, its tube drops about 7 m over the falls and lands at 12 to
+13 m/s, and the run reaches the beach in 17 to 19 s with the river's volume ledger exact; the surfer
+rides 30.5 m at up to 7.0 m/s before the next crest throws them. Exported with
+`cargo xtask export-web`, each loads and plays in headless Chrome on the WebGPU baseline device
+(`tools/host/web_play_check.mjs`; its block-placing checks do not apply to these samples) with no
+validation errors or script exceptions.
 
 ## 8. Sub-grid ripples (Pioneer, 2026-10-22)
 
@@ -589,10 +589,10 @@ Not measured: R1 (the RTX 5060 and the 780M), Direct3D 12, Vulkan, and the brows
 The vessels of [water.md](../spec/water.md) 62 on the M5, macOS, release builds, 2026-10-23. The
 machine was not checked for other load.
 
-`cargo test --release -p amoris-physics --test vessel time_vessels -- --ignored --nocapture`, two
-runs: a tick of a world with a CPU region of still water, 64 x 64 m, and eight of the pool party's
-60 kg dinghies afloat in it, four with a hole of 20 cm^2 filling, against the same world without
-them, 600 ticks each:
+`cargo test --release -p amoris-physics --test physics_tests vessel::time_vessels -- --ignored --nocapture`,
+two runs: a tick of a world with a CPU region of still water, 64 x 64 m, and eight of the pool
+party's 60 kg dinghies afloat in it, four with a hole of 20 cm^2 filling, against the same world
+without them, 600 ticks each:
 
 | | Without | With eight dinghies | A dinghy |
 |---|---|---|---|
@@ -637,8 +637,8 @@ Not measured: the ribbons' draw alone, R1, and the browser.
 Baking, focus and joined regions ([water.md](../spec/water.md) 64) on the M5, macOS, Metal,
 release builds, 2026-10-23. The machine was not checked for other load.
 
-`cargo test --release -p amoris-app --test gpu_scale time_scale -- --ignored --nocapture`, two
-runs: the wall time of a tick, its GPU work and readbacks waited for, over 600 ticks:
+`cargo test --release -p amoris-app --test app_tests gpu_scale::time_scale -- --ignored --nocapture`,
+two runs: the wall time of a tick, its GPU work and readbacks waited for, over 600 ticks:
 
 | | A tick |
 |---|---|
@@ -661,9 +661,9 @@ submits nothing), R1 and the browser.
 The terrain and pours of [water.md](../spec/water.md) 65 on the M5, macOS, release builds,
 2026-10-23. The machine was not checked for other load.
 
-`cargo test --release -p amoris-runtime --features transpile --test terrain time_terrain --
---ignored --nocapture`, two runs, each the mean of ten: the valley's terrain, 384 x 192 cells of
-half a metre with noise, five hills and a channel of twelve points:
+`cargo test --release -p amoris-runtime --features transpile --test runtime_tests terrain::time_terrain -- --ignored --nocapture`,
+two runs, each the mean of ten: the valley's terrain, 384 x 192 cells of half a metre with noise,
+five hills and a channel of twelve points:
 
 | | Once |
 |---|---|
@@ -682,10 +682,11 @@ Not measured: the renderer's meshing, the browser and R1.
 
 The generated kernels of [water.md](../spec/water.md) 66 on the M5, macOS, Metal, release builds,
 2026-10-23, measured again once the leftover browsers below were stopped; the alternated runs of
-each build agree within 3 percent. `cargo test --release -p amoris-app --test gpu_determinism
-time_samples -- --ignored --nocapture`: the wall time of a tick, its GPU work and readbacks waited
-for, over ticks 61 to 360. The f32 kernels' column is the same test built against bc730ab7, the
-commit before them, the deterministic kernels' against b248c082; the runs alternated, two of each.
+each build agree within 3 percent.
+`cargo test --release -p amoris-app --test app_tests gpu_determinism::time_samples -- --ignored --nocapture`:
+the wall time of a tick, its GPU work and readbacks waited for, over ticks 61 to 360. The f32
+kernels' column is the same test built against bc730ab7, the commit before them, the deterministic
+kernels' against b248c082; the runs alternated, two of each.
 
 | Sample | f32 kernels | Deterministic kernels |
 |---|---|---|
@@ -710,10 +711,11 @@ The weather of [water.md](../spec/water.md) 67 on the M5, macOS, Metal, release 
 The machine was not otherwise checked for load; the alternated runs of each case agree within 2
 percent.
 
-**A tick.** `cargo test --release -p amoris-app --test gpu_weather time_weather -- --ignored
---nocapture`: the wall time of a tick, its GPU work and readbacks waited for, over ticks 61 to 360
-of a walled pool of 512 x 256 half-metre columns whose surface starts tilted by 5 cm, so that it
-sloshes whatever the weather; two runs:
+**A tick.**
+`cargo test --release -p amoris-app --test app_tests gpu_weather::time_weather -- --ignored --nocapture`:
+the wall time of a tick, its GPU work and readbacks waited for, over ticks 61 to 360 of a walled
+pool of 512 x 256 half-metre columns whose surface starts tilted by 5 cm, so that it sloshes
+whatever the weather; two runs:
 
 | | A tick |
 |---|---|

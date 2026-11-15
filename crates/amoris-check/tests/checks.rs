@@ -1,7 +1,7 @@
 //! The charter's four checks on the sailing scene, and the project negative controls of
 //! tests/fixtures/controls (checks.md 8.6): each fails with its stated code.
 #![cfg(feature = "native")]
-mod common;
+use crate::common;
 
 use amoris_check::{Options, Report, StepResult, Verdict, check_project, check_subject};
 use serde_json::json;

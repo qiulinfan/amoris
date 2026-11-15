@@ -3,7 +3,7 @@
 //! through a process global, a value from the process's random hash keys, a write outside the
 //! command queue, and a recorded input moved one tick. Each must fail with its stated code.
 #![cfg(feature = "native")]
-mod common;
+use crate::common;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -125,7 +125,12 @@ fn process_random_fails_cross_process_determinism() {
                 ));
             };
             let out = std::process::Command::new(std::env::current_exe().expect("this binary"))
-                .args(["--exact", "child_chain", "--nocapture", "--test-threads=1"])
+                .args([
+                    "--exact",
+                    "controls::child_chain",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
                 .env("AMORIS_CHECK_CHILD", seed.to_string())
                 .output()
                 .expect("the child runs");

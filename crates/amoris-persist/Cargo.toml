@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 description = "Canonical serialization, the world hash, snapshot, restore, fork, replays, divergence and versions"
+autotests = false
 
 [dependencies]
 amoris-contract.workspace = true
@@ -24,3 +25,8 @@ blake3.workspace = true
 [[example]]
 name = "web_vectors"
 crate-type = ["cdylib"]
+
+# The integration tests, one binary (docs/spec/checks.md 6.2).
+[[test]]
+name = "persist_tests"
+path = "tests/main.rs"

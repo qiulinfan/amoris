@@ -4,7 +4,7 @@
 //! Stop and the kept snapshots.
 #![cfg(all(feature = "thread", feature = "transpile"))]
 #![allow(clippy::disallowed_methods)]
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -321,8 +321,8 @@ fn declarations_follow_the_scripts_and_stay_out_of_the_source_tree() {
 /// (one compile; the running program answers the components) and `scripts.apply {dry_run, types}`
 /// on changed scripts (compile, instantiate in a throwaway host, emit, write): what a
 /// `scripts.check` costs the game thread. Median of 15 calls each.
-/// `cargo test --release -p amoris-runtime --features thread,transpile --test host
-/// script_types_cost -- --ignored --nocapture`
+/// `cargo test --release -p amoris-runtime --features thread,transpile --test runtime_tests
+/// host::script_types_cost -- --ignored --nocapture`
 #[test]
 #[ignore]
 fn script_types_cost() {

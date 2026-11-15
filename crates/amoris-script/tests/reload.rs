@@ -4,7 +4,7 @@
 //! compiled with the lint off) diverges on the tick after the reload, and with the lint on it does
 //! not compile (`module-state-lint`).
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use amoris_script::{ScriptLimits, ScriptSource, SwapOutcome, compile};
 use amoris_sim::Sim;

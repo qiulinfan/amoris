@@ -240,9 +240,10 @@ credential cleanup. File-verification records remain local, including in that ar
   `bevy_ecs`'s change ticks say did not change, so a write to a persisted component must go
   through change detection (never `bypass_change_detection`, which clippy reports in the
   tick-code crates); a change there runs
-  `cargo test -p amoris-persist --test repeated` and
-  `cargo test -p amoris-runtime --features transpile --test snapshot_cache --test present`
-  (`present` covers the extractor's kept queries; without the feature cargo refuses both).
+  `cargo test -p amoris-persist --test persist_tests repeated::` and
+  `cargo test -p amoris-runtime --features transpile --test runtime_tests -- snapshot_cache::
+  present::` (`present` covers the extractor's kept queries; without the feature cargo refuses
+  both).
   `/render` sends when the game thread publishes (`ThreadOptions::on_publish`), at most one frame
   every 8 ms (`cargo test --release -p amoris-app --bin amoris render_merges`).
   `tools/runtime/publish_bench.py` times the loop's work after a tick part by part (amoris-runtime's
@@ -281,8 +282,9 @@ credential cleanup. File-verification records remain local, including in that ar
 - Inverse kinematics ([docs/spec/animation.md](docs/spec/animation.md) 6a): the solvers are
   amoris-assets' `anim/ik.rs`, the `anim.ik` system amoris-physics' `ik.rs` (after
   `physics.avatar`). A change runs amoris-assets `anim::ik`, `cargo test -p amoris-runtime
-  --features transpile --test ik` (its recorded pose digest) and the `ik` fixture's check; graphs
-  without `ik` keep their poses bit for bit (amoris-assets `morph`'s digest, thornkeep's check).
+  --features transpile --test runtime_tests ik::` (its recorded pose digest) and the `ik` fixture's
+  check; graphs without `ik` keep their poses bit for bit (amoris-assets `morph`'s digest,
+  thornkeep's check).
 - Occlusion culling (two-phase Hi-Z, [docs/spec/occlusion.md](docs/spec/occlusion.md)) runs in
   `auto` mode by default; `AMORIS_OCCLUSION=off|on|auto` (the viewport page: `?occlusion=`) sets
   it. A change to culling or the opaque passes runs `cargo test -p amoris-render --test occlusion
@@ -348,7 +350,7 @@ credential cleanup. File-verification records remain local, including in that ar
   `ui.wgsl` runs `cargo test -p amoris-render --test ui`; a change to its text or bar path also
   runs the `ui_frames` example in a build without it, and their PNGs must not change. A change to
   the UI's components, extraction or `ui.press` runs `cargo test -p amoris-runtime --features
-  transpile --test ui` and `amoris check tests/fixtures/scenes/ui-hud`.
+  transpile --test runtime_tests ui::` and `amoris check tests/fixtures/scenes/ui-hud`.
 - Color grading ([docs/spec/color-grading.md](docs/spec/color-grading.md)): `Environment.color_lut`
   names a `.cube` table that the display transform reads after AgX (`fs_tonemap_graded`); without
   one, or at share 0, the frame is `fs_tonemap`'s, to the bit. A change to post.wgsl's display
@@ -393,6 +395,9 @@ credential cleanup. File-verification records remain local, including in that ar
   ([docs/spec/server.md](docs/spec/server.md) 4). `python tools/host/profiler_bench.py [--capture]`
   measures the profiler's cost back to back and paced like the real-time loop, and captures the
   panel against a real host ([docs/bench/profiler.md](docs/bench/profiler.md)).
+- Each crate's integration tests but amoris-render's are one binary, `<crate>_tests`
+  (`tests/main.rs`; checks.md 6.2): one file's tests run as `cargo test -p amoris-app --test
+  app_tests gpu_water::`. amoris-render keeps a test binary per file for `tools/gpu_matrix.py`.
 - Agents working in parallel use their own git worktree and their own cargo target directory.
 - macOS has no `timeout`; use `perl -e 'alarm 60; exec @ARGV' cmd` as a watchdog.
 

@@ -3,7 +3,7 @@
 //! until it is released, and the script reads what the last evaluation gave; a restore runs on to
 //! the same weights.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

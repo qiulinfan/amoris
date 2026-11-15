@@ -5,7 +5,7 @@
 //! frozen export throws at the mutation, with the hint; a script cannot forge a host code or a
 //! fault, and a top-level binding named `__proto__` is hardened like any other.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use amoris_script::{ScriptHost, ScriptLimits, SystemOutcome};
 use amoris_sim::PlainData;

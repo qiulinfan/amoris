@@ -3,7 +3,7 @@
 //! script's `ctx.scene.load` applied after the tick, `scene.loaded`, and a recording that replays
 //! from its own data after the file is gone.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

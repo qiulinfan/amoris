@@ -1,8 +1,7 @@
 //! Water declared by its features (water.md 65): the valley sample's terrain, lake, river and falls
 //! come from a few components, and once it runs the river crosses from the lake's region into the
 //! falls', while the walker stands on the terrain's ground.
-#[path = "../src/water_compute.rs"]
-mod water_compute;
+use crate::water_compute;
 use amoris_link::Source;
 use amoris_runtime::{Command, Game, Project};
 use serde_json::{Value, json};

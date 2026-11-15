@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 description = "The game: composition, command application at tick boundaries, the game thread"
+autotests = false
 
 [features]
 # TypeScript compiled in process (amoris-script's oxc), for loading projects from disk and hot
@@ -39,16 +40,6 @@ toml.workspace = true
 # amoris-runtime` builds alone and `--features thread,transpile` runs them all.
 amoris-script = { workspace = true, features = ["transpile"] }
 
-# The snapshot cache's and the render feed's byte-equality tests load the sailing game from disk:
-# named without the feature (`--test snapshot_cache`), cargo refuses them instead of running none.
-[[test]]
-name = "snapshot_cache"
-required-features = ["transpile"]
-
-[[test]]
-name = "present"
-required-features = ["transpile"]
-
 # The player bench (docs/bench/player.md): the reference skipper through the player tools, and
 # decision models in the tick, native and scripted.
 [[example]]
@@ -80,4 +71,12 @@ required-features = ["transpile"]
 # The water's solver, snapshot and feed costs on blockcraft's broken bank (docs/bench/liquids.md).
 [[example]]
 name = "water_bench"
+required-features = ["transpile"]
+
+# The integration tests, one binary (docs/spec/checks.md 6.2). Nearly all of them load scripted
+# games from disk (the snapshot cache's and the render feed's byte-equality tests the sailing game):
+# named without the feature (`--test runtime_tests`), cargo refuses them instead of running none.
+[[test]]
+name = "runtime_tests"
+path = "tests/main.rs"
 required-features = ["transpile"]

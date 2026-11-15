@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 description = "The simulation core: the tick, entity ids, events, the RNG and the deterministic math library"
+autotests = false
 
 [features]
 # The boundary invariants' walk of the entity index (docs/spec/simulation.md 4.1; architecture.md
@@ -30,3 +31,8 @@ blake3.workspace = true
 [[example]]
 name = "web_vectors"
 crate-type = ["cdylib"]
+
+# The integration tests, one binary (docs/spec/checks.md 6.2).
+[[test]]
+name = "sim_tests"
+path = "tests/main.rs"

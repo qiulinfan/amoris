@@ -2,7 +2,7 @@
 //! fields name the entities' places in the file, in engine components as in project ones, so a
 //! scene saved after a destroy loads with every reference on the entity it named.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

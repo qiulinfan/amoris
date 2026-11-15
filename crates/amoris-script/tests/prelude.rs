@@ -3,7 +3,8 @@
 //! (`amoris.d.ts`, the SDK scripts type-check against, script-host.md 7.4) are what
 //! `oxc_isolated_declarations` emits from the same source, so docs and types cannot drift. The web
 //! build has no transpiler, so it runs the committed file; `AMORIS_BLESS=1 cargo test -p
-//! amoris-script --features transpile --test prelude` rewrites both after the TypeScript changes.
+//! amoris-script --features transpile --test script_tests prelude::` rewrites both after the
+//! TypeScript changes.
 #![cfg(feature = "transpile")]
 
 use oxc_allocator::Allocator;

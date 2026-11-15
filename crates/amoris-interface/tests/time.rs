@@ -4,7 +4,7 @@
 //! could not perceive reaches only a developer, turns run only when decided, and a player's
 //! `time.status` shows its own clock and decision only.
 
-mod common;
+use crate::common;
 
 use amoris_interface::action::IntentTable;
 use amoris_interface::time::control::Controller;

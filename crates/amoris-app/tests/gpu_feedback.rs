@@ -1,6 +1,5 @@
 //! Pending body drag is real replayable GPU input, not water-depth injection or a wake decal.
-#[path = "../src/water_compute.rs"]
-mod water_compute;
+use crate::water_compute;
 use amoris_link::Source;
 use amoris_runtime::{Command, Game, GameSetup, Project};
 use serde_json::{Value, json};

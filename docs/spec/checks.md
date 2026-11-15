@@ -267,6 +267,18 @@ and cargo takes `--doc` with no other target selection, so the step runs `cargo 
 --release --locked --doc --no-fail-fast` after it (amoris-assets' `compile_fail` test that a
 `CheckedCheckpoint` cannot be built outside its module; amoris-debug's ignored example).
 
+Every crate's integration tests but amoris-render's are one test binary, `<crate>_tests`
+(`tests/main.rs` declares every other file of `tests/` as a module; `autotests = false`), so a
+change links a crate's tests once rather than once per file (2026-11-13, M5: after a change to
+amoris-sim the ten crates' 131 test files took about 670 CPU seconds to compile and link, their ten
+binaries about 140). One file's tests run as
+`cargo test -p amoris-runtime --features transpile --test runtime_tests ik::`. A test that runs its
+own binary again names its child by the module path (`controls::child_chain`); a test that installs
+process-wide state stays a binary of its own (amoris-app's `engine_version`, which installs another
+engine's version). amoris-render keeps a binary per file: `tools/gpu_matrix.py` runs, times and
+reports each binary on its own with a driver pipeline cache of its own (gpu-matrix.md 9 and 11), and
+a lost device or a driver crash ends one file's tests, not all the renderer's.
+
 The exit status of `cargo test` is authoritative; the step never reads its result through a pipe
 (master once committed with a failing assertion because `| tail` hid the exit status,
 `docs/development.md`, Tests). The tests include those the other specifications list (simulation.md

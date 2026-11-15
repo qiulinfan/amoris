@@ -1,7 +1,6 @@
 //! The stateless-script lint (script-sandbox.md 3; script-host.md 12, test 6): every rule has a
 //! refused and an accepted fixture, among them the cases the spikes' lints let through.
 #![cfg(feature = "transpile")]
-mod common;
 
 use amoris_script::{CompileOptions, ScriptSource, compile};
 

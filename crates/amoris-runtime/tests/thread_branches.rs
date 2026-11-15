@@ -5,7 +5,7 @@
 //! (branches per source, branch ticks while main stays at one tick) are refused up front.
 #![cfg(all(feature = "thread", feature = "transpile"))]
 #![allow(clippy::disallowed_methods)]
-mod common;
+use crate::common;
 
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;

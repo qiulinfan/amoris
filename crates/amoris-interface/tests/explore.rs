@@ -1,7 +1,7 @@
 //! Explorations of the sailing intents against the slice 1 boat (ignored; run with --ignored
 //! --nocapture to see the numbers the tests' limits come from).
 
-mod common;
+use crate::common;
 
 use common::*;
 use serde_json::json;

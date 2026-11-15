@@ -8,7 +8,7 @@
 //! the last; a component scripts cannot read leaves the script host's recorder off; and a misspelt
 //! entity, component or field is refused with suggestions.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

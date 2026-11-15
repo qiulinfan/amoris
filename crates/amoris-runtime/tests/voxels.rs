@@ -3,7 +3,7 @@
 //! their later reads, a throwing system's edits are discarded, a walker lands on the blocks, and the
 //! world hash changes with one cell and not without edits.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use std::path::PathBuf;
 use std::sync::Arc;

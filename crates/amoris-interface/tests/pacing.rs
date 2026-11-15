@@ -5,7 +5,7 @@
 //! give the same world at every tick. The real-time loop here is the game loop's (threads.md 3.3)
 //! with its clock injected, so a run is reproducible; one test runs it on the wall clock.
 
-mod common;
+use crate::common;
 
 use amoris_contract::Problem;
 use amoris_interface::action::{ActDone, Caller};

@@ -1,7 +1,7 @@
 //! The render feed's extraction (amoris-runtime's `Extractor`; host-protocol.md 5): a viewport
 //! that applies every frame it is pushed holds, after each tick and each edit of the sailing game,
 //! the scene a new subscriber's full frame describes.
-mod common;
+use crate::common;
 
 use std::collections::BTreeMap;
 

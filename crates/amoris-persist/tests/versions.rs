@@ -2,7 +2,7 @@
 //! examples), V3 (save round trip), V8 (cache rebuild), V10 (the conversion of a step's result),
 //! and the refusals of 6.2.
 
-mod common;
+use crate::common;
 
 use std::collections::BTreeMap;
 

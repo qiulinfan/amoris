@@ -1,12 +1,12 @@
-//! The real schedules of the samples, pinned (simulation-slice1.md 8): amoris-sim's golden fixes the
-//! order rules with test systems, this one fixes what the runtime actually registers (engine,
+//! The real schedules of the samples, pinned (simulation-slice1.md 8): amoris-sim's golden fixes
+//! the order rules with test systems, this one fixes what the runtime actually registers (engine,
 //! physics, assets and the project's script systems), so a new or moved system is a reviewed diff.
-//! `AMORIS_BLESS=1 cargo test -p amoris-runtime --features transpile --test schedule` rewrites the
-//! goldens. Loading a project from disk compiles its TypeScript, so the test needs the crate's
-//! `transpile` (a workspace run has it through amoris-app).
+//! `AMORIS_BLESS=1 cargo test -p amoris-runtime --features transpile --test runtime_tests
+//! schedule::` rewrites the goldens. Loading a project from disk compiles its TypeScript, so the
+//! test needs the crate's `transpile` (a workspace run has it through amoris-app).
 #![cfg(feature = "transpile")]
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

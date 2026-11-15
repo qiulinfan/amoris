@@ -3,7 +3,7 @@
 //! refused command changes nothing and says why, forks match their source, the crew's rule takes a
 //! crate aboard, and a reload is a recorded Host swap.
 #![cfg(feature = "transpile")]
-mod common;
+use crate::common;
 
 use amoris_link::Source;
 use amoris_persist::replay::{MemorySink, Record, RecordOptions, Replay};

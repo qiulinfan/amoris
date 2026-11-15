@@ -1,9 +1,10 @@
-//! What the action layer costs (shared/contract/actions.md, Performance: `act.call`, `intent.tick`),
-//! measured, not checked: run with `cargo test --release -p amoris-interface --test timing --
-//! --ignored --nocapture`. The budgets are spec-arch's (`docs/spec/budgets.md`); these print the
-//! medians the first calibrated `perf` run would set their reference figures from.
+//! What the action layer costs (shared/contract/actions.md, Performance: `act.call`,
+//! `intent.tick`), measured, not checked: run with `cargo test --release -p amoris-interface --test
+//! interface_tests timing:: -- --ignored --nocapture`. The budgets are spec-arch's
+//! (`docs/spec/budgets.md`); these print the medians the first calibrated `perf` run would set
+//! their reference figures from.
 
-mod common;
+use crate::common;
 
 use common::play::*;
 use serde_json::json;
