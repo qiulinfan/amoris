@@ -1,19 +1,85 @@
 //! Animation graphs (animation.md 3): a file's parameters, clips' metadata, masks, layers of state
 //! machines and slots, and montages; a graph bound to its skeleton and clips (`Rig`); and one tick
 //! of a graph's state (`step`): transitions and fades, blend spaces, montages and their sections,
-//! notifies, root motion and the pose.
+//! notifies, root motion and the pose; additive layers and inertialized switches (animation.md
+//! 3a).
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use amoris_sim::math::{max, min};
+use amoris_sim::math::{clamp, max, min};
 
 use super::clip::{Bound, ClipSet, Skeleton};
 use super::ik::{IkDef, IkNode};
-use super::math::{self, V3, Xform};
+use super::math::{self, IDENTITY, V3, Xform};
 use super::state::{AnimParam, AnimState, LayerState, SlotState};
+
+/// A weight: a number, or a graph parameter read each tick; either clamped to 0..1 (an IK node's,
+/// a layer's).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ParamWeight {
+    Value(f64),
+    Param(String),
+}
+
+impl Default for ParamWeight {
+    fn default() -> Self {
+        ParamWeight::Value(1.0)
+    }
+}
+
+impl ParamWeight {
+    /// Parses `v` (none: 1); a name must be one of `params`. `what` names the owner in errors.
+    pub fn parse(
+        v: Option<&Value>,
+        params: &[(String, f64)],
+        what: &str,
+    ) -> Result<ParamWeight, String> {
+        match v {
+            None => Ok(ParamWeight::Value(1.0)),
+            Some(Value::String(p)) => {
+                if !params.iter().any(|(n, _)| n == p) {
+                    return Err(format!("{what}'s weight names no parameter {p}"));
+                }
+                Ok(ParamWeight::Param(p.clone()))
+            }
+            Some(w) => Ok(ParamWeight::Value(num(w, &format!("{what}'s weight"))?)),
+        }
+    }
+
+    /// Its value for `st`, clamped to 0..1.
+    pub fn value(&self, st: &AnimState) -> f64 {
+        let v = match self {
+            ParamWeight::Value(v) => *v,
+            ParamWeight::Param(p) => param(st, p),
+        };
+        clamp(v, 0.0, 1.0)
+    }
+}
+
+/// How a layer goes over the pose below it (animation.md 3a).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LayerBlend {
+    /// Its pose replaces the one below by its weights.
+    #[default]
+    Override,
+    /// Its clips play as differences from their references, added to the pose below.
+    Add,
+}
+
+/// The pose an additive clip is the difference from.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum Reference {
+    /// The clip itself at 0 s.
+    #[default]
+    First,
+    /// The skeleton's rest pose.
+    Rest,
+    /// Another clip's pose at a time (seconds).
+    Clip { clip: String, at: f64 },
+}
 
 /// A parameter comparison or the clip's end.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -54,6 +120,9 @@ pub struct TransitionDef {
     pub to: String,
     pub when: Vec<Cond>,
     pub fade: f64,
+    /// The switch is inertialized over `fade` instead of crossfaded.
+    #[serde(default)]
+    pub inertial: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -71,6 +140,11 @@ pub struct LayerDef {
     pub name: String,
     pub mask: Option<String>,
     pub kind: LayerKind,
+    #[serde(default)]
+    pub blend: LayerBlend,
+    /// Multiplies the mask's weights (the base layer's is 1).
+    #[serde(default)]
+    pub weight: ParamWeight,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -86,6 +160,9 @@ pub struct ClipMeta {
     pub name: String,
     pub root_motion: bool,
     pub notifies: Vec<NotifyDef>,
+    /// What the clip is a difference from when an additive layer plays it.
+    #[serde(default)]
+    pub reference: Reference,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -103,6 +180,9 @@ pub struct MontageDef {
     pub fade_in: f64,
     pub fade_out: f64,
     pub sections: Vec<SectionDef>,
+    /// It starts (and a jump within it switches) inertialized over `fade_in`, not faded.
+    #[serde(default)]
+    pub inertial: bool,
 }
 
 /// A graph file, parsed.
@@ -206,6 +286,24 @@ impl GraphDef {
                         .and_then(Value::as_bool)
                         .unwrap_or(false),
                     notifies: Vec::new(),
+                    reference: match m.get("reference") {
+                        None => Reference::First,
+                        Some(Value::String(r)) if r == "first" => Reference::First,
+                        Some(Value::String(r)) if r == "rest" => Reference::Rest,
+                        Some(Value::Object(r)) => Reference::Clip {
+                            clip: text(
+                                r.get("clip").unwrap_or(&Value::Null),
+                                &format!("clip {name}'s reference clip"),
+                            )?,
+                            at: opt_num(r, "at", 0.0, &format!("clip {name}'s reference"))?,
+                        },
+                        Some(_) => {
+                            return Err(format!(
+                                "clip {name}'s reference must be \"first\", \"rest\" or \
+                                 {{\"clip\", \"at\"}}"
+                            ));
+                        }
+                    },
                 };
                 if let Some(Value::Array(ns)) = m.get("notifies") {
                     for n in ns {
@@ -284,7 +382,31 @@ impl GraphDef {
             } else {
                 parse_machine(&name, l)?
             };
-            g.layers.push(LayerDef { name, mask, kind });
+            let blend = match l
+                .get("blend")
+                .map(|b| text(b, "a layer's blend"))
+                .transpose()?
+            {
+                None => LayerBlend::Override,
+                Some(b) if b == "override" => LayerBlend::Override,
+                Some(b) if b == "add" => LayerBlend::Add,
+                Some(b) => {
+                    return Err(format!(
+                        "layer {name}'s blend {b} is neither \"override\" nor \"add\""
+                    ));
+                }
+            };
+            if i == 0 && (blend != LayerBlend::Override || l.contains_key("weight")) {
+                return Err("the base layer is neither additive nor weighted".into());
+            }
+            let weight = ParamWeight::parse(l.get("weight"), &g.params, &format!("layer {name}"))?;
+            g.layers.push(LayerDef {
+                name,
+                mask,
+                kind,
+                blend,
+                weight,
+            });
         }
         if g.layers.is_empty() {
             return Err("a graph needs at least one layer".into());
@@ -341,6 +463,7 @@ impl GraphDef {
                     fade_in: opt_num(m, "fade_in", 0.1, "a montage")?,
                     fade_out: opt_num(m, "fade_out", 0.2, "a montage")?,
                     sections,
+                    inertial: inertial(m.get("blend_in"), &format!("montage {name}'s blend_in"))?,
                 });
             }
         }
@@ -372,7 +495,21 @@ impl GraphDef {
         for m in &self.montages {
             m.sections.iter().for_each(|s| add(&s.clip));
         }
+        for c in &self.clips {
+            if let Reference::Clip { clip, .. } = &c.reference {
+                add(clip);
+            }
+        }
         out
+    }
+}
+
+/// A switch's blend: `"fade"` (none given) or `"inertial"`.
+fn inertial(v: Option<&Value>, what: &str) -> Result<bool, String> {
+    match v.map(|b| text(b, what)).transpose()?.as_deref() {
+        None | Some("fade") => Ok(false),
+        Some("inertial") => Ok(true),
+        Some(b) => Err(format!("{what} {b} is neither \"fade\" nor \"inertial\"")),
     }
 }
 
@@ -498,6 +635,7 @@ fn parse_machine(layer: &str, l: &serde_json::Map<String, Value>) -> Result<Laye
             to,
             when,
             fade: opt_num(t, "fade", 0.2, "a transition")?,
+            inertial: inertial(t.get("blend"), "a transition's blend")?,
         });
     }
     Ok(LayerKind::Machine {
@@ -515,6 +653,9 @@ pub struct Rig {
     clips: Vec<Bound>,
     by_name: BTreeMap<String, usize>,
     meta: Vec<Option<usize>>,
+    /// Per clip, the pose an additive layer takes its difference from: a clip at a time (seconds),
+    /// or none for the rest pose.
+    refs: Vec<Option<(usize, f32)>>,
     /// Per layer, per joint, how much the layer covers it.
     weights: Vec<Vec<f32>>,
     /// Where each joint's morph weights start in a pose's flat weights, the total last.
@@ -560,9 +701,18 @@ impl Rig {
                 &def.scale_by,
             ));
         }
-        let meta = clips
+        let meta: Vec<Option<usize>> = clips
             .iter()
             .map(|b| def.clips.iter().position(|m| m.name == b.name))
+            .collect();
+        let refs = meta
+            .iter()
+            .enumerate()
+            .map(|(c, m)| match m.map(|m| &def.clips[m].reference) {
+                None | Some(Reference::First) => Some((c, 0.0)),
+                Some(Reference::Rest) => None,
+                Some(Reference::Clip { clip, at }) => Some((by_name[clip.as_str()], *at as f32)),
+            })
             .collect();
         let n = skeleton.joints.len();
         let mut weights = Vec::new();
@@ -625,6 +775,7 @@ impl Rig {
             clips,
             by_name,
             meta,
+            refs,
             weights,
             morph_at,
             root,
@@ -764,6 +915,14 @@ impl Pose {
         Pose {
             x: rig.skeleton.rest(),
             w: rig.skeleton.rest_weights(),
+        }
+    }
+
+    /// The identity difference: no translation, no turn, unit scale, no weights.
+    fn identity(rig: &Rig) -> Pose {
+        Pose {
+            x: vec![Xform::IDENTITY; rig.skeleton.joints.len()],
+            w: vec![0.0; rig.morph_len()],
         }
     }
 
@@ -938,12 +1097,17 @@ fn is_blend(s: &StateDef) -> bool {
     !matches!(s.motion, Motion::Clip(_))
 }
 
-/// Writes a sampled state's pose (its clips weighted) over the rest.
-fn pose_of(rig: &Rig, sets: &[ClipSet], sampled: &Sampled, lock_root: bool) -> Pose {
+/// Writes a sampled state's pose (its clips weighted) over the rest; for an additive layer
+/// (`add`), each clip's difference from its reference over the identity difference.
+fn pose_of(rig: &Rig, sets: &[ClipSet], sampled: &Sampled, lock_root: bool, add: bool) -> Pose {
     let rest = Pose::rest(rig);
-    let mut out = Pose {
-        x: rest.x.clone(),
-        w: rest.w.clone(),
+    let mut out = if add {
+        Pose::identity(rig)
+    } else {
+        Pose {
+            x: rest.x.clone(),
+            w: rest.w.clone(),
+        }
     };
     let mut acc = 0.0f64;
     let mut buf = rest.x.clone();
@@ -954,12 +1118,15 @@ fn pose_of(rig: &Rig, sets: &[ClipSet], sampled: &Sampled, lock_root: bool) -> P
         }
         buf.copy_from_slice(&rest.x);
         rig.clips[c].sample(sets, t as f32, &mut buf);
-        if lock_root && rig.meta(c).is_some_and(|m| m.root_motion) {
+        if lock_root && !add && rig.meta(c).is_some_and(|m| m.root_motion) {
             lock(rig, sets, c, &mut buf);
         }
         if !wbuf.is_empty() {
             wbuf.copy_from_slice(&rest.w);
             rig.clips[c].sample_weights(sets, t as f32, &mut wbuf);
+        }
+        if add {
+            difference(rig, sets, c, &rest, &mut buf, &mut wbuf);
         }
         acc += w;
         let u = (w / acc) as f32;
@@ -971,6 +1138,224 @@ fn pose_of(rig: &Rig, sets: &[ClipSet], sampled: &Sampled, lock_root: bool) -> P
         }
     }
     out
+}
+
+/// A sampled clip's pose (`x`, `w`) made its difference from the clip's reference (animation.md
+/// 3a): `r * conj(r_ref)`, `t - t_ref`, `s / s_ref`, `w - w_ref`.
+fn difference(
+    rig: &Rig,
+    sets: &[ClipSet],
+    clip: usize,
+    rest: &Pose,
+    x: &mut [Xform],
+    w: &mut [f32],
+) {
+    let mut rx = rest.x.clone();
+    let mut rw = rest.w.clone();
+    if let Some((rc, at)) = rig.refs[clip] {
+        rig.clips[rc].sample(sets, at, &mut rx);
+        if !rw.is_empty() {
+            rig.clips[rc].sample_weights(sets, at, &mut rw);
+        }
+    }
+    for (d, r) in x.iter_mut().zip(&rx) {
+        let ratio = |a: f32, b: f32| if b != 0.0 { a / b } else { 1.0 };
+        *d = Xform {
+            t: math::sub(d.t, r.t),
+            r: math::normalize(math::qmul(d.r, math::qconj(r.r))),
+            s: [
+                ratio(d.s[0], r.s[0]),
+                ratio(d.s[1], r.s[1]),
+                ratio(d.s[2], r.s[2]),
+            ],
+        };
+    }
+    for (d, r) in w.iter_mut().zip(&rw) {
+        *d -= r;
+    }
+}
+
+/// Values an inertialization keeps per joint (the rotation's vector and velocity, the
+/// translation's and the scale's differences and velocities) and per morph weight.
+const PER_JOINT: usize = 12;
+const PER_WEIGHT: usize = 2;
+
+fn dot(a: V3, b: V3) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+/// The offsets of an inertialized switch from its target `to` to the source as it is now (`s0`)
+/// and was a tick earlier (`s1`), `dt` seconds before (animation.md 3a).
+fn offsets(s0: &Pose, s1: &Pose, to: &Pose, dt: f64) -> Vec<f32> {
+    let dt = dt as f32;
+    let speed = |x0: f32, x1: f32| if dt > 0.0 { (x0 - x1) / dt } else { 0.0 };
+    // A direction's size now, and its velocity from the one a tick earlier along it.
+    let along = |d0: V3, d1: V3| -> f32 {
+        let x0 = math::length(d0);
+        let x1 = if x0 > 0.0 { dot(d1, d0) / x0 } else { 0.0 };
+        speed(x0, x1)
+    };
+    let mut out = Vec::with_capacity(to.x.len() * PER_JOINT + to.w.len() * PER_WEIGHT);
+    for ((a, b), t) in s0.x.iter().zip(&s1.x).zip(&to.x) {
+        let mut q = math::qmul(a.r, math::qconj(t.r));
+        if q[3] < 0.0 {
+            q = [-q[0], -q[1], -q[2], -q[3]];
+        }
+        let mut q1 = math::qmul(b.r, math::qconj(t.r));
+        if q1[0] * q[0] + q1[1] * q[1] + q1[2] * q[2] + q1[3] * q[3] < 0.0 {
+            q1 = [-q1[0], -q1[1], -q1[2], -q1[3]];
+        }
+        let (v, v1) = ([q[0], q[1], q[2]], [q1[0], q1[1], q1[2]]);
+        out.extend_from_slice(&v);
+        out.push(along(v, v1));
+        let (d, d1) = (math::sub(a.t, t.t), math::sub(b.t, t.t));
+        out.extend_from_slice(&d);
+        out.push(along(d, d1));
+        let (d, d1) = (math::sub(a.s, t.s), math::sub(b.s, t.s));
+        out.extend_from_slice(&d);
+        out.push(along(d, d1));
+    }
+    for ((a, b), t) in s0.w.iter().zip(&s1.w).zip(&to.w) {
+        let d = a - t;
+        let x1 = if d < 0.0 { t - b } else { b - t };
+        out.push(d);
+        out.push(speed(d.abs(), x1));
+    }
+    out
+}
+
+/// What is left at `t` of an offset `x0` that moves at `v0` and runs out over `t1` seconds:
+/// Bollo's quintic, which never passes through zero (animation.md 3a).
+pub fn decay(x0: f32, v0: f32, t: f32, t1: f32) -> f32 {
+    if x0 <= 0.0 || t1 <= 0.0 || t >= t1 {
+        return 0.0;
+    }
+    let v0 = if v0 > 0.0 { 0.0 } else { v0 };
+    let t1 = if v0 < 0.0 && -5.0 * x0 / v0 < t1 {
+        -5.0 * x0 / v0
+    } else {
+        t1
+    };
+    if t >= t1 {
+        return 0.0;
+    }
+    let (t2, t3) = (t1 * t1, t1 * t1 * t1);
+    let (t4, t5) = (t3 * t1, t3 * t2);
+    let a0 = (-8.0 * v0 * t1 - 20.0 * x0) / t2;
+    let a0 = if a0 > 0.0 { a0 } else { 0.0 };
+    let a = -(a0 * t2 + 6.0 * v0 * t1 + 12.0 * x0) / (2.0 * t5);
+    let b = (3.0 * a0 * t2 + 16.0 * v0 * t1 + 30.0 * x0) / (2.0 * t4);
+    let c = -(3.0 * a0 * t2 + 12.0 * v0 * t1 + 20.0 * x0) / (2.0 * t3);
+    let x = (((((a * t + b) * t + c) * t + 0.5 * a0) * t + v0) * t) + x0;
+    if x < 0.0 {
+        0.0
+    } else if x > x0 {
+        x0
+    } else {
+        x
+    }
+}
+
+/// Lays an inertialization's offsets, `t` seconds into its `len`, on a layer's content.
+fn lay(content: &mut Pose, off: &[f32], t: f64, len: f64) {
+    let (t, len) = (t as f32, len as f32);
+    for (j, x) in content.x.iter_mut().enumerate() {
+        let o = &off[j * PER_JOINT..(j + 1) * PER_JOINT];
+        let v: V3 = [o[0], o[1], o[2]];
+        let x0 = math::length(v);
+        let k = decay(x0, o[3], t, len);
+        if k > 0.0 {
+            let u = k / x0;
+            let q = [
+                v[0] * u,
+                v[1] * u,
+                v[2] * u,
+                amoris_sim::math::max_f32(1.0 - k * k, 0.0).sqrt(),
+            ];
+            x.r = math::normalize(math::qmul(q, x.r));
+        }
+        for (at, field) in [(4, &mut x.t), (8, &mut x.s)] {
+            let d: V3 = [o[at], o[at + 1], o[at + 2]];
+            let x0 = math::length(d);
+            let k = decay(x0, o[at + 3], t, len);
+            if k > 0.0 {
+                *field = math::add(*field, math::scale(d, k / x0));
+            }
+        }
+    }
+    let base = content.x.len() * PER_JOINT;
+    for (i, w) in content.w.iter_mut().enumerate() {
+        let (d, v0) = (off[base + i * PER_WEIGHT], off[base + i * PER_WEIGHT + 1]);
+        let k = decay(d.abs(), v0, t, len);
+        if k > 0.0 {
+            *w += if d < 0.0 { -k } else { k };
+        }
+    }
+}
+
+/// The pose `a` mixed toward `b` by `u`.
+fn mixed(a: &Pose, b: &Pose, u: f32) -> Pose {
+    let mut out = Pose {
+        x: b.x.clone(),
+        w: b.w.clone(),
+    };
+    out.fade_from(a, u);
+    out
+}
+
+/// A machine layer's content (what it lays over the pose below at full weight): its state at its
+/// time, with its fade and its running offsets, as it was `back` seconds of the graph earlier.
+fn machine_content(rig: &Rig, sets: &[ClipSet], st: &AnimState, li: usize, back: f64) -> Pose {
+    let add = rig.def.layers[li].blend == LayerBlend::Add;
+    let (states, _) = rig.machine(li).expect("a machine");
+    let ls = &st.layers[li];
+    let s = states.iter().find(|s| s.name == ls.state).expect("a state");
+    let mut time = ls.time;
+    if back > 0.0 {
+        time -= if is_blend(s) {
+            let c = cycle(rig, &sample_state(rig, st, s, time));
+            if c > 0.0 { back * s.rate / c } else { 0.0 }
+        } else {
+            back * s.rate
+        };
+        time = max(time, 0.0);
+    }
+    let mut lp = pose_of(rig, sets, &sample_state(rig, st, s, time), true, add);
+    let fade = max(ls.fade - back, 0.0);
+    if ls.fade_len > 0.0
+        && fade < ls.fade_len
+        && !ls.from.is_empty()
+        && let Some(f) = states.iter().find(|x| x.name == ls.from)
+    {
+        let from = pose_of(
+            rig,
+            sets,
+            &sample_state(rig, st, f, ls.from_time),
+            true,
+            add,
+        );
+        lp.fade_from(&from, (fade / ls.fade_len) as f32);
+    }
+    if !ls.inertia.is_empty() {
+        lay(
+            &mut lp,
+            &ls.inertia,
+            max(ls.inertia_t - back, 0.0),
+            ls.inertia_len,
+        );
+    }
+    lp
+}
+
+/// What an inertial montage's start or jump switches from: the clip it left and its time and rate
+/// (none when the slot held nothing), the share it had over the pose below, and its running
+/// offsets.
+struct SlotSource {
+    from: Option<(usize, f64, f64)>,
+    share: f64,
+    inertia: Vec<f32>,
+    inertia_t: f64,
+    inertia_len: f64,
 }
 
 /// Holds a root-motion clip's root at its horizontal place at the clip's start (the body moves
@@ -1098,8 +1483,18 @@ fn section<'a>(m: &'a MontageDef, name: &str) -> Option<&'a SectionDef> {
     m.sections.iter().find(|s| s.name == name)
 }
 
-/// Applies the commands queued by scripts.
-fn commands(rig: &Rig, st: &mut AnimState, out: &mut Vec<Notice>) {
+/// The clip a slot plays now, its time and its rate (the section's times the slot's).
+fn slot_clip(rig: &Rig, slot: &SlotState) -> Option<(usize, f64, f64)> {
+    let sec = rig
+        .montage(&slot.montage)
+        .and_then(|m| section(m, &slot.section))?;
+    Some((rig.clip(&sec.clip)?, slot.time, sec.rate * slot.rate))
+}
+
+/// Applies the commands queued by scripts; returns, per slot, the source of an inertial montage's
+/// start or jump made now (animation.md 3a).
+fn commands(rig: &Rig, st: &mut AnimState, out: &mut Vec<Notice>) -> Vec<Option<SlotSource>> {
+    let mut sources: Vec<Option<SlotSource>> = st.slots.iter().map(|_| None).collect();
     let cmds = std::mem::take(&mut st.commands);
     for c in cmds {
         match c.op.as_str() {
@@ -1110,10 +1505,24 @@ fn commands(rig: &Rig, st: &mut AnimState, out: &mut Vec<Notice>) {
                 let Some(first) = section(m, &c.section).or(m.sections.first()) else {
                     continue;
                 };
-                let Some(slot) = st.slots.iter_mut().find(|s| s.slot == m.slot) else {
+                let Some(si) = st.slots.iter().position(|s| s.slot == m.slot) else {
                     continue;
                 };
+                let slot = &mut st.slots[si];
                 let busy = !slot.montage.is_empty();
+                if m.inertial {
+                    // A second start in the same tick keeps the first one's source.
+                    if sources[si].is_none() {
+                        sources[si] = Some(SlotSource {
+                            from: slot_clip(rig, slot).filter(|_| busy),
+                            share: if busy { slot_weight(rig, slot) } else { 0.0 },
+                            inertia: std::mem::take(&mut slot.inertia),
+                            inertia_t: slot.inertia_t,
+                            inertia_len: slot.inertia_len,
+                        });
+                    }
+                    slot.inertia.clear();
+                }
                 slot.from_clip.clear();
                 if busy
                     && let Some(cur) = rig
@@ -1145,9 +1554,10 @@ fn commands(rig: &Rig, st: &mut AnimState, out: &mut Vec<Notice>) {
                             .montage(&x.montage)
                             .is_some_and(|m| section(m, &c.section).is_some())
                 };
-                let Some(slot) = st.slots.iter_mut().find(|x| playing(x)) else {
+                let Some(si) = st.slots.iter().position(playing) else {
                     continue;
                 };
+                let slot = &mut st.slots[si];
                 if c.op == "next" {
                     slot.next = c.section.clone();
                     continue;
@@ -1155,6 +1565,15 @@ fn commands(rig: &Rig, st: &mut AnimState, out: &mut Vec<Notice>) {
                 let m = rig.montage(&slot.montage).expect("checked");
                 if let Some(cc) = section(m, &slot.section).and_then(|cur| rig.clip(&cur.clip)) {
                     close_windows(rig, cc, slot.time, false, out);
+                }
+                if m.inertial && sources[si].is_none() {
+                    sources[si] = Some(SlotSource {
+                        from: slot_clip(rig, slot),
+                        share: 1.0,
+                        inertia: std::mem::take(&mut slot.inertia),
+                        inertia_t: slot.inertia_t,
+                        inertia_len: slot.inertia_len,
+                    });
                 }
                 let to = section(m, &c.section).expect("checked");
                 slot.section = to.name.clone();
@@ -1181,6 +1600,7 @@ fn commands(rig: &Rig, st: &mut AnimState, out: &mut Vec<Notice>) {
             _ => {}
         }
     }
+    sources
 }
 
 /// A slot's weight: fading in, held, or fading out.
@@ -1188,8 +1608,11 @@ fn slot_weight(rig: &Rig, s: &SlotState) -> f64 {
     if s.montage.is_empty() {
         return 0.0;
     }
-    let fade_in = rig.montage(&s.montage).map_or(0.0, |m| m.fade_in);
-    let w_in = if fade_in > 0.0 {
+    let m = rig.montage(&s.montage);
+    let fade_in = m.map_or(0.0, |m| m.fade_in);
+    let w_in = if m.is_some_and(|m| m.inertial) {
+        1.0
+    } else if fade_in > 0.0 {
         min(s.age / fade_in, 1.0)
     } else {
         1.0
@@ -1207,11 +1630,19 @@ fn slot_weight(rig: &Rig, s: &SlotState) -> f64 {
 /// One tick of `dt` seconds of a graph's state; returns the pose, the notifies and the root motion.
 pub fn step(rig: &Rig, sets: &[ClipSet], st: &mut AnimState, dt: f64) -> Output {
     let mut out = Output::default();
-    commands(rig, st, &mut out.notices);
+    let mut sources = commands(rig, st, &mut out.notices);
     let mut pose = Pose::rest(rig);
     let mut root = [0.0f32; 3];
     for (li, layer) in rig.def.layers.iter().enumerate() {
         let weights = &rig.weights[li];
+        let add = layer.blend == LayerBlend::Add;
+        let lw = layer.weight.value(st);
+        // The share of the root's motion a layer hands to the body: none from an additive one.
+        let root_share = if add {
+            0.0
+        } else {
+            lw as f32 * weights.get(rig.root.unwrap_or(0)).copied().unwrap_or(0.0)
+        };
         match &layer.kind {
             LayerKind::Machine { .. } => {
                 let (states, transitions) = rig.machine(li).expect("a machine");
@@ -1245,14 +1676,38 @@ pub fn step(rig: &Rig, sets: &[ClipSet], st: &mut AnimState, dt: f64) -> Output 
                     {
                         close_windows(rig, *c, ls.time, states[cur].looped, &mut out.notices);
                     }
-                    let (from_state, from_time) = (states[cur].name.clone(), ls.time);
-                    let ls = &mut st.layers[li];
-                    ls.from = from_state;
-                    ls.from_time = from_time;
-                    ls.state = states[to].name.clone();
-                    ls.time = 0.0;
-                    ls.fade = 0.0;
-                    ls.fade_len = t.fade;
+                    if t.inertial {
+                        // The content before the switch, now and a tick earlier, against the
+                        // target at its start.
+                        let s0 = machine_content(rig, sets, st, li, 0.0);
+                        let s1 = machine_content(rig, sets, st, li, dt);
+                        let target = pose_of(
+                            rig,
+                            sets,
+                            &sample_state(rig, st, &states[to], 0.0),
+                            true,
+                            add,
+                        );
+                        let ls = &mut st.layers[li];
+                        ls.inertia = offsets(&s0, &s1, &target, dt);
+                        ls.inertia_t = 0.0;
+                        ls.inertia_len = t.fade;
+                        ls.from.clear();
+                        ls.from_time = 0.0;
+                        ls.state = states[to].name.clone();
+                        ls.time = 0.0;
+                        ls.fade = 0.0;
+                        ls.fade_len = 0.0;
+                    } else {
+                        let (from_state, from_time) = (states[cur].name.clone(), ls.time);
+                        let ls = &mut st.layers[li];
+                        ls.from = from_state;
+                        ls.from_time = from_time;
+                        ls.state = states[to].name.clone();
+                        ls.time = 0.0;
+                        ls.fade = 0.0;
+                        ls.fade_len = t.fade;
+                    }
                 }
                 let cur = states
                     .iter()
@@ -1282,29 +1737,28 @@ pub fn step(rig: &Rig, sets: &[ClipSet], st: &mut AnimState, dt: f64) -> Output 
                         (t0, t1)
                     };
                     crossed(rig, c, a, b, s.looped, &mut out.notices);
-                    let w = layer_share(&st.layers[li]);
-                    let dv = root_delta(rig, sets, c, a, b, s.looped);
-                    let k =
-                        (w * f64::from(weights.get(rig.root.unwrap_or(0)).copied().unwrap_or(0.0)))
-                            as f32;
-                    root = math::add(root, math::scale(dv, k));
-                }
-                let mut lp = pose_of(rig, sets, &now, true);
-                let ls = &st.layers[li];
-                if ls.fade_len > 0.0 && ls.fade < ls.fade_len && !ls.from.is_empty() {
-                    if let Some(f) = states.iter().find(|x| x.name == ls.from) {
-                        let from =
-                            pose_of(rig, sets, &sample_state(rig, st, f, ls.from_time), true);
-                        let u = (ls.fade / ls.fade_len) as f32;
-                        lp.fade_from(&from, u);
+                    if !add {
+                        let w = layer_share(&st.layers[li]);
+                        let dv = root_delta(rig, sets, c, a, b, s.looped);
+                        root = math::add(root, math::scale(dv, (w * f64::from(root_share)) as f32));
                     }
-                } else if ls.fade_len > 0.0 {
-                    let ls = &mut st.layers[li];
+                }
+                let ls = &mut st.layers[li];
+                if ls.fade_len > 0.0 && !(ls.fade < ls.fade_len && !ls.from.is_empty()) {
                     ls.from.clear();
                     ls.fade_len = 0.0;
                     ls.fade = 0.0;
                 }
-                over(rig, &mut pose, &lp, weights, 1.0);
+                if !ls.inertia.is_empty() {
+                    ls.inertia_t += dt;
+                    if ls.inertia_t >= ls.inertia_len {
+                        ls.inertia.clear();
+                        ls.inertia_t = 0.0;
+                        ls.inertia_len = 0.0;
+                    }
+                }
+                let lp = machine_content(rig, sets, st, li, 0.0);
+                lay_over(rig, &mut pose, &lp, weights, lw as f32, add);
             }
             LayerKind::Slot(name) => {
                 let Some(si) = st.slots.iter().position(|s| &s.slot == name) else {
@@ -1318,6 +1772,59 @@ pub fn step(rig: &Rig, sets: &[ClipSet], st: &mut AnimState, dt: f64) -> Output 
                     slot.montage.clear();
                     continue;
                 };
+                // An inertial start or jump: the content it switches from, mixed over the pose
+                // below by the share it had, now and a tick earlier, against its first frame.
+                if let Some(src) = sources[si].take()
+                    && let Some((c, _, _)) = slot_clip(rig, slot)
+                {
+                    let base = if add {
+                        Pose::identity(rig)
+                    } else {
+                        Pose {
+                            x: pose.x.clone(),
+                            w: pose.w.clone(),
+                        }
+                    };
+                    let content = |back: f64| -> Pose {
+                        let Some((fc, ft, rate)) = src.from else {
+                            return Pose {
+                                x: base.x.clone(),
+                                w: base.w.clone(),
+                            };
+                        };
+                        let mut old = pose_of(
+                            rig,
+                            sets,
+                            &Sampled {
+                                parts: vec![(fc, max(ft - back * rate, 0.0), 1.0)],
+                            },
+                            true,
+                            add,
+                        );
+                        if !src.inertia.is_empty() {
+                            lay(
+                                &mut old,
+                                &src.inertia,
+                                max(src.inertia_t - back, 0.0),
+                                src.inertia_len,
+                            );
+                        }
+                        mixed(&base, &old, src.share as f32)
+                    };
+                    let target = pose_of(
+                        rig,
+                        sets,
+                        &Sampled {
+                            parts: vec![(c, slot.time, 1.0)],
+                        },
+                        true,
+                        add,
+                    );
+                    slot.inertia = offsets(&content(0.0), &content(dt), &target, dt);
+                    slot.inertia_t = 0.0;
+                    slot.inertia_len = m.fade_in;
+                    slot.from_clip.clear();
+                }
                 // Advance through sections.
                 let mut left = dt * slot.rate;
                 slot.age += dt;
@@ -1335,30 +1842,20 @@ pub fn step(rig: &Rig, sets: &[ClipSet], st: &mut AnimState, dt: f64) -> Output 
                     let d = f64::from(rig.clips[c].duration);
                     let t0 = slot.time;
                     let t1 = t0 + left * sec.rate;
-                    if t1 < d {
-                        crossed(rig, c, t0, t1, false, &mut out.notices);
+                    let end = t1 >= d;
+                    let t1 = if end { d } else { t1 };
+                    crossed(rig, c, t0, t1, false, &mut out.notices);
+                    if !add {
                         let dv = root_delta(rig, sets, c, t0, t1, false);
                         root = math::add(
                             root,
-                            math::scale(
-                                dv,
-                                slot_weight(rig, slot) as f32
-                                    * weights.get(rig.root.unwrap_or(0)).copied().unwrap_or(0.0),
-                            ),
+                            math::scale(dv, slot_weight(rig, slot) as f32 * root_share),
                         );
+                    }
+                    if !end {
                         slot.time = t1;
                         left = 0.0;
                     } else {
-                        crossed(rig, c, t0, d, false, &mut out.notices);
-                        let dv = root_delta(rig, sets, c, t0, d, false);
-                        root = math::add(
-                            root,
-                            math::scale(
-                                dv,
-                                slot_weight(rig, slot) as f32
-                                    * weights.get(rig.root.unwrap_or(0)).copied().unwrap_or(0.0),
-                            ),
-                        );
                         left -= if sec.rate > 0.0 {
                             (d - t0) / sec.rate
                         } else {
@@ -1379,11 +1876,22 @@ pub fn step(rig: &Rig, sets: &[ClipSet], st: &mut AnimState, dt: f64) -> Output 
                         }
                     }
                 }
+                if !slot.inertia.is_empty() {
+                    slot.inertia_t += dt;
+                    if slot.inertia_t >= slot.inertia_len {
+                        slot.inertia.clear();
+                        slot.inertia_t = 0.0;
+                        slot.inertia_len = 0.0;
+                    }
+                }
                 let w = slot_weight(rig, slot);
                 if slot.out >= 0.0 && w <= 0.0 {
                     slot.montage.clear();
                     slot.section.clear();
                     slot.from_clip.clear();
+                    slot.inertia.clear();
+                    slot.inertia_t = 0.0;
+                    slot.inertia_len = 0.0;
                     continue;
                 }
                 let sec = section(m, &slot.section);
@@ -1397,6 +1905,7 @@ pub fn step(rig: &Rig, sets: &[ClipSet], st: &mut AnimState, dt: f64) -> Output 
                         parts: vec![(c, slot.time, 1.0)],
                     },
                     true,
+                    add,
                 );
                 // A montage that interrupted another fades from its frozen pose.
                 let fade_in = m.fade_in;
@@ -1412,6 +1921,7 @@ pub fn step(rig: &Rig, sets: &[ClipSet], st: &mut AnimState, dt: f64) -> Output 
                                 parts: vec![(fc, slot.from_time, 1.0)],
                             },
                             true,
+                            add,
                         );
                         let u = (slot.age / fade_in) as f32;
                         lp.fade_from(&from, u);
@@ -1419,13 +1929,16 @@ pub fn step(rig: &Rig, sets: &[ClipSet], st: &mut AnimState, dt: f64) -> Output 
                         slot.from_clip.clear();
                     }
                 }
+                if !slot.inertia.is_empty() {
+                    lay(&mut lp, &slot.inertia, slot.inertia_t, slot.inertia_len);
+                }
                 // With a frozen pose to fade from, the slot holds its whole weight while fading in.
                 let w = if slot.from_clip.is_empty() {
                     w
                 } else {
                     max(slot.from_weight, w)
                 };
-                over(rig, &mut pose, &lp, weights, w as f32);
+                lay_over(rig, &mut pose, &lp, weights, (w * lw) as f32, add);
             }
         }
     }
@@ -1442,6 +1955,55 @@ fn layer_share(ls: &LayerState) -> f64 {
         (ls.fade / ls.fade_len).clamp(0.0, 1.0)
     } else {
         1.0
+    }
+}
+
+/// A layer's content over `pose`: an override layer's pose, or an additive layer's differences.
+fn lay_over(rig: &Rig, pose: &mut Pose, layer: &Pose, weights: &[f32], w: f32, add: bool) {
+    if add {
+        add_over(rig, pose, layer, weights, w);
+    } else {
+        over(rig, pose, layer, weights, w);
+    }
+}
+
+/// Differences added to `pose` by each joint's weight times `w` (animation.md 3a): the rotation
+/// turned by the difference's share in the parent's frame, the translation moved, the scale
+/// multiplied, the morph weights added.
+fn add_over(rig: &Rig, pose: &mut Pose, diff: &Pose, weights: &[f32], w: f32) {
+    for ((p, d), m) in pose.x.iter_mut().zip(&diff.x).zip(weights) {
+        let u = m * w;
+        // A joint the layer leaves as it is keeps its bits.
+        if u <= 0.0 || *d == Xform::IDENTITY {
+            continue;
+        }
+        let u = if u > 1.0 { 1.0 } else { u };
+        let r = if u >= 1.0 {
+            d.r
+        } else {
+            math::nlerp(IDENTITY, d.r, u)
+        };
+        p.r = math::normalize(math::qmul(r, p.r));
+        p.t = math::add(p.t, math::scale(d.t, u));
+        p.s = [
+            p.s[0] * (1.0 + (d.s[0] - 1.0) * u),
+            p.s[1] * (1.0 + (d.s[1] - 1.0) * u),
+            p.s[2] * (1.0 + (d.s[2] - 1.0) * u),
+        ];
+    }
+    if pose.w.is_empty() {
+        return;
+    }
+    for (j, m) in weights.iter().enumerate() {
+        let u = m * w;
+        if u <= 0.0 {
+            continue;
+        }
+        let u = if u > 1.0 { 1.0 } else { u };
+        let (a, b) = (rig.morph_at[j], rig.morph_at[j + 1]);
+        for (p, d) in pose.w[a..b].iter_mut().zip(&diff.w[a..b]) {
+            *p += d * u;
+        }
     }
 }
 
@@ -1532,5 +2094,354 @@ mod tests {
         let mut bad = ok.clone();
         bad["layers"][0]["transitions"][0]["to"] = "flying".into();
         assert!(GraphDef::parse(&bad).unwrap_err().contains("flying"));
+    }
+
+    use super::super::clip::{Clip, Joint, Keys, Track};
+    use super::super::state::AnimCommand;
+
+    fn joint(name: &str, parent: Option<u32>, t: V3) -> Joint {
+        Joint {
+            name: name.into(),
+            parent,
+            rest: Xform {
+                t,
+                ..Xform::IDENTITY
+            },
+            targets: Vec::new(),
+            weights: Vec::new(),
+        }
+    }
+
+    /// A turn of `a` about z (sine and cosine of the half angle given, so no transcendental).
+    fn turn(s: f32, c: f32) -> Vec<f32> {
+        vec![0.0, 0.0, s, c]
+    }
+
+    fn track(joint: &str, times: &[f32], rots: &[Vec<f32>]) -> Track {
+        Track {
+            joint: joint.into(),
+            t: Keys::default(),
+            r: Keys {
+                times: times.to_vec(),
+                values: rots.concat(),
+                step: false,
+            },
+            s: Keys::default(),
+            w: Keys::default(),
+        }
+    }
+
+    /// A pelvis, a spine and an arm, with clips that turn them: `Swing` turns the pelvis back and
+    /// forth over 1 s, `Idle` holds the spine a little turned, `Lean` leans the spine, `Flinch`
+    /// turns it out and back over 0.5 s, `Wave` turns the arm over 1 s.
+    fn test_rig(graph: &str) -> (Rig, Vec<ClipSet>) {
+        let skeleton = Skeleton::new(vec![
+            joint("root", None, [0.0; 3]),
+            joint("pelvis", Some(0), [0.0, 1.0, 0.0]),
+            joint("spine", Some(1), [0.0, 0.5, 0.0]),
+            joint("arm", Some(2), [0.3, 0.0, 0.0]),
+        ]);
+        let clip = |name: &str, duration: f32, tracks: Vec<Track>| Clip {
+            name: name.into(),
+            duration,
+            tracks,
+        };
+        let set = ClipSet {
+            skeleton,
+            clips: vec![
+                clip(
+                    "Swing",
+                    1.0,
+                    vec![track(
+                        "pelvis",
+                        &[0.0, 0.5, 1.0],
+                        &[turn(-0.3, 0.954), turn(0.3, 0.954), turn(-0.3, 0.954)],
+                    )],
+                ),
+                clip(
+                    "Idle",
+                    1.0,
+                    vec![track("spine", &[0.0], &[turn(0.1, 0.995)])],
+                ),
+                clip(
+                    "Lean",
+                    1.0,
+                    vec![track("spine", &[0.0], &[turn(0.2, 0.98)])],
+                ),
+                clip(
+                    "Flinch",
+                    0.5,
+                    vec![track(
+                        "spine",
+                        &[0.0, 0.25, 0.5],
+                        &[turn(0.0, 1.0), turn(0.4, 0.9165), turn(0.0, 1.0)],
+                    )],
+                ),
+                clip(
+                    "Wave",
+                    1.0,
+                    vec![track("arm", &[0.0, 1.0], &[turn(0.0, 1.0), turn(0.6, 0.8)])],
+                ),
+            ],
+        };
+        let def = GraphDef::parse(&serde_json::from_str(graph).unwrap()).unwrap();
+        let sets = vec![("s.glb".to_owned(), set)];
+        let rig = Rig::new(def, &sets).unwrap();
+        (rig, sets.into_iter().map(|s| s.1).collect())
+    }
+
+    const DT: f64 = 1.0 / 60.0;
+
+    fn set(st: &mut AnimState, name: &str, value: f64) {
+        match st.params.iter_mut().find(|p| p.name == name) {
+            Some(p) => p.value = value,
+            None => st.params.push(AnimParam {
+                name: name.into(),
+                value,
+            }),
+        }
+    }
+
+    /// The angle between two rotations' poses of a joint, as `1 - |dot|` (0 when the same).
+    fn apart(a: Q4, b: Q4) -> f32 {
+        1.0 - (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]).abs()
+    }
+    type Q4 = [f32; 4];
+
+    const LEAN: &str = r#"{
+        "format": "amoris-animgraph", "version": 1, "skeleton": "s.glb",
+        "params": {"lean": 0},
+        "clips": {"Lean": {"reference": "rest"}},
+        "layers": [
+          {"name": "base", "states": {"idle": {"clip": "Idle"}}},
+          {"name": "lean", "blend": "add", "weight": "lean", "states": {"lean": {"clip": "Lean"}}}]
+    }"#;
+
+    #[test]
+    fn an_additive_layer_turns_the_pose_by_its_difference_times_its_weight() {
+        let (rig, sets) = test_rig(LEAN);
+        let idle = [0.0, 0.0, 0.1, 0.995];
+        let lean = math::normalize([0.0, 0.0, 0.2, 0.98]);
+        for (w, want) in [
+            (0.0, math::normalize(idle)),
+            (1.0, math::normalize(math::qmul(lean, idle))),
+            (
+                0.5,
+                math::normalize(math::qmul(math::nlerp(IDENTITY, lean, 0.5), idle)),
+            ),
+        ] {
+            let mut st = rig.initial("g");
+            set(&mut st, "lean", w);
+            let out = step(&rig, &sets, &mut st, DT);
+            assert!(
+                apart(out.pose[2].r, want) < 1e-6,
+                "{w}: {:?}",
+                out.pose[2].r
+            );
+            // The other joints keep the base's pose; an additive layer moves no body.
+            assert_eq!(out.pose[3], rig.skeleton.rest()[3]);
+            assert_eq!(out.root_motion, [0.0; 3]);
+        }
+        // At weight 0 the pose is the base layer's alone, to the bit.
+        let alone = LEAN.replace(
+            r#",
+          {"name": "lean", "blend": "add", "weight": "lean", "states": {"lean": {"clip": "Lean"}}}"#,
+            "",
+        );
+        let (base, bsets) = test_rig(&alone);
+        let (mut a, mut b) = (rig.initial("g"), base.initial("g"));
+        for _ in 0..10 {
+            assert_eq!(
+                step(&rig, &sets, &mut a, DT).pose,
+                step(&base, &bsets, &mut b, DT).pose
+            );
+        }
+    }
+
+    #[test]
+    fn an_additive_montage_flinches_without_stopping_the_steps() {
+        let (rig, sets) = test_rig(
+            r#"{
+            "format": "amoris-animgraph", "version": 1, "skeleton": "s.glb",
+            "layers": [
+              {"name": "base", "states": {"swing": {"clip": "Swing"}}},
+              {"name": "flinch", "blend": "add", "slot": "flinch"}],
+            "montages": {"flinch": {"slot": "flinch", "fade_in": 0, "fade_out": 0,
+                                    "sections": [{"name": "a", "clip": "Flinch"}]}}
+        }"#,
+        );
+        let (mut with, mut without) = (rig.initial("g"), rig.initial("g"));
+        with.commands.push(AnimCommand {
+            op: "play".into(),
+            montage: "flinch".into(),
+            rate: 1.0,
+            ..AnimCommand::default()
+        });
+        for tick in 0..30 {
+            let a = step(&rig, &sets, &mut with, DT);
+            let b = step(&rig, &sets, &mut without, DT);
+            // The pelvis swings on as if nothing happened.
+            assert_eq!(a.pose[1], b.pose[1], "tick {tick}");
+            if tick == 14 {
+                // A quarter of a second in: the spine is turned by the flinch's difference from
+                // its first frame (the identity), over the rest.
+                assert!(apart(a.pose[2].r, math::normalize([0.0, 0.0, 0.4, 0.9165])) < 1e-4);
+            }
+        }
+    }
+
+    #[test]
+    fn the_decay_starts_at_the_offset_ends_at_zero_and_never_overshoots() {
+        for &x0 in &[0.01f32, 0.3, 1.0] {
+            for &v0 in &[0.0f32, -0.5, -4.0, -100.0, 3.0] {
+                for &t1 in &[0.1f32, 0.3] {
+                    assert_eq!(decay(x0, v0, 0.0, t1), x0);
+                    assert_eq!(decay(x0, v0, t1, t1), 0.0);
+                    let mut last = x0;
+                    for i in 1..=100 {
+                        let x = decay(x0, v0, t1 * i as f32 / 100.0, t1);
+                        assert!((0.0..=x0).contains(&x), "{x0} {v0} {t1}: {x}");
+                        assert!(x <= last + 1e-6, "{x0} {v0} {t1}: rises to {x} from {last}");
+                        last = x;
+                    }
+                }
+            }
+        }
+        assert_eq!(decay(0.0, -1.0, 0.0, 0.2), 0.0);
+    }
+
+    const SWITCH: &str = r#"{
+        "format": "amoris-animgraph", "version": 1, "skeleton": "s.glb",
+        "params": {"go": false},
+        "layers": [{"name": "base", "start": "swing", "states": {
+            "swing": {"clip": "Swing"}, "wave": {"clip": "Wave"}},
+          "transitions": [{"from": "swing", "to": "wave", "when": [["go", "==", true]],
+                           "fade": 0.25, "blend": "inertial"}]}]
+    }"#;
+
+    #[test]
+    fn an_inertial_switch_keeps_the_motion_and_ends_on_the_target_to_the_bit() {
+        let (rig, sets) = test_rig(SWITCH);
+        let mut st = rig.initial("g");
+        let mut poses = Vec::new();
+        for tick in 0..60 {
+            if tick == 20 {
+                set(&mut st, "go", 1.0);
+            }
+            poses.push(step(&rig, &sets, &mut st, DT).pose);
+            if tick == 20 {
+                assert_eq!(st.layers[0].state, "wave");
+                assert!(!st.layers[0].inertia.is_empty());
+                assert!(st.layers[0].from.is_empty(), "no crossfade");
+            }
+        }
+        // Across the switch the pelvis moves about as much as a tick before it did (the swing's
+        // speed carried on), not to the wave's rest at once.
+        let before = apart(poses[19][1].r, poses[18][1].r);
+        let across = apart(poses[20][1].r, poses[19][1].r);
+        assert!(across < 4.0 * before + 1e-7, "{across} against {before}");
+        assert!(apart(poses[20][1].r, IDENTITY) > 1e-3, "still turned");
+        // Once the offsets run out (0.25 s), the layer plays the wave alone, as a graph that
+        // started on it does, bit for bit.
+        assert!(st.layers[0].inertia.is_empty());
+        let (wave, wsets) = test_rig(&SWITCH.replace(r#""start": "swing""#, r#""start": "wave""#));
+        let mut w = wave.initial("g");
+        let alone: Vec<Vec<Xform>> = (0..40)
+            .map(|_| step(&wave, &wsets, &mut w, DT).pose)
+            .collect();
+        for k in 20..40 {
+            assert_eq!(poses[20 + k], alone[k], "tick {k} after the switch");
+        }
+    }
+
+    #[test]
+    fn an_inertial_montage_takes_its_whole_weight_at_once_and_starts_from_the_pose() {
+        let (rig, sets) = test_rig(
+            r#"{
+            "format": "amoris-animgraph", "version": 1, "skeleton": "s.glb",
+            "layers": [
+              {"name": "base", "states": {"idle": {"clip": "Idle"}}},
+              {"name": "full", "slot": "full"}],
+            "montages": {
+              "wave": {"slot": "full", "blend_in": "inertial", "fade_in": 0.2, "fade_out": 0.1,
+                       "sections": [{"name": "a", "clip": "Wave", "next": "b"},
+                                    {"name": "b", "clip": "Flinch"}]}}
+        }"#,
+        );
+        let mut st = rig.initial("g");
+        let idle = step(&rig, &sets, &mut st, DT).pose;
+        st.commands.push(AnimCommand {
+            op: "play".into(),
+            montage: "wave".into(),
+            rate: 1.0,
+            ..AnimCommand::default()
+        });
+        let first = step(&rig, &sets, &mut st, DT).pose;
+        assert_eq!(slot_weight(&rig, &st.slots[0]), 1.0);
+        // The spine, which the wave leaves at rest, starts where the idle held it.
+        assert!(
+            apart(first[2].r, idle[2].r) < 1e-4,
+            "{:?} {:?}",
+            first[2].r,
+            idle[2].r
+        );
+        for _ in 0..20 {
+            step(&rig, &sets, &mut st, DT);
+        }
+        assert!(st.slots[0].inertia.is_empty(), "run out after 0.2 s");
+        assert_eq!(st.slots[0].from_clip, "");
+        // A jump inertializes too: the arm starts where the wave had it, not at the flinch's rest.
+        let held = step(&rig, &sets, &mut st, DT).pose;
+        st.commands.push(AnimCommand {
+            op: "jump".into(),
+            section: "b".into(),
+            ..AnimCommand::default()
+        });
+        let jumped = step(&rig, &sets, &mut st, DT).pose;
+        assert_eq!(st.slots[0].section, "b");
+        assert!(
+            apart(jumped[3].r, held[3].r) < 1e-3,
+            "{:?} {:?}",
+            jumped[3].r,
+            held[3].r
+        );
+        assert!(apart(jumped[3].r, IDENTITY) > 1e-2);
+    }
+
+    #[test]
+    fn layer_blends_weights_and_references_parse_and_refuse_what_is_wrong() {
+        let v = |s: &str| serde_json::from_str::<Value>(s).unwrap();
+        let g = GraphDef::parse(&v(SWITCH)).unwrap();
+        assert!(g.layers[0].kind != LayerKind::Slot(String::new()));
+        let LayerKind::Machine { transitions, .. } = &g.layers[0].kind else {
+            panic!()
+        };
+        assert!(transitions[0].inertial);
+        let g = GraphDef::parse(&v(LEAN)).unwrap();
+        assert_eq!(g.layers[1].blend, LayerBlend::Add);
+        assert_eq!(g.layers[1].weight, ParamWeight::Param("lean".into()));
+        assert_eq!(g.clips[0].reference, Reference::Rest);
+        let refused = |from: &str, to: &str, says: &str| {
+            let e = GraphDef::parse(&v(&LEAN.replace(from, to))).unwrap_err();
+            assert!(e.contains(says), "{e}");
+        };
+        refused(r#""blend": "add""#, r#""blend": "multiply""#, "multiply");
+        refused(
+            r#""weight": "lean""#,
+            r#""weight": "tilt""#,
+            "no parameter tilt",
+        );
+        refused(
+            r#"{"name": "base","#,
+            r#"{"name": "base", "blend": "add","#,
+            "base layer",
+        );
+        refused(r#""reference": "rest""#, r#""reference": 3"#, "reference");
+        let e = GraphDef::parse(&v(&SWITCH.replace("inertial", "snap"))).unwrap_err();
+        assert!(e.contains("snap"), "{e}");
+        // A reference clip is bound like any clip; one no library has is refused.
+        let missing = LEAN.replace(r#""reference": "rest""#, r#""reference": {"clip": "Nope"}"#);
+        let def = GraphDef::parse(&v(&missing)).unwrap();
+        assert!(def.clip_names().contains(&"Nope".to_owned()));
     }
 }

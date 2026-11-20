@@ -120,12 +120,106 @@ bone masks, layers of state machines and montages:
   track), weighted like the pose. A `Walker` with root motion moves by it for that tick, through
   its collision, in place of its controls' motion (section 6).
 
+## 3a. Layer weights, additive layers and inertialization
+
+- Status: building (2026-11-19). Owner's direction: the skeletal animation gains additive layers
+  and inertialized transitions (this section) and ragdolls (section 6b). References: Unreal's
+  additive animations (local-space additive, the base pose taken from the clip's first frame, the
+  reference pose or another clip's frame; Apply Additive; aim offsets), Godot 4's
+  `AnimationNodeAdd2`; David Bollo's inertialization (GDC 2018, "Inertialization: High-Performance
+  Animation Transitions in Gears of War") and Unreal's Inertialization node (the offset from the
+  pose before the switch decays by a quintic polynomial that starts with the source's velocity and
+  never overshoots).
+
+A graph that uses none of this evaluates as before, bit for bit. `AnimState` gains the offsets
+below and is version 2.
+
+**Layer weights.** A layer above the base may have `weight`: a number or the name of a graph
+parameter, clamped to 0..1 (default 1). It multiplies the layer's mask weights, whatever the layer
+plays (a machine's states, a slot's montages and their fades). The base layer has none.
+
+**Additive layers.** A layer above the base with `"blend": "add"` (default `"override"`) plays its
+states' and montages' clips as differences from a reference pose. Per joint the difference of a
+sampled transform from its reference is the rotation `r * conj(r_ref)`, the translation
+`t - t_ref`, the scale `s / s_ref` (per axis) and the morph weights `w - w_ref`. A clip's reference
+is its metadata's `reference`:
+
+- `"first"` (the default): the clip itself at 0 s;
+- `"rest"`: the skeleton's rest pose;
+- `{"clip": "Aim_Center", "at": 0}`: another clip's pose at a time (that clip is bound like any
+  clip the graph plays).
+
+Differences blend as poses do (a blend space's points, a fade, a slot's fade from an interrupted
+montage), from the identity difference (no translation, no turn, unit scale, no weights). A layer of
+differences goes over the pose below by each joint's share `u` (its mask weight times the layer's
+weight times a slot's weight): the rotation becomes `nlerp(identity, d_r, u) * r` (the difference
+turns the joint in its parent's frame, Unreal's local-space additive), the translation
+`t + d_t * u`, the scale `s * (1 + (d_s - 1) * u)` and the weights `w + d_w * u`. An additive layer
+hands no root motion to the body; its notifies are emitted as any layer's. Uses: a wounded or
+breathing idle laid over the steps, an aim offset (a 2D blend space of aim poses whose reference is
+the centre pose), a flinch played as a montage in an additive slot that leaves the steps running.
+
+**Inertialization.** A transition with `"blend": "inertial"` (default `"fade"`) and a montage with
+`"blend_in": "inertial"` (default `"fade"`) do not crossfade: the layer switches at once and the
+difference between what the layer held and what it now plays decays to nothing over the
+transition's `fade` (the montage's `fade_in`). Only the new state or montage is evaluated, so the
+switch costs one pose where a fade costs two, and the motion keeps its speed through it.
+
+- **The source.** At the switch the layer's content (what it lays over the pose below at full
+  weight) before the switch is evaluated twice, as it was this tick (`S0`) and one tick earlier
+  (`S1`): a machine's old state at its time with its own fade or running offsets; a slot's
+  montage mixed over the pose below by the slot's weight, or the pose below when the slot held none
+  (the identity difference for an additive slot); the section a jump leaves, at its time. The
+  target `T` is the new state or section at 0 s, as this tick's parameters give it.
+- **The offset.** Per joint and channel, a direction and a magnitude `x0` with a velocity `v0`: the
+  rotation `q = S0.r * conj(T.r)` (its `w` made non-negative) gives the axis `vec(q) / |vec(q)|` and
+  `x0 = |vec(q)|` (the sine of half the angle, which grows with the angle); the translation and the
+  scale take the difference vector, its direction and length; each morph weight its difference's
+  sign and size. `x1` is `S1`'s offset from `T` along the same direction, and
+  `v0 = (x0 - x1) / dt`.
+- **The decay.** `x(t) = A t^5 + B t^4 + C t^3 + a0 t^2 / 2 + v0 t + x0` for `t` below the length
+  `t1`, after `v0` is clamped to at most 0 and `t1` to at most `-5 x0 / v0` (so the offset never
+  passes through zero), with `a0 = max(0, (-8 v0 t1 - 20 x0) / t1^2)`,
+  `A = -(a0 t1^2 + 6 v0 t1 + 12 x0) / (2 t1^5)`,
+  `B = (3 a0 t1^2 + 16 v0 t1 + 30 x0) / (2 t1^4)` and
+  `C = -(3 a0 t1^2 + 12 v0 t1 + 20 x0) / (2 t1^3)`; `x` is clamped to `0..x0`, and from `t1` on it
+  is 0. The layer's content is then the target with the offsets laid on it: the rotation
+  `[axis * x, sqrt(1 - x^2)] * r`, normalized, the translation and scale plus the direction times
+  `x`, each weight plus its sign times `x`. When every offset has run out the layer plays the target
+  alone, its bits those of a layer that never switched.
+- **State.** The offsets (flat `f32`: per joint the rotation's vector, the translation's and the
+  scale's difference and their three velocities, then per morph weight its difference and velocity)
+  with their elapsed time and length live in the layer's or slot's `inertia`, `inertia_t` and
+  `inertia_len`, empty when none runs, so a restore or a fork goes on with the same pose. A new
+  inertial switch while offsets run takes the content with them as its source.
+- A slot's inertial montage holds the slot's whole weight from its first tick; its end and
+  `ctx.anim.stop` still fade it out. A jump within an inertial montage (`ctx.anim.jump`, which snaps
+  in a montage that fades) is inertialized over its `fade_in`; sections that follow one another play
+  on as before.
+
+Like the rest of the evaluator, all of it is `f32` additions, subtractions, multiplications,
+divisions and square roots in a fixed order (section 2).
+
+```json
+"layers": [
+  {"name": "base", "start": "move", "states": {...}, "transitions": [
+    {"from": "move", "to": "guard", "when": [["locked", "==", true]], "fade": 0.3,
+     "blend": "inertial"}]},
+  {"name": "aim", "blend": "add", "weight": "aiming", "states": {
+    "aim": {"blend2d": {"x": "aim_x", "y": "aim_y", "points": [[0, 0, "Aim_C"], ...]}}}},
+  {"name": "flinch", "blend": "add", "mask": "upper", "slot": "flinch"},
+  {"name": "full", "slot": "full"}
+],
+"clips": {"Aim_L": {"reference": {"clip": "Aim_C", "at": 0}}},
+"montages": {"light": {"slot": "full", "blend_in": "inertial", "fade_in": 0.2, "sections": [...]}}
+```
+
 ## 4. Components, systems and the script API
 
 | Component | Fields | Kept |
 |---|---|---|
 | `AnimGraph` | `graph` (a project graph path), `playing`, `speed` | persisted; scripts read and write it |
-| `AnimState` | parameters, queued requests, each layer's state, fade and times, each slot's montage, section, time and fades; the sockets and the root motion of the last tick | persisted (restores and forks reproduce it); scripts reach it through `ctx.anim` |
+| `AnimState` | parameters, queued requests, each layer's state, fade and times, each slot's montage, section, time and fades, each layer's and slot's running inertialization (section 3a); the sockets and the root motion of the last tick | persisted, version 2 (restores and forks reproduce it); scripts reach it through `ctx.anim` |
 | `AnimPose` | the joints' local transforms after the last evaluation | derived each tick, never persisted |
 | `Attach` | `to` (entity), `joint`, `position`, `rotation` | persisted; scripts read and write it |
 | `Avatar` | `walker`, `facing`, `target`, `turn_rate`, `root_motion`; engine-written `yaw`, `speed`, `local`, `last` | persisted; scripts read and write it |
@@ -398,6 +492,14 @@ the game's rules (steering), not in the grid.
   and a 2D blend weigh their points as specified; a fade's weights sum to one; notifies fire once
   per crossing, windows close when cut short; root motion over a whole looped clip equals its
   root's displacement; the evaluator's bits are the same on every target (a recorded pose digest).
+- Additive layers and inertialization (section 3a; amoris-assets `anim::graph`): an additive layer
+  turns a joint by its difference times its weight and at weight 0 leaves the base's pose to the
+  bit; an additive montage leaves the joints below it and the body's motion as they were; the decay
+  starts at its offset, ends at zero and neither rises nor overshoots; an inertial switch carries
+  the motion across it and, once its offsets run out, plays the target bit for bit as a graph that
+  started on it; an inertial montage holds its whole weight at once and starts, and jumps, from
+  the pose it replaces; the file's blends, weights and references parse and refuse what is wrong.
+  The graphs that use none of it keep their recorded digests (the morph fixture's, `ik`'s).
 - amoris-runtime: a graph's state persists, restores and replays (the project's `check.toml`;
   `samples/thornkeep` runs it).
 - amoris-physics: a sweep finds the first body; a rig's camera stops at a wall.
@@ -426,8 +528,9 @@ the game's rules (steering), not in the grid.
 
 ## 10. Limits
 
-- Inverse kinematics is two-bone, look-at and feet only (section 6a's follow-ups); no additive
-  layers; no physics-driven ragdolls; no animation compression. Nav cells are a grid, not polygons.
+- Inverse kinematics is two-bone, look-at and feet only (section 6a's follow-ups); additive layers
+  are local-space only (no mesh-space aim offsets); no animation compression. Nav cells are a grid,
+  not polygons.
 - Morph targets: at most 16 active per part and frame; no sparse storage on the GPU (every target
   keeps an offset for every vertex); overrides need a graph; the ray-traced shadows and reflections
   see the morphed vertices as they see skinned ones.

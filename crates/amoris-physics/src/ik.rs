@@ -3,7 +3,7 @@
 //! the fixed colliders found by rays down from each foot. Graphs without IK nodes are left alone.
 
 use amoris_assets::Model;
-use amoris_assets::anim::ik::{self, FootGround, IkBound, IkWeight};
+use amoris_assets::anim::ik::{self, FootGround, IkBound};
 use amoris_assets::anim::math::{self as am, V3, Xform};
 use amoris_assets::anim::{AnimGraph, AnimIk, AnimPose, AnimRigs, AnimState, IkGoal, Socket};
 use amoris_sim::math;
@@ -48,19 +48,6 @@ fn direction_in(w: &Xform, v: V3) -> V3 {
 
 fn goal<'a>(ik: Option<&'a AnimIk>, node: &str) -> Option<&'a IkGoal> {
     ik.and_then(|k| k.goals.iter().rev().find(|g| g.node == node))
-}
-
-/// A node's own weight, its parameter's value when it names one, clamped to 0..1.
-fn own_weight(w: &IkWeight, st: &AnimState) -> f64 {
-    let v = match w {
-        IkWeight::Value(v) => *v,
-        IkWeight::Param(p) => st
-            .params
-            .iter()
-            .find(|x| &x.name == p)
-            .map_or(0.0, |x| x.value),
-    };
-    math::clamp(v, 0.0, 1.0)
 }
 
 #[allow(clippy::cast_possible_truncation)]
@@ -193,8 +180,7 @@ pub(crate) fn ik(
         let last = state.as_deref();
         for node in rig.ik() {
             let g = goal(last, &node.name);
-            let w =
-                own_weight(&node.weight, &st) * g.map_or(1.0, |g| math::clamp(g.weight, 0.0, 1.0));
+            let w = node.weight.value(&st) * g.map_or(1.0, |g| math::clamp(g.weight, 0.0, 1.0));
             match &node.kind {
                 IkBound::TwoBone(chain) => {
                     let Some(t) = g.and_then(|g| g.target) else {

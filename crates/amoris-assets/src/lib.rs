@@ -45,7 +45,7 @@ impl Persisted for anim::AnimGraph {
 
 impl Persisted for anim::AnimState {
     const NAME: &'static str = "AnimState";
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
 
     fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
         t.trace_type::<anim::AnimParam>(s)?;

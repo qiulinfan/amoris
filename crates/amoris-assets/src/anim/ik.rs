@@ -9,14 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::clip::Skeleton;
+use super::graph::ParamWeight;
 use super::math::{self, IDENTITY, Q, V3, Xform};
-
-/// A node's weight: a number, or a graph parameter read each tick; either clamped to 0..1.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum IkWeight {
-    Value(f64),
-    Param(String),
-}
 
 /// The feet node's settings (animation.md 6a; the defaults are its).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -57,7 +51,7 @@ pub enum IkKind {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct IkDef {
     pub name: String,
-    pub weight: IkWeight,
+    pub weight: ParamWeight,
     pub kind: IkKind,
 }
 
@@ -111,16 +105,7 @@ impl IkDef {
                 return Err(format!("ik node {name} is declared twice"));
             }
             let what = format!("ik node {name}");
-            let weight = match o.get("weight") {
-                None => IkWeight::Value(1.0),
-                Some(Value::String(p)) => {
-                    if !params.iter().any(|(n, _)| n == p) {
-                        return Err(format!("{what}'s weight names no parameter {p}"));
-                    }
-                    IkWeight::Param(p.clone())
-                }
-                Some(w) => IkWeight::Value(num(w, &format!("{what}'s weight"))?),
-            };
+            let weight = ParamWeight::parse(o.get("weight"), params, &what)?;
             let kinds = ["two_bone", "look_at", "feet"];
             let given: Vec<&str> = kinds
                 .iter()
@@ -250,7 +235,7 @@ pub enum IkBound {
 #[derive(Clone, Debug, PartialEq)]
 pub struct IkNode {
     pub name: String,
-    pub weight: IkWeight,
+    pub weight: ParamWeight,
     pub kind: IkBound,
 }
 
@@ -905,8 +890,8 @@ mod tests {
         ]);
         let d = IkDef::parse_list(&ok, &params).unwrap();
         assert_eq!(d.len(), 3);
-        assert_eq!(d[1].weight, IkWeight::Param("reach".into()));
-        assert_eq!(d[2].weight, IkWeight::Value(0.5));
+        assert_eq!(d[1].weight, ParamWeight::Param("reach".into()));
+        assert_eq!(d[2].weight, ParamWeight::Value(0.5));
         let IkKind::Feet(f) = &d[0].kind else {
             panic!()
         };

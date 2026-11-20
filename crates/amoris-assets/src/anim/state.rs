@@ -50,6 +50,11 @@ pub struct LayerState {
     pub from_time: f64,
     pub fade: f64,
     pub fade_len: f64,
+    /// An inertialized switch's offsets (animation.md 3a), empty when none runs; seconds since it
+    /// and its length.
+    pub inertia: Vec<f32>,
+    pub inertia_t: f64,
+    pub inertia_len: f64,
 }
 
 /// A slot and the montage it plays ("" when none).
@@ -73,6 +78,11 @@ pub struct SlotState {
     pub from_clip: String,
     pub from_time: f64,
     pub from_weight: f64,
+    /// An inertialized start's or jump's offsets (animation.md 3a), empty when none runs; seconds
+    /// since it and its length.
+    pub inertia: Vec<f32>,
+    pub inertia_t: f64,
+    pub inertia_len: f64,
 }
 
 impl Default for SlotState {
@@ -90,6 +100,9 @@ impl Default for SlotState {
             from_clip: String::new(),
             from_time: 0.0,
             from_weight: 0.0,
+            inertia: Vec::new(),
+            inertia_t: 0.0,
+            inertia_len: 0.0,
         }
     }
 }
