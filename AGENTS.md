@@ -279,6 +279,10 @@ credential cleanup. File-verification records remain local, including in that ar
   `draw_paths`, `taa` and `skinned_bounds` on D3D12 and Vulkan, and `tools/render/build_compare.py`'s
   `crowd`; a change to the weights' blending runs amoris-assets' `morph` (its recorded digest).
   WGSL reserves words such as `active`, which naga refuses at pipeline creation (no frame draws).
+- The graph evaluator's additive layers and inertialized switches
+  ([docs/spec/animation.md](docs/spec/animation.md) 3a) live in amoris-assets' `anim/graph.rs`: a
+  change runs `cargo test -p amoris-assets anim:: morph`; graphs without them keep their bits (the
+  morph and `ik` digests).
 - Inverse kinematics ([docs/spec/animation.md](docs/spec/animation.md) 6a): the solvers are
   amoris-assets' `anim/ik.rs`, the `anim.ik` system amoris-physics' `ik.rs` (after
   `physics.avatar`). A change runs amoris-assets `anim::ik`, `cargo test -p amoris-runtime
