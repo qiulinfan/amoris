@@ -716,15 +716,21 @@ meets every group (`groups` and `mask` are 32-bit masks, default all bits).
 - A world without a `CollisionFilter` builds every collider as before, and `SensorOverlaps` has no
   row, so its snapshots, hashes and recorded chains are unchanged.
 
-**Joints** (2026-11-12). `Joint {kind, with, anchor, other_anchor, axis, limits, contacts}` on a
+**Joints** (2026-11-12). `Joint {kind, with, anchor, other_anchor, axis, limits, contacts, rest,
+swing}` (version 2 since 2026-11-19, animation.md 6b) on a
 body's entity ties its body to the body on `with` with one of Rapier's impulse joints: `Fixed`
 (the two move as one), `Revolute` (a turn about `axis`), `Prismatic` (a slide along `axis`) or
 `Spherical` (a turn every way about the anchor). The anchors are points in each body's own frame,
 `axis` is in this body's frame (normalized with `amoris_sim::math::sqrt` before the solver gets
 it), `limits` bounds the turn (radians) or travel (metres) from the frames' alignment, and
-`contacts` says whether the two bodies still collide (default no). The joint frames' rotations are
-the identity, so a `Fixed` joint keeps the two bodies turned alike and a hinge's turn is measured
-from that alignment.
+`contacts` says whether the two bodies still collide (default no). The joint frames are this
+body's (turned so x is `axis`, for the kinds that use one) and the same frame turned back by `rest`
+in the other body, so the joint's angles are zero where the other body is this one turned by
+`rest`; with the identity `rest` (the default) a `Fixed` joint keeps the two bodies turned alike
+and a hinge's turn is measured from that alignment. On a `Spherical` joint `limits` bounds the
+twist about `axis` and `swing` (radians) how far the other body's `axis` leaves this one's, a
+ragdoll's shoulder or neck. A joint with the identity `rest` and no `swing` is built and hashed as
+before they existed.
 
 - `physics.step` syncs the joints after the bodies, in `EntityId` order: a solver joint whose
   entity lost its `Joint`, whose `Joint` changed, or whose bodies were rebuilt or removed (Rapier
@@ -733,7 +739,8 @@ from that alignment.
   high 64, inside the physics cache, as bodies do: nothing derived is rebuilt after a restore, and
   a changed `Joint` is seen by any route without change detection.
 - A joint that cannot be built (`with` its own entity, either entity without a body, a zero or
-  non-finite axis for the kinds that use one, limits not finite or upside down) is not built and
+  non-finite axis for the kinds that use one, limits not finite or upside down, a zero or
+  non-finite `rest`, a negative or non-finite `swing`) is not built and
   `physics.step` reports `sim.joint_invalid {entity, reason}` every tick until a write mends it.
 - One `Joint` per entity: a body held by two joints (a door on two hinges, a chain link held
   from both ends) has the second on the other body's entity. Multibody (reduced-coordinate)

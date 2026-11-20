@@ -191,6 +191,8 @@ fn the_engine_components_that_hold_entity_ids() {
                 "Joint",
                 "ObserverEvents",
                 "Parent",
+                "Ragdoll",
+                "RagdollBone",
                 "SensorOverlaps",
                 "ThirdPerson",
                 "Walker",

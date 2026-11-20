@@ -96,6 +96,8 @@ the weights of its model's morph targets, read and held by name with `weight` an
 and the goals of its graph's IK nodes, a hand's or a head's target in the world or a feet node's
 weight, set and read with `setIk` and `ik`); an
 `Avatar` stands a posed body on its `Walker` and turns it toward its motion, its look or a target;
+a `Ragdoll` turned `active` lets its graph's ragdoll bodies (each an entity with a `RagdollBone`,
+pushed with `ExternalForce`) move the bones until it is turned off and the pose blends back;
 an `Attach` rides an entity on a body's joint; a game's `[player] buttons` arrive as the walker's
 `Buttons`; a `CameraRig` holds a camera on a spring arm behind a walker, and a script raises its
 `shake` on a blow. `ctx.physics` casts rays, spheres and sweeps, and `ctx.nav` finds paths on a

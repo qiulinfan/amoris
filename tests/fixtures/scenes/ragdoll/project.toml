@@ -1,0 +1,9 @@
+# Ragdolls (docs/spec/animation.md 6b): a walker's body that goes limp under a shove and gets up
+# again, and a body that goes limp on a block's edge and falls off it, through the charter's
+# checks.
+name = "ragdoll"
+rate = 60
+seed = 1
+
+[animation]
+graphs = ["anim/figure.anim.json"]

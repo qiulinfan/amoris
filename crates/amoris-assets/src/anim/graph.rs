@@ -14,6 +14,7 @@ use amoris_sim::math::{clamp, max, min};
 use super::clip::{Bound, ClipSet, Skeleton};
 use super::ik::{IkDef, IkNode};
 use super::math::{self, IDENTITY, V3, Xform};
+use super::ragdoll::{RagdollDef, RagdollRig};
 use super::state::{AnimParam, AnimState, LayerState, SlotState};
 
 /// A weight: a number, or a graph parameter read each tick; either clamped to 0..1 (an IK node's,
@@ -205,6 +206,9 @@ pub struct GraphDef {
     /// The IK nodes that bend the pose after the layers, in order (animation.md 6a).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ik: Vec<IkDef>,
+    /// The ragdoll's bodies and joints (animation.md 6b).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ragdoll: Option<RagdollDef>,
 }
 
 fn num(v: &Value, what: &str) -> Result<f64, String> {
@@ -470,6 +474,9 @@ impl GraphDef {
         if let Some(ik) = o.get("ik") {
             g.ik = IkDef::parse_list(ik, &g.params)?;
         }
+        if let Some(r) = o.get("ragdoll") {
+            g.ragdoll = Some(RagdollDef::parse(r)?);
+        }
         Ok(g)
     }
 
@@ -666,6 +673,8 @@ pub struct Rig {
     sockets: Vec<(String, usize)>,
     /// The IK nodes bound to the skeleton (animation.md 6a).
     ik: Vec<IkNode>,
+    /// The ragdoll bound to the skeleton (animation.md 6b).
+    ragdoll: Option<RagdollRig>,
 }
 
 impl Rig {
@@ -769,7 +778,13 @@ impl Rig {
             .iter()
             .map(|d| IkNode::bind(d, &skeleton))
             .collect::<Result<Vec<_>, _>>()?;
+        let ragdoll = def
+            .ragdoll
+            .as_ref()
+            .map(|r| RagdollRig::bind(r, &skeleton))
+            .transpose()?;
         Ok(Rig {
+            ragdoll,
             def,
             skeleton,
             clips,
@@ -874,6 +889,11 @@ impl Rig {
     /// The graph's IK nodes, in order (animation.md 6a); empty for most graphs.
     pub fn ik(&self) -> &[IkNode] {
         &self.ik
+    }
+
+    /// The graph's ragdoll (animation.md 6b), if it has one.
+    pub fn ragdoll(&self) -> Option<&RagdollRig> {
+        self.ragdoll.as_ref()
     }
 
     /// The model-space transforms of the graph's sockets for a pose.

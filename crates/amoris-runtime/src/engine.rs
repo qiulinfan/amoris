@@ -93,7 +93,7 @@ where
 /// Every engine component a scene or `world_edit` can name (`Name` is the entity's own `name`);
 /// the first three are the player layer's (perception.md: who observes, what can be perceived,
 /// what blocks sight).
-pub fn engine_components() -> [EngineComponent; 57] {
+pub fn engine_components() -> [EngineComponent; 59] {
     [
         entry::<amoris_interface::perception::Observer>(),
         entry::<amoris_interface::perception::Perceivable>(),
@@ -131,6 +131,8 @@ pub fn engine_components() -> [EngineComponent; 57] {
         entry::<Vessel>(),
         entry::<Walker>(),
         entry::<amoris_physics::Avatar>(),
+        entry::<amoris_physics::Ragdoll>(),
+        entry::<amoris_physics::RagdollBone>(),
         entry::<amoris_physics::Buttons>(),
         entry::<amoris_physics::nav::NavGrid>(),
         entry::<amoris_physics::CameraRig>(),
@@ -867,6 +869,112 @@ fn avatar_schema() -> Result<ComponentSchema, Problem> {
             ),
         ],
     )
+}
+
+fn ragdoll_schema() -> Result<ComponentSchema, Problem> {
+    let d = amoris_physics::Ragdoll::default();
+    schema(
+        "Ragdoll",
+        amoris_physics::Ragdoll::VERSION,
+        "An animated body gone limp (animation.md 6b): while active, its graph's ragdoll bodies \
+         move its bones; off, the pose returns to the animation over blend_s.",
+        vec![
+            (
+                "active",
+                FieldType::Bool,
+                FieldValue::Bool(d.active),
+                "Limp: the bodies move the bones.",
+            ),
+            (
+                "blend_s",
+                FieldType::F64,
+                FieldValue::F64(d.blend_s),
+                "Seconds the pose takes to return to the animation once active is off.",
+            ),
+            (
+                "weight",
+                FieldType::F64,
+                FieldValue::F64(d.weight),
+                "How much of the pose the bodies give, 0 to 1. Engine-written.",
+            ),
+            (
+                "root",
+                FieldType::Entity,
+                FieldValue::Entity(None),
+                "The root body's entity while there are bodies. Engine-written.",
+            ),
+        ],
+    )
+}
+
+fn ragdoll_fns() -> EngineFns<amoris_physics::Ragdoll> {
+    fn write(r: &mut amoris_physics::Ragdoll, v: &ProjectValues) {
+        let n = &v.nums;
+        r.active = n[0] != 0.0;
+        (r.blend_s, r.weight) = (n[1], n[2]);
+        r.root = amoris_sim::EntityId::from_f64(n[3]).ok();
+    }
+    EngineFns {
+        read: |r| {
+            nums(&[
+                bit(r.active),
+                r.blend_s,
+                r.weight,
+                r.root.map_or(0.0, |id| id.to_f64()),
+            ])
+        },
+        write,
+        make: |v| {
+            let mut r = amoris_physics::Ragdoll::default();
+            write(&mut r, v);
+            r
+        },
+    }
+}
+
+fn ragdoll_bone_schema() -> Result<ComponentSchema, Problem> {
+    schema(
+        "RagdollBone",
+        amoris_physics::RagdollBone::VERSION,
+        "A ragdoll's body (animation.md 6b), made and removed by the engine: whose it is and \
+         which of its graph's bodies.",
+        vec![
+            (
+                "owner",
+                FieldType::Entity,
+                FieldValue::Entity(None),
+                "The animated entity the body belongs to.",
+            ),
+            (
+                "body",
+                FieldType::U32,
+                FieldValue::U32(0),
+                "Its index among the ragdoll's bodies, parents first.",
+            ),
+        ],
+    )
+}
+
+fn ragdoll_bone_fns() -> EngineFns<amoris_physics::RagdollBone> {
+    fn write(b: &mut amoris_physics::RagdollBone, v: &ProjectValues) {
+        let n = &v.nums;
+        if let Ok(owner) = amoris_sim::EntityId::from_f64(n[0]) {
+            b.owner = owner;
+        }
+        b.body = amoris_sim::num::to_u32(n[1]).unwrap_or(0);
+    }
+    EngineFns {
+        read: |b| nums(&[b.owner.to_f64(), f64::from(b.body)]),
+        write,
+        make: |v| {
+            let mut b = amoris_physics::RagdollBone {
+                owner: amoris_sim::EntityId::FIRST,
+                body: 0,
+            };
+            write(&mut b, v);
+            b
+        },
+    }
 }
 
 fn avatar_fns() -> EngineFns<amoris_physics::Avatar> {
@@ -2388,6 +2496,11 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     ComponentRegistry::register::<Rain>(world, Some(rain_schema()?))?;
     ComponentRegistry::register::<Walker>(world, Some(walker_schema()?))?;
     ComponentRegistry::register::<amoris_physics::Avatar>(world, Some(avatar_schema()?))?;
+    ComponentRegistry::register::<amoris_physics::Ragdoll>(world, Some(ragdoll_schema()?))?;
+    ComponentRegistry::register::<amoris_physics::RagdollBone>(
+        world,
+        Some(ragdoll_bone_schema()?),
+    )?;
     ComponentRegistry::register::<amoris_physics::nav::NavGrid>(world, None)?;
     ComponentRegistry::register::<amoris_physics::Buttons>(
         world,
@@ -2545,6 +2658,8 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     register_engine::<Rain>(world, rain_fns())?;
     register_engine::<Walker>(world, walker_fns())?;
     register_engine::<amoris_physics::Avatar>(world, avatar_fns())?;
+    register_engine::<amoris_physics::Ragdoll>(world, ragdoll_fns())?;
+    register_engine::<amoris_physics::RagdollBone>(world, ragdoll_bone_fns())?;
     register_engine::<amoris_physics::Buttons>(
         world,
         EngineFns {

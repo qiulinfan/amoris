@@ -88,6 +88,8 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
         .component::<Rain>()
         .component::<Walker>()
         .component::<crate::avatar::Avatar>()
+        .component::<crate::ragdoll::Ragdoll>()
+        .component::<crate::ragdoll::RagdollBone>()
         .component::<crate::walker::Buttons>()
         .component::<crate::nav::NavGrid>()
         .ignore::<crate::nav::NavCache>(
@@ -587,7 +589,7 @@ impl Persisted for Collider {
 
 impl Persisted for crate::joints::Joint {
     const NAME: &'static str = "Joint";
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
 
     fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
         t.trace_type::<crate::joints::JointKind>(s)?;
@@ -603,6 +605,16 @@ impl Persisted for crate::avatar::Avatar {
         t.trace_type::<crate::avatar::Facing>(s)?;
         t.trace_type::<Self>(s).map(|_| ())
     }
+}
+
+impl Persisted for crate::ragdoll::Ragdoll {
+    const NAME: &'static str = "Ragdoll";
+    const VERSION: u32 = 1;
+}
+
+impl Persisted for crate::ragdoll::RagdollBone {
+    const NAME: &'static str = "RagdollBone";
+    const VERSION: u32 = 1;
 }
 
 impl Persisted for crate::nav::NavGrid {

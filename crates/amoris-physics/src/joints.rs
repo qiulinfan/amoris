@@ -5,20 +5,21 @@
 //! missing ones are inserted. Each joint carries its entity in the low 64 bits of its `user_data`
 //! and a hash of its `Joint` in the high 64 bits, inside Rapier's serialized state, so the physics
 //! cache carries the joints and nothing derived needs rebuilding. A world without a `Joint`
-//! builds, steps and hashes as before.
+//! builds, steps and hashes as before; so does a joint with the identity `rest` and no `swing`
+//! (animation.md 6b, which adds them for ragdolls).
 
 use amoris_contract::{Problem, detail};
 use amoris_sim::EntityId;
 use bevy_ecs::prelude::Component;
 use rapier3d::prelude::{
-    FixedJointBuilder, GenericJoint, ImpulseJointHandle, PhysicsWorld, PrismaticJointBuilder,
-    RevoluteJointBuilder, RigidBodyHandle, SphericalJointBuilder,
+    FixedJointBuilder, GenericJoint, ImpulseJointHandle, JointAxis, PhysicsWorld,
+    PrismaticJointBuilder, RevoluteJointBuilder, RigidBodyHandle, SphericalJointBuilder,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::geom::{self, V3};
+use crate::geom::{self, Q4, V3};
 use crate::solver::{BodyIndex, entity_of, spec_of};
 
 /// What a joint lets the two bodies do relative to each other.
@@ -55,17 +56,29 @@ pub struct Joint {
     /// (default +x); its length does not matter, but it is not zero.
     #[serde(default = "x_axis")]
     pub axis: V3,
-    /// A revolute joint's turn (radians) or a prismatic joint's travel (metres) from the frames'
-    /// alignment, `[min, max]`; none: free.
+    /// A revolute joint's turn (radians), a prismatic joint's travel (metres) or a spherical
+    /// joint's twist about `axis` (radians) from the frames' alignment, `[min, max]`; none: free.
     #[serde(default)]
     pub limits: Option<[f64; 2]>,
     /// Whether the two bodies still collide with each other (default no).
     #[serde(default)]
     pub contacts: bool,
+    /// The other body's turn relative to this one where the joint's angles are zero (default the
+    /// identity: the bodies turned alike).
+    #[serde(default = "identity")]
+    pub rest: Q4,
+    /// A spherical joint's limit, radians, on how far the other body's `axis` leaves this one's;
+    /// none: free.
+    #[serde(default)]
+    pub swing: Option<f64>,
 }
 
 fn x_axis() -> V3 {
     [1.0, 0.0, 0.0]
+}
+
+fn identity() -> Q4 {
+    [0.0, 0.0, 0.0, 1.0]
 }
 
 impl Joint {
@@ -79,6 +92,8 @@ impl Joint {
             axis: x_axis(),
             limits: None,
             contacts: false,
+            rest: identity(),
+            swing: None,
         }
     }
 }
@@ -110,6 +125,29 @@ pub fn validate(entity: EntityId, j: &Joint) -> Result<(), Problem> {
             return Err(joint_problem(entity, "needs a non-zero, finite axis"));
         }
     }
+    let r = j.rest;
+    let len2 = geom::f32_of(r[0] * r[0] + r[1] * r[1] + r[2] * r[2] + r[3] * r[3]);
+    if !(geom::finite32(&r) && len2 > 0.0 && len2.is_finite()) {
+        return Err(joint_problem(
+            entity,
+            "needs a finite, non-zero rest rotation",
+        ));
+    }
+    if let Some(s) = j.swing
+        && !(geom::f32_of(s).is_finite() && s >= 0.0)
+    {
+        return Err(joint_problem(
+            entity,
+            "has a swing limit that is not finite and at least 0",
+        ));
+    }
+    if j.kind == JointKind::Spherical && (j.limits.is_some() || j.swing.is_some()) {
+        let a = j.axis;
+        let len2 = a[0] * a[0] + a[1] * a[1] + a[2] * a[2];
+        if !(geom::finite32(&a) && geom::f32_of(len2) > 0.0) {
+            return Err(joint_problem(entity, "needs a non-zero, finite axis"));
+        }
+    }
     if let Some([lo, hi]) = j.limits {
         let (lo, hi) = (geom::f32_of(lo), geom::f32_of(hi));
         if !(lo.is_finite() && hi.is_finite() && lo <= hi) {
@@ -122,9 +160,24 @@ pub fn validate(entity: EntityId, j: &Joint) -> Result<(), Problem> {
     Ok(())
 }
 
-/// A hash of the joint, kept in its `user_data` to see a change.
+/// A hash of the joint, kept in its `user_data` to see a change. A joint without `rest` or
+/// `swing` hashes its other fields alone, as before they existed.
 fn spec_hash(j: &Joint) -> u64 {
-    let bytes = bincode::serialize(j).unwrap_or_default();
+    let plain = (
+        &j.kind,
+        &j.with,
+        &j.anchor,
+        &j.other_anchor,
+        &j.axis,
+        &j.limits,
+        &j.contacts,
+    );
+    let bytes = if j.rest == identity() && j.swing.is_none() {
+        bincode::serialize(&plain)
+    } else {
+        bincode::serialize(j)
+    }
+    .unwrap_or_default();
     amoris_sim::rng::fnv1a64_extend(0xcbf2_9ce4_8422_2325, &bytes)
 }
 
@@ -171,6 +224,27 @@ fn build(entity: EntityId, j: &Joint) -> GenericJoint {
             .contacts_enabled(j.contacts)
             .into(),
     };
+    if j.kind == JointKind::Spherical && (limits.is_some() || j.swing.is_some()) {
+        // The twist about `axis` and the swing off it, in frames whose x is `axis`.
+        g.set_local_axis1(axis());
+        g.set_local_axis2(axis());
+        if let Some(l) = limits {
+            g.set_limits(JointAxis::AngX, l);
+        }
+        if let Some(s) = j.swing {
+            let s = geom::f32_of(s);
+            g.set_limits(JointAxis::AngY, [-s, s]);
+            g.set_limits(JointAxis::AngZ, [-s, s]);
+        }
+    }
+    if j.rest != identity() {
+        // Zero where this body's frame turned by `rest` is the other's: frame2 = rest^-1 frame1.
+        let r = j.rest;
+        let n = amoris_sim::math::sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2] + r[3] * r[3]);
+        let rest = geom::quat_in([r[0] / n, r[1] / n, r[2] / n, r[3] / n]);
+        let f1 = g.local_frame1.rotation;
+        g.local_frame2.rotation = rest.inverse() * f1;
+    }
     g.user_data = u128::from(entity.get()) | (u128::from(spec_hash(j)) << 64);
     g
 }

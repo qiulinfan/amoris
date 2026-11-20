@@ -45,7 +45,7 @@ it are charter 5.4.
   `river-falls`, `surf-beach`, `water-pool`, `water-storm`, `water-valley`).
   `tests/fixtures/`: projects only tests and checks read: the checks' negative controls, the SDK's
   type test, `intents/errand` (a TypeScript intent and executor under the four checks), and `scenes/`, the scenes that tests, checks and measurement tools read (eight
-  `water-*` scenes, `gi-room`, `pt-lab`, `hierarchy`, `ui-hud`, `color-grade`, `ktx2`, `morph`, `ik`). xtask runs every `samples/*/check.toml` and `tests/fixtures/**/check.toml`.
+  `water-*` scenes, `gi-room`, `pt-lab`, `hierarchy`, `ui-hud`, `color-grade`, `ktx2`, `morph`, `ik`, `ragdoll`). xtask runs every `samples/*/check.toml` and `tests/fixtures/**/check.toml`.
 - `bench/`: benchmark workloads and comparison harnesses (`agent-dev/`, `physics/`, `rules/`,
   `web/threejs_cubes.html`).
 - `tools/`: Python, shell and Node scripts by purpose ([tools/README.md](tools/README.md)):
@@ -283,6 +283,11 @@ credential cleanup. File-verification records remain local, including in that ar
   ([docs/spec/animation.md](docs/spec/animation.md) 3a) live in amoris-assets' `anim/graph.rs`: a
   change runs `cargo test -p amoris-assets anim:: morph`; graphs without them keep their bits (the
   morph and `ik` digests).
+- Ragdolls ([docs/spec/animation.md](docs/spec/animation.md) 6b): the bodies' binding is
+  amoris-assets' `anim/ragdoll.rs`, the systems `anim.ragdoll.bodies` and `anim.ragdoll`
+  amoris-physics' `ragdoll.rs`, on `Joint`'s `rest` and `swing`. A change runs amoris-assets
+  `anim::ragdoll`, physics `joints::`, `cargo test -p amoris-runtime --features transpile --test
+  runtime_tests ragdoll::` (its recorded pose digest) and the `ragdoll` fixture's check.
 - Inverse kinematics ([docs/spec/animation.md](docs/spec/animation.md) 6a): the solvers are
   amoris-assets' `anim/ik.rs`, the `anim.ik` system amoris-physics' `ik.rs` (after
   `physics.avatar`). A change runs amoris-assets `anim::ik`, `cargo test -p amoris-runtime

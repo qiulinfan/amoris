@@ -1,0 +1,33 @@
+{
+  "format": "amoris-animgraph", "version": 1,
+  "skeleton": "models/figure.gltf",
+  "params": {"speed": 0},
+  "sockets": ["pelvis", "head", "hand_r", "foot_l"],
+  "layers": [
+    {"name": "base", "start": "move", "states": {
+      "move": {"blend1d": {"param": "speed", "points": [[0, "idle"], [1.2, "walk"]]}}}}
+  ],
+  "ragdoll": {
+    "bodies": [
+      {"joint": "pelvis", "to": "spine", "radius": 0.12, "mass": 12},
+      {"joint": "spine", "to": "neck", "radius": 0.13, "mass": 14, "swing_deg": 30, "twist_deg": 20},
+      {"joint": "head", "length": 0.22, "radius": 0.1, "mass": 5, "swing_deg": 40, "twist_deg": 50},
+      {"joint": "upper_arm_l", "to": "forearm_l", "radius": 0.045, "mass": 2.5, "swing_deg": 80,
+       "twist_deg": 45},
+      {"joint": "forearm_l", "to": "hand_l", "radius": 0.04, "mass": 1.5, "hinge": [1, 0, 0],
+       "limits_deg": [-130, 0]},
+      {"joint": "upper_arm_r", "to": "forearm_r", "radius": 0.045, "mass": 2.5, "swing_deg": 80,
+       "twist_deg": 45},
+      {"joint": "forearm_r", "to": "hand_r", "radius": 0.04, "mass": 1.5, "hinge": [1, 0, 0],
+       "limits_deg": [-130, 0]},
+      {"joint": "thigh_l", "to": "shin_l", "radius": 0.065, "mass": 7, "swing_deg": 60,
+       "twist_deg": 20},
+      {"joint": "shin_l", "to": "foot_l", "radius": 0.055, "mass": 4, "hinge": [1, 0, 0],
+       "limits_deg": [0, 140]},
+      {"joint": "thigh_r", "to": "shin_r", "radius": 0.065, "mass": 7, "swing_deg": 60,
+       "twist_deg": 20},
+      {"joint": "shin_r", "to": "foot_r", "radius": 0.055, "mass": 4, "hinge": [1, 0, 0],
+       "limits_deg": [0, 140]}
+    ]
+  }
+}

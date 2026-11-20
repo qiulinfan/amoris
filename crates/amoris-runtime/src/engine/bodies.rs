@@ -261,6 +261,24 @@ pub(super) fn joint_schema() -> Result<ComponentSchema, Problem> {
                 FieldValue::Bool(false),
                 "Whether the two bodies still collide with each other.",
             ),
+            (
+                "rest",
+                FieldType::Quat,
+                FieldValue::Quat([0.0, 0.0, 0.0, 1.0]),
+                "The other body's turn relative to this one where the joint's angles are zero \
+                 (identity: the bodies turned alike).",
+            ),
+            (
+                "swing_limited",
+                FieldType::Bool,
+                FieldValue::Bool(false),
+                "Whether swing limits how far a Spherical joint's other body leaves `axis`.",
+            ),
+            f(
+                "max_swing",
+                "A Spherical joint's swing limit, radians, when swing_limited; min and max then \
+                 limit its twist about `axis`.",
+            ),
         ],
     )
 }
@@ -464,6 +482,12 @@ fn joint_read(j: &Joint) -> ProjectValues {
         lo,
         hi,
         if j.contacts { 1.0 } else { 0.0 },
+        j.rest[0],
+        j.rest[1],
+        j.rest[2],
+        j.rest[3],
+        if j.swing.is_some() { 1.0 } else { 0.0 },
+        j.swing.unwrap_or(0.0),
     ])
 }
 
@@ -484,6 +508,8 @@ fn joint_write(j: &mut Joint, v: &ProjectValues) {
     j.axis = v3(n, 8);
     j.limits = (n[11] != 0.0).then_some([n[12], n[13]]);
     j.contacts = n[14] != 0.0;
+    j.rest = [n[15], n[16], n[17], n[18]];
+    j.swing = (n[19] != 0.0).then_some(n[20]);
 }
 
 fn joint_fns() -> EngineFns<Joint> {
@@ -1169,7 +1195,15 @@ mod tests {
         let joint = Joint::new(JointKind::Revolute, amoris_sim::EntityId::FIRST);
         assert_eq!(
             shared(&joint, &joint_schema().unwrap()),
-            ["kind", "with", "anchor", "other_anchor", "axis", "contacts"]
+            [
+                "kind",
+                "with",
+                "anchor",
+                "other_anchor",
+                "axis",
+                "contacts",
+                "rest"
+            ]
         );
     }
 
@@ -1193,6 +1227,12 @@ mod tests {
                     axis: [0.0, 0.0, 1.0],
                     limits,
                     contacts: limits.is_some(),
+                    rest: if limits.is_some() {
+                        [0.0, 0.6, 0.0, 0.8]
+                    } else {
+                        [0.0, 0.0, 0.0, 1.0]
+                    },
+                    swing: limits.map(|_| 0.7),
                     ..Joint::new(kind, with)
                 };
                 let v = (fns.read)(&j);

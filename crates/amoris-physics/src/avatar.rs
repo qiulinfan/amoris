@@ -352,7 +352,15 @@ pub(crate) fn avatars(
     clock: Res<SimClock>,
     index: Res<EntityIndex>,
     walkers: Query<(&EntityId, &Walker, &Transform, Option<&ThirdPerson>)>,
-    mut avatars: Query<(&EntityId, &mut Avatar, &mut Transform), Without<Walker>>,
+    mut avatars: Query<
+        (
+            &EntityId,
+            &mut Avatar,
+            &mut Transform,
+            Option<&crate::ragdoll::Ragdoll>,
+        ),
+        Without<Walker>,
+    >,
     others: Query<(&EntityId, &Transform), Placed>,
 ) {
     let dt = clock.dt();
@@ -376,7 +384,11 @@ pub(crate) fn avatars(
             (dx * dx + dz * dz > 1e-6).then(|| math::atan2(-dx, -dz))
         })
     };
-    for (_, mut a, mut tf) in by_id_mut(&mut avatars) {
+    for (_, mut a, mut tf, ragdoll) in by_id_mut(&mut avatars) {
+        // While its ragdoll's bodies are out the body lies where they are (animation.md 6b).
+        if ragdoll.is_some_and(|r| r.root.is_some()) {
+            continue;
+        }
         let Some((w, eye, lock)) = a.walker.and_then(walker) else {
             continue;
         };

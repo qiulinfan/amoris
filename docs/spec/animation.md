@@ -226,6 +226,8 @@ divisions and square roots in a fixed order (section 2).
 | `CameraRig` | section 6 | persisted; scripts read and write it |
 | `Buttons` | `held`, `pressed` (a bit per game button) | persisted; scripts read it |
 | `MorphWeights` | `overrides`, `weights` (by target name; section 5a) | persisted; scripts reach it through `ctx.anim` |
+| `Ragdoll` | `active`, `blend_s`; engine-written `weight` and `root` (section 6b) | persisted; scripts read and write it |
+| `RagdollBone` | `owner`, `body` (on each ragdoll body, engine-made) | persisted; scripts read it |
 | `AnimIk` | `goals` (by IK node: `target`, `pole`, `weight`), engine-written `weight` and `ground_m` of the feet (section 6a) | persisted; scripts reach it through `ctx.anim` |
 
 The project's rigs (`AnimRigs`, the graphs bound to their clips) come from the game's setup and
@@ -238,8 +240,10 @@ evaluation inserts the state, and the evaluation keeps it over the graph's defau
 emits its notifies; `physics.walk` (Physics) moves each walker, by its avatar's root motion when
 that has any; `physics.avatar` (Physics, after the step) stands every avatar at its walker's feet
 and turns it; `anim.ik` (Physics, after `physics.avatar`) bends a graph's pose by its IK nodes
-(section 6a); `anim.attach` and `camera.rig` (Finish) place attached things and rigged cameras. A
-script therefore reads the notifies and sockets of the tick before it, as its other observations.
+(section 6a); `anim.ragdoll.bodies` (after `physics.separate`) and `anim.ragdoll` (after `anim.ik`)
+make, move and draw from a ragdoll's bodies (section 6b); `anim.attach` and `camera.rig` (Finish)
+place attached things and rigged cameras. A script therefore reads the notifies and sockets of the
+tick before it, as its other observations.
 
 ```ts
 ctx.anim.set(e, "speed", 3.2);                  // a parameter
@@ -450,6 +454,89 @@ prop (a goal that follows another entity's socket, a two-handed grip); toe probi
 step edges; weight smoothing for two-bone and look-at nodes in the engine (scripts fade their goals'
 weights); a walker that climbs a step lifts the body at once, which the feet do not hide.
 
+## 6b. Ragdolls
+
+- Status: building (2026-11-19, section 3a's direction). References: Unreal's Physics Asset (a
+  capsule per bone, constraints with swing and twist limits, `SetSimulatePhysics` and the physical
+  animation blend weight) and Godot 4's `PhysicalBone3D` with `PhysicalBoneSimulator3D` (bodies made
+  for a skeleton's bones, joints between them, an influence to blend the simulated pose with the
+  animated one).
+
+A graph names its ragdoll: a capsule body per chosen bone and a joint from each to the body of its
+nearest ancestor that has one. A script turns it on; the engine then makes the bodies where the
+animated pose has the bones, lets the solver move them, and draws the bones where the bodies are.
+A graph without `ragdoll`, and every world without a `Ragdoll`, evaluates and steps as before.
+
+```json
+"ragdoll": {
+  "friction": 0.6, "linear_damping": 0.05, "angular_damping": 0.8,
+  "bodies": [
+    {"joint": "pelvis", "to": "spine_02", "radius": 0.13, "mass": 14},
+    {"joint": "spine_02", "to": "neck_01", "radius": 0.14, "mass": 12, "swing_deg": 25,
+     "twist_deg": 15},
+    {"joint": "head", "length": 0.24, "radius": 0.11, "mass": 5, "swing_deg": 40},
+    {"joint": "upperarm_l", "to": "lowerarm_l", "radius": 0.05, "mass": 2.5, "swing_deg": 80,
+     "twist_deg": 45},
+    {"joint": "lowerarm_l", "to": "hand_l", "radius": 0.045, "mass": 1.5, "hinge": [1, 0, 0],
+     "limits_deg": [-140, 0]}
+  ]
+}
+```
+
+- **Bodies.** Each body is a capsule of `radius` metres around the segment from its `joint` to the
+  joint `to` (in the rest pose), or of `length` metres along `axis` (in the joint's frame, default
+  `[0, 1, 0]`, the bone's direction in Blender's exports), and has `mass` kilograms (the capsule's
+  density follows). Its frame sits at the segment's middle with its y along the segment and turns
+  with the bone. There is one root body (the first, whose joint has no ancestor with a body); the
+  others are listed in any order and joined in the skeleton's order. `friction`, the dampings and
+  `groups` and `mask` (a `CollisionFilter`, default all) apply to every body.
+- **Joints.** Each body but the root hangs from its parent body at its joint's place. With `hinge`
+  (an axis in the joint's frame) it is a revolute joint limited to `limits_deg` (default
+  `[-90, 90]`); else a spherical one whose bone turns at most `swing_deg` (default 45) off its rest
+  direction and twists about it within `twist_deg` (a number for `-x..x` or a pair, default 30).
+  Angles are measured from the rest pose. Neighbours do not collide; other bodies of one ragdoll
+  do.
+- **Engine joints.** The ragdoll's joints are ordinary `Joint`s, which gain what they need: `rest`,
+  the other body's turn relative to this one where the joint's angles are zero (default the
+  identity: the bodies turned alike), and `swing`, a spherical joint's limit in radians on how far
+  the other body's `axis` leaves this one's; a spherical joint's `limits` limit the twist about
+  `axis`. `Joint` is version 2; a joint with the identity `rest` and no `swing` is built and hashed
+  as before.
+
+**The component.** `Ragdoll` (persisted, version 1; scripts read and write it) on the animated
+entity (a body that may go limp carries one, as scenes give it): `active` (scripts set it),
+`blend_s` (default 0.3, how long the pose takes to return to the animation), and the engine-written
+`weight` (0 to 1) and `root` (the root body's entity, none while there are no bodies). Each body is
+an entity of its own, with `Transform`, `Velocity`, `ExternalForce`, `RigidBody`, `Collider`, the
+`Joint` to its parent (but the root) and `RagdollBone` (`owner`, the animated entity, and `body`,
+its index among the ragdoll's bodies in the skeleton's order, parents first), so queries, contacts
+and scripts' forces reach it like any body, and a script that hits a bone finds its owner.
+
+**When.** `anim.ragdoll.bodies` (Physics, after the step and the walkers, before `physics.avatar`;
+simulation.md 4.4 lists neither) makes the bodies of every `Ragdoll` that is `active` and has none,
+in their entities' order and the graph's body order, at the place this tick's animated pose gives
+each bone in the world (through the entity's `Transform` and its `Model`'s uniform scale), each
+moving as the body does: an `Avatar`'s measured motion and its walker's vertical speed, else still.
+It removes the bodies of a ragdoll that is neither active nor blending, whose owner has gone or lost
+its `Ragdoll`, or one of whose bodies a script destroyed (an active ragdoll then makes them again
+from the animated pose). The next tick's `physics.step` takes the new bodies in and moves them.
+`anim.ragdoll` (Physics, after `anim.ik`) reads every body, turns each bone with a body to the
+body's turn and place (a bone without one keeps its animated place under its parent), mixes that
+pose into the animated one by `weight` (nlerp per joint), and keeps the sockets from the result.
+`weight` is 1 while `active`, and falls by `dt / blend_s` a tick after (the bodies stay until it is
+0). While the bodies are out the entity's position follows the root body (where the root bone's rest
+offset puts it; its rotation stays), and `physics.avatar` leaves such an avatar where it is: a game
+that gets the body up moves the walker to the avatar's place before it turns the ragdoll off. All of
+it is `f32` and `f64` arithmetic with `sqrt` in a fixed order; Rapier steps the bodies
+deterministically (simulation.md 8.5).
+
+```ts
+ctx.world.set(e, "Ragdoll", { active: true });   // limp: the bodies are made this tick
+const r = ctx.world.get(e, "Ragdoll");           // {active, blend_s, weight, root}
+ctx.world.set(r.root, "ExternalForce", { force: { z: 60 / ctx.dt } });  // 60 N s to the pelvis
+ctx.world.set(e, "Ragdoll", { active: false });  // back to the animation over blend_s
+```
+
 ## 7. Physics queries for scripts
 
 `ctx.physics` reads the solver as the last step left it (query.rs): `ray(from, dir, maxM, opts)`
@@ -500,6 +587,16 @@ the game's rules (steering), not in the grid.
   started on it; an inertial montage holds its whole weight at once and starts, and jumps, from
   the pose it replaces; the file's blends, weights and references parse and refuse what is wrong.
   The graphs that use none of it keep their recorded digests (the morph fixture's, `ik`'s).
+- Ragdolls (section 6b; `tests/fixtures/scenes/ragdoll`, generated by its `gen_ragdoll.py`):
+  amoris-assets `anim::ragdoll` binds bodies parents first along their segments with their
+  joints' anchors meeting at the bone, gives back the rest pose from the bodies' rest frames, and
+  refuses what is wrong; amoris-physics `joints::` holds a spherical joint within its swing limit
+  and two bodies at a joint's rest turn; amoris-runtime's `ragdoll` runs the fixture: the bodies
+  come with the ragdoll, a shoved body falls onto the floor and comes to rest with nothing below it
+  and every joint closed, the entity follows its root body and its avatar leaves it there, a body
+  shoved off a block lies below it, the pose returns to the animation over `blend_s` and the bodies
+  go, the poses have the recorded digest, and a restore runs on to the same poses; the fixture's
+  `check.toml` runs determinism, forks, replays and reloads.
 - amoris-runtime: a graph's state persists, restores and replays (the project's `check.toml`;
   `samples/thornkeep` runs it).
 - amoris-physics: a sweep finds the first body; a rig's camera stops at a wall.
@@ -529,8 +626,11 @@ the game's rules (steering), not in the grid.
 ## 10. Limits
 
 - Inverse kinematics is two-bone, look-at and feet only (section 6a's follow-ups); additive layers
-  are local-space only (no mesh-space aim offsets); no animation compression. Nav cells are a grid,
-  not polygons.
+  are local-space only (no mesh-space aim offsets); no animation compression.
+- Ragdolls are limp only: no motors drive the bodies toward the animation (Unreal's physical
+  animation, an active ragdoll), and a body gets up by blending, not by a get-up clip chosen from
+  how it lies. The capsules take the model's x scale (a uniformly scaled model). Nav cells are a
+  grid, not polygons.
 - Morph targets: at most 16 active per part and frame; no sparse storage on the GPU (every target
   keeps an offset for every vertex); overrides need a graph; the ray-traced shadows and reflections
   see the morphed vertices as they see skinned ones.

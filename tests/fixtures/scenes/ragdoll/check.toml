@@ -1,0 +1,12 @@
+# Determinism, fork, replay and reload of two ragdolls: one shoved down and getting up, one falling
+# off a block (docs/spec/animation.md 6b).
+[run]
+ticks = 360
+seeds = [1, 2]
+
+[fork]
+at = [45, 250]
+ticks = 40
+
+[reload]
+at = [45, 250]

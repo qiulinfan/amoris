@@ -14,9 +14,11 @@ Physics physics.step always
 Physics physics.contacts always
 Physics physics.walk always
 Physics physics.separate always
+Physics anim.ragdoll.bodies always
 Physics physics.mount always
 Physics physics.avatar always
 Physics anim.ik always
+Physics anim.ragdoll always
 Finish interface.perception always
 Finish interface.turns always
 Finish anim.attach always

@@ -38,6 +38,7 @@ pub mod joints;
 pub mod nav;
 pub mod probe;
 pub mod query;
+pub mod ragdoll;
 mod readings;
 pub mod sailing;
 pub mod sea;
@@ -63,6 +64,7 @@ pub use body::{
 pub use cache::{IDENTITY, PhysicsCache, declare};
 pub use forces::start_time;
 pub use joints::{Joint, JointKind};
+pub use ragdoll::{Ragdoll, RagdollBone};
 pub use sea::{GRAVITY, Rain, Sea, SeaLook, Water, Wave, WaveField, Wind};
 pub use sensors::SensorOverlaps;
 pub use solver::{BodyIndex, ContactLog, Physics, RebuiltSolver};
@@ -115,6 +117,8 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     ComponentRegistry::register::<Rain>(w, None)?;
     ComponentRegistry::register::<Walker>(w, None)?;
     ComponentRegistry::register::<avatar::Avatar>(w, None)?;
+    ComponentRegistry::register::<Ragdoll>(w, None)?;
+    ComponentRegistry::register::<RagdollBone>(w, None)?;
     ComponentRegistry::register::<walker::Buttons>(w, None)?;
     ComponentRegistry::register::<nav::NavGrid>(w, None)?;
     ComponentRegistry::register::<avatar::CameraRig>(w, None)?;
@@ -243,6 +247,12 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
         always,
         walker::separate,
     )?;
+    sim.add_exclusive(
+        "anim.ragdoll.bodies",
+        TickPhase::Physics,
+        always,
+        ragdoll::bodies,
+    )?;
     sim.add_system("physics.step", TickPhase::Physics, always, solver::step)?;
     sim.add_system(
         "physics.contacts",
@@ -258,6 +268,7 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
         avatar::avatars,
     )?;
     sim.add_system("anim.ik", TickPhase::Physics, always, ik::ik)?;
+    sim.add_system("anim.ragdoll", TickPhase::Physics, always, ragdoll::pose)?;
     sim.add_system("anim.attach", TickPhase::Finish, always, avatar::attach)?;
     sim.add_system("camera.rig", TickPhase::Finish, always, avatar::rigs)?;
     sim.add_system(

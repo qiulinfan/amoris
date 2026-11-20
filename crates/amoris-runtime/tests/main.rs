@@ -16,6 +16,7 @@ mod morph;
 mod player;
 mod player_session;
 mod present;
+mod ragdoll;
 mod save;
 mod saves;
 mod scenes;

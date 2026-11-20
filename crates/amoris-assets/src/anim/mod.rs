@@ -9,6 +9,7 @@ pub mod ik;
 #[cfg(feature = "import")]
 pub mod load;
 pub mod math;
+pub mod ragdoll;
 pub mod state;
 
 use std::collections::BTreeMap;

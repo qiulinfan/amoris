@@ -1,6 +1,7 @@
 //! Joints (simulation.md 8.5): a pendulum on a spherical joint, a hinged door that turns within
 //! its limits and stays on its hinge, a slider held to its axis and its travel, two boxes welded
-//! by a fixed joint, a joint removed or changed between ticks, and the refusals.
+//! by a fixed joint, a joint removed or changed between ticks, the refusals, and a ragdoll's
+//! joints (animation.md 6b): a spherical joint's swing limit and a joint's rest turn.
 
 use amoris_physics::{
     Collider, ExternalForce, Joint, JointKind, RigidBody, Shape, Transform, Velocity,
@@ -109,6 +110,82 @@ fn a_pendulum_swings_on_its_spherical_joint_and_falls_when_it_is_removed() {
     }
     quiet(&steps(&mut sim, 60));
     assert!(dist(tf(&sim, bob).position, [0.0, 5.0, 0.0]) > 3.0);
+}
+
+/// The pendulum again with its swing limited to 0.3 rad off its axis (x): it can only drop by about
+/// that angle.
+#[test]
+fn a_swing_limit_holds_a_spherical_joint_near_its_axis() {
+    let mut sim = world();
+    let pivot = post(&mut sim, [0.0, 5.0, 0.0]);
+    let bob = body(
+        &mut sim,
+        [2.0, 5.0, 0.0],
+        ball(),
+        Some(Joint {
+            anchor: [-2.0, 0.0, 0.0],
+            swing: Some(0.3),
+            limits: Some([-0.2, 0.2]),
+            ..Joint::new(JointKind::Spherical, pivot)
+        }),
+    );
+    let mut lowest: f64 = 5.0;
+    for _ in 0..120 {
+        quiet(&steps(&mut sim, 1));
+        let p = tf(&sim, bob).position;
+        assert!(
+            (dist(p, [0.0, 5.0, 0.0]) - 2.0).abs() < 0.05,
+            "off its rope: {p:?}"
+        );
+        lowest = math::min(lowest, p[1]);
+    }
+    // 2 sin(0.3) is 0.59: it drops by about that, never to the bottom of its swing.
+    assert!(lowest > 4.3 && lowest < 4.9, "it swung down to {lowest}");
+}
+
+/// A box welded to a post with a rest turn of a quarter about y keeps that turn, where the same
+/// weld without it turns the box back to the post's.
+#[test]
+fn a_rest_turn_sets_where_a_joint_holds_its_bodies() {
+    let h = std::f64::consts::FRAC_1_SQRT_2;
+    let quarter = [0.0, h, 0.0, h];
+    let back = [0.0, -h, 0.0, h];
+    let turned = |rest: Option<[f64; 4]>| {
+        let mut sim = world();
+        let pivot = post(&mut sim, [0.0, 5.0, 0.0]);
+        let mut joint = Joint {
+            other_anchor: [0.0, -1.0, 0.0],
+            ..Joint::new(JointKind::Fixed, pivot)
+        };
+        if let Some(r) = rest {
+            joint.rest = r;
+        }
+        let b = body(
+            &mut sim,
+            [0.0, 4.0, 0.0],
+            Shape::Cuboid {
+                half_extents: [0.3, 0.2, 0.1],
+            },
+            Some(joint),
+        );
+        set::<Transform>(&mut sim, b, |t| t.rotation = back);
+        quiet(&steps(&mut sim, 90));
+        tf(&sim, b).rotation
+    };
+    let near = |a: [f64; 4], b: [f64; 4]| {
+        (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]).abs() > 0.99
+    };
+    // The post is the box turned by the rest: the box turned back a quarter.
+    assert!(
+        near(turned(Some(quarter)), back),
+        "{:?}",
+        turned(Some(quarter))
+    );
+    assert!(
+        near(turned(None), [0.0, 0.0, 0.0, 1.0]),
+        "{:?}",
+        turned(None)
+    );
 }
 
 /// A door hinged about +y at its edge, pushed at its far end: it turns, stops at its limit, and

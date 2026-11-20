@@ -1,0 +1,217 @@
+{
+ "format": "amoris-scene",
+ "version": 1,
+ "entities": [
+  {
+   "name": "Sun",
+   "components": {
+    "Transform": {
+     "position": [
+      0,
+      20,
+      0
+     ],
+     "rotation": [
+      -0.3826834,
+      0.0,
+      0.0,
+      0.9238795
+     ]
+    },
+    "Light": {
+     "kind": "directional",
+     "intensity": 3.0,
+     "shadows": true
+    }
+   }
+  },
+  {
+   "name": "Floor",
+   "components": {
+    "Transform": {
+     "position": [
+      0.0,
+      -0.25,
+      0.0
+     ],
+     "rotation": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ]
+    },
+    "RigidBody": {
+     "kind": "Fixed"
+    },
+    "Collider": {
+     "shape": {
+      "Cuboid": {
+       "half_extents": [
+        8.0,
+        0.25,
+        8.0
+       ]
+      }
+     }
+    },
+    "Model": {
+     "mesh": "cube",
+     "scale": [
+      16.0,
+      0.5,
+      16.0
+     ],
+     "color": [
+      0.55,
+      0.55,
+      0.5,
+      1.0
+     ],
+     "roughness": 0.9
+    }
+   }
+  },
+  {
+   "name": "Block",
+   "components": {
+    "Transform": {
+     "position": [
+      3.0,
+      0.5,
+      0.0
+     ],
+     "rotation": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ]
+    },
+    "RigidBody": {
+     "kind": "Fixed"
+    },
+    "Collider": {
+     "shape": {
+      "Cuboid": {
+       "half_extents": [
+        1.0,
+        0.5,
+        1.5
+       ]
+      }
+     }
+    },
+    "Model": {
+     "mesh": "cube",
+     "scale": [
+      2.0,
+      1.0,
+      3.0
+     ],
+     "color": [
+      0.6,
+      0.5,
+      0.45,
+      1.0
+     ],
+     "roughness": 0.9
+    }
+   }
+  },
+  {
+   "name": "Walker",
+   "components": {
+    "Transform": {
+     "position": [
+      0.0,
+      1.62,
+      0.0
+     ]
+    },
+    "Walker": {
+     "yaw": 0.0,
+     "eye_m": 1.6,
+     "height_m": 1.8,
+     "half_width_m": 0.2,
+     "speed_mps": 1.2,
+     "run_mps": 3.0,
+     "jump_mps": 0.0,
+     "gravity_mps2": 20.0
+    }
+   }
+  },
+  {
+   "name": "WalkerBody",
+   "components": {
+    "Transform": {
+     "position": [
+      0.0,
+      0.02,
+      0.0
+     ],
+     "rotation": [
+      0.0,
+      1.0,
+      0.0,
+      0.0
+     ]
+    },
+    "Model": {
+     "mesh": "models/figure.gltf"
+    },
+    "AnimGraph": {
+     "graph": "anim/figure.anim.json"
+    },
+    "Avatar": {
+     "walker": 4,
+     "turn_rate": 6.0,
+     "yaw": 0.0,
+     "last": [
+      0.0,
+      0.02,
+      0.0
+     ]
+    },
+    "Ragdoll": {
+     "blend_s": 0.4
+    }
+   }
+  },
+  {
+   "name": "Edge",
+   "components": {
+    "Transform": {
+     "position": [
+      2.15,
+      1.0,
+      0.0
+     ],
+     "rotation": [
+      0.0,
+      -0.7071068,
+      0.0,
+      0.7071068
+     ]
+    },
+    "Model": {
+     "mesh": "models/figure.gltf"
+    },
+    "AnimGraph": {
+     "graph": "anim/figure.anim.json"
+    },
+    "Ragdoll": {}
+   }
+  },
+  {
+   "name": "Gauge",
+   "components": {
+    "Gauge": {
+     "walker": 4,
+     "body": 5,
+     "edge": 6
+    }
+   }
+  }
+ ]
+}
